@@ -29,6 +29,13 @@ def main() -> None:
     ap.add_argument(
         "--concurrency", type=int, default=8, help="Max parallel questions to run (process-based; set 1 to disable)."
     )
+    ap.add_argument(
+        "--gpu-ids",
+        nargs="*",
+        type=int,
+        default=None,
+        help="Optional list of GPU IDs to assign to workers.",
+    )
 
     # Convenience: point the runner at an existing Milvus Lite + BM25 snapshot dir
     # (the same dir you pass as `--ingest-output-dir` to scripts/build_index.py).
@@ -119,7 +126,9 @@ def main() -> None:
         chunk_context_chars=args.chunk_context_chars,
     )
 
-    summary = run_generation(queries, out_jsonl=run_dir / "generations.jsonl", cfg=cfg)
+    gpu_ids = [str(gpu) for gpu in args.gpu_ids] if args.gpu_ids else None
+    # TODO / FIXME: GPU memory leak in reranker? it is increasing over time...
+    summary = run_generation(queries, out_jsonl=run_dir / "generations.jsonl", cfg=cfg, gpu_ids=gpu_ids)
     save_json(cfg.to_dict(), run_dir / "run_config.json")
     save_json(summary, run_dir / "generation_summary.json")
 

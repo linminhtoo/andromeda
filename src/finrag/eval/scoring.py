@@ -22,7 +22,7 @@ def _rank(ids: list[str], target: str) -> int | None:
     return None
 
 
-def build_context(chunks: list[RetrievedChunk], *, max_chars: int = 14_000) -> str:
+def build_context(chunks: list[RetrievedChunk], *, max_chars: int = 65_000) -> str:
     """
     Build a compact context string for judge prompts.
     """
@@ -92,7 +92,7 @@ def score_one(
     *,
     judge_llm: LLMClient | None,
     judge_specs: list[JudgeSpec] | None = None,
-    judge_context_chars: int = 14_000,
+    judge_context_chars: int = 65_000,
 ) -> EvalScore:
     judge_specs = list(judge_specs or [])
 

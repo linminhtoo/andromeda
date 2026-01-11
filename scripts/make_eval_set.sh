@@ -5,7 +5,7 @@ mkdir -p logs/
 now=$(date +"%Y%m%d_%H%M%S")
 python3 scripts/make_eval_set.py \
   --ingest-output-dir ./data/sec_filings_md_v5/chunked_1024_128 \
-  --out ./eval/eval_queries.jsonl \
+  --out ./eval/eval_queries_v2.jsonl \
   --max-docs 200 \
   --n-factual 30 \
   --n-open-ended 60 \

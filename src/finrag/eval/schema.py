@@ -191,6 +191,8 @@ class EvalGeneration(BaseModel):
     draft_answer: str | None = None
     final_answer: str | None = None
     top_chunks: list[RetrievedChunk] = Field(default_factory=list)
+    # Optional: pre-rerank retrieval candidates (if recorded by the runner).
+    retrieved_chunks: list[RetrievedChunk] = Field(default_factory=list)
 
     timing_ms: dict[str, float] = Field(default_factory=dict)
     error: str | None = None

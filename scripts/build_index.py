@@ -8,12 +8,13 @@ contains:
 
 This script embeds and upserts the chunks into a local Qdrant store or Milvus collection.
 BM25 is rebuilt at runtime from stored payloads in `QdrantHybridRetriever`, or fitted once
-before indexing when using Milvus + BM25 sparse vectors.
+before indexing when using legacy Milvus + BM25 sparse vectors (client-side BM25EmbeddingFunction).
 
     To add new documents to an existing collection without re-embedding existing chunks,
-    use `--expand-collection` (requires stable chunk IDs across runs). For Milvus+BM25,
-    expansion will refit BM25 and re-embed sparse vectors for existing chunks (dense vectors
-    are reused from the existing collection).
+    use `--expand-collection` (requires stable chunk IDs across runs). For Milvus built-in BM25,
+    expansion does not require refitting because Milvus maintains BM25 statistics internally.
+    For legacy Milvus+BM25 sparse vectors, expansion will refit BM25 and re-embed sparse vectors
+    for existing chunks (dense vectors are reused from the existing collection).
 """
 
 import argparse
@@ -431,13 +432,15 @@ def main() -> int:
             sparse_embedding_function=sparse_fn,
             context_builder=context_builder,
             context_metadata_key=args.context_metadata_key,
+            # TODO: phase out this hotfix argument
+            legacy_bm25=os.getenv("MILVUS_LEGACY_BM25", "false").strip().lower() == "true",
         )
 
         if args.overwrite_collection and retriever.client.has_collection(args.collection_name):
             logger.warning(f"Dropping collection: {args.collection_name}")
             retriever.client.drop_collection(args.collection_name)
 
-        if use_sparse and retriever.uses_bm25:
+        if use_sparse and retriever.bm25_requires_fit:
             # NOTE: BM25 parameters depend on corpus statistics, so we always refit when expanding.
             if args.expand_collection:
                 logger.warning(
@@ -477,10 +480,11 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
 
     # NOTE: when adding new documents to an existing collection,
-    # we should avoid re-contextualising chunks (expensive), and re-creating dense embeddings
-    # BM25 sparse embeddings do need to be re-created for all documents since the corpus has changed
-    # via --expand-collection, we try to provide an API
-    # to efficiently "expand" an existing collection with new documents
+    # we should avoid re-contextualising chunks (expensive), and re-creating dense embeddings.
+    # For Milvus built-in BM25, sparse statistics are handled internally. For legacy client-side
+    # BM25 sparse vectors, sparse embeddings must be re-created when the corpus changes.
+    # Via --expand-collection, we try to provide an API to efficiently "expand" an existing
+    # collection with new documents.
     try:
         milvus_retriever: MilvusContextualRetriever | None = None
         if args.retriever_backend == "milvus":
@@ -500,12 +504,12 @@ def main() -> int:
             if args.expand_collection:
                 existing_chunk_ids = retriever.existing_chunk_ids([ch.id for ch in doc_chunks])
 
-                # Milvus+BM25: update sparse vectors for existing chunks using stored dense vectors/payloads.
+                # Legacy Milvus+BM25: update sparse vectors for existing chunks using stored dense vectors/payloads.
                 if (
                     milvus_retriever is not None
                     and existing_chunk_ids
                     and milvus_retriever.use_sparse
-                    and milvus_retriever.uses_bm25
+                    and milvus_retriever.bm25_requires_fit
                 ):
                     if milvus_retriever.sparse_embedding_function is None:
                         raise RuntimeError("Milvus sparse_embedding_function is not configured.")

@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
+import threading
+from tqdm import tqdm
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +13,7 @@ from dotenv import load_dotenv
 
 from finrag.eval.io import dump_jsonl, load_jsonl
 from finrag.eval.judges import get_judge_client
-from finrag.eval.schema import EvalGeneration, EvalQuery
+from finrag.eval.schema import EvalGeneration, EvalQuery, EvalScore
 from finrag.eval.scoring import score_one, summarize
 from finrag.eval.runner import save_json
 
@@ -45,6 +48,27 @@ def _write_review_csv(rows: list[dict[str, Any]], path: Path) -> None:
             w.writerow(r)
 
 
+def _load_existing_human_labels(path: Path) -> dict[str, tuple[str, str]]:
+    if not path.exists():
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    try:
+        with path.open("r", encoding="utf-8", newline="") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                qid = (row.get("query_id") or row.get("id") or "").strip()
+                if not qid:
+                    continue
+                lab = (row.get("human_label") or "").strip()
+                notes = row.get("human_notes") or ""
+                if lab == "" and notes == "":
+                    continue
+                out[qid] = (lab, notes)
+    except Exception:
+        return {}
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Score a run directory produced by scripts/run_eval.py.")
     ap.add_argument("--run-dir", required=True, help="Run directory containing eval_queries.jsonl + generations.jsonl.")
@@ -52,7 +76,13 @@ def main() -> None:
     ap.add_argument("--judge-provider", default=None)
     ap.add_argument("--judge-model", default=None)
     ap.add_argument("--judge-base-url", default=None)
-    ap.add_argument("--judge-context-chars", type=int, default=14_000)
+    ap.add_argument("--judge-context-chars", type=int, default=65_000)
+    ap.add_argument(
+        "--judge-workers",
+        type=int,
+        default=1,
+        help="Thread parallelism for judge API calls (only used when judge is enabled).",
+    )
     ap.add_argument("--max-items", type=int, default=None)
     ap.add_argument(
         "--kinds",
@@ -84,16 +114,61 @@ def main() -> None:
     if not queries:
         raise SystemExit("No items to score (check --kinds/--max-items).")
 
-    judge_llm = (
-        None
-        if args.no_judge
-        else get_judge_client(provider=args.judge_provider, chat_model=args.judge_model, base_url=args.judge_base_url)
-    )
+    if args.judge_workers < 1:
+        raise SystemExit("--judge-workers must be >= 1")
 
-    scores = [
-        score_one(q, gens_by_id.get(q.id), judge_llm=judge_llm, judge_context_chars=args.judge_context_chars)
-        for q in queries
-    ]
+    judge_client_kwargs = {
+        "provider": args.judge_provider,
+        "chat_model": args.judge_model,
+        "base_url": args.judge_base_url,
+    }
+
+    if args.no_judge or args.judge_workers == 1:
+        judge_llm = (
+            None
+            if args.no_judge
+            else get_judge_client(
+                provider=judge_client_kwargs["provider"],
+                chat_model=judge_client_kwargs["chat_model"],
+                base_url=judge_client_kwargs["base_url"],
+            )
+        )
+        scores: list[EvalScore] = []
+        for q in tqdm(queries, total=len(queries), desc="Scoring eval queries"):
+            scores.append(
+                score_one(q, gens_by_id.get(q.id), judge_llm=judge_llm, judge_context_chars=args.judge_context_chars)
+            )
+    else:
+        thread_local = threading.local()
+
+        def _score_query_threadsafe(q: EvalQuery) -> EvalScore:
+            if not hasattr(thread_local, "judge_llm"):
+                thread_local.judge_llm = get_judge_client(
+                    provider=judge_client_kwargs["provider"],
+                    chat_model=judge_client_kwargs["chat_model"],
+                    base_url=judge_client_kwargs["base_url"],
+                )
+            return score_one(
+                q,
+                gens_by_id.get(q.id),
+                judge_llm=thread_local.judge_llm,
+                judge_context_chars=args.judge_context_chars,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.judge_workers) as ex:
+            fut_to_idx = {ex.submit(_score_query_threadsafe, q): i for i, q in enumerate(queries)}
+            scored: list[EvalScore | None] = [None] * len(queries)
+            for fut in tqdm(
+                concurrent.futures.as_completed(fut_to_idx),
+                total=len(fut_to_idx),
+                desc=f"Scoring eval queries with {args.judge_workers} judge workers",
+            ):
+                i = fut_to_idx[fut]
+                scored[i] = fut.result()
+            if any(s is None for s in scored):
+                raise RuntimeError("Internal error: missing score result")
+            scores = [s for s in scored if s is not None]
+
     summary = summarize(scores)
 
     dump_jsonl(scores, run_dir / "scores.jsonl")
@@ -102,7 +177,9 @@ def main() -> None:
     # A merged, single-record-per-case JSONL is easiest to grep through.
     cases: list[dict[str, Any]] = []
     review_rows: list[dict[str, Any]] = []
-    for q, s in zip(queries, scores):
+    # NOTE: this serves to preserve any existing human labels/notes from prior runs of score_eval.py
+    existing_labels = _load_existing_human_labels(run_dir / "review.csv")
+    for q, s in tqdm(zip(queries, scores), total=len(queries), desc="Building cases/review.csv"):
         g = gens_by_id.get(q.id)
         case = {
             "query": q.model_dump(mode="json"),
@@ -149,8 +226,8 @@ def main() -> None:
                 "judge_explanation": (judge0.explanation if judge0 is not None and judge0.explanation else ""),
                 "final_answer": (g.final_answer if g is not None and g.final_answer else ""),
                 "top_chunks_compact": (_compact_top_chunks(g) if g is not None else ""),
-                "human_label": "",
-                "human_notes": "",
+                "human_label": (existing_labels.get(q.id, ("", ""))[0]),
+                "human_notes": (existing_labels.get(q.id, ("", ""))[1]),
             }
         )
 
