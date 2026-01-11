@@ -354,6 +354,7 @@
         <button class="btn" id="newChatBtn" title="Clear the current chat view (does not delete history)">New chat</button>
         <button class="btn" id="reloadHistoryBtn" title="Reload persisted history">Reload history</button>
         <button class="btn" id="exportHistoryBtn" title="Download history as JSON">Export</button>
+        <a class="btn" href="/review" target="_blank" rel="noopener" title="Open review UI (eval runs + live traces)">Review</a>
         <button class="btn danger" id="clearHistoryBtn" title="Delete persisted server history">Clear history</button>
       </div>
     </div>
@@ -1716,17 +1717,30 @@
       }
     }
 
-    let activeStream = null; // { controller, requestId }
+	    let activeStream = null; // { controller, requestId }
 
-    function appendProgress(line) {
-      const prev = String(els.progressLog.textContent || '');
-      const next = prev ? (prev + '\n' + String(line)) : String(line);
-      els.progressLog.textContent = next;
-      els.progressLog.scrollTop = els.progressLog.scrollHeight;
-    }
+	    function appendProgress(line) {
+	      const prev = String(els.progressLog.textContent || '');
+	      const next = prev ? (prev + '\n' + String(line)) : String(line);
+	      els.progressLog.textContent = next;
+	      els.progressLog.scrollTop = els.progressLog.scrollHeight;
+	    }
 
-    let ingestedCompanies = [];
-    let ingestedStatusBase = '';
+	    function formatDuration(ms) {
+	      if (ms === null || ms === undefined) return '';
+	      const n = Number(ms);
+	      if (!Number.isFinite(n) || n < 0) return '';
+	      if (n < 1000) return `${Math.round(n)}ms`;
+	      const s = n / 1000;
+	      if (s < 10) return `${s.toFixed(2)}s`;
+	      if (s < 60) return `${s.toFixed(1)}s`;
+	      const m = Math.floor(s / 60);
+	      const rs = s - m * 60;
+	      return `${m}m${rs.toFixed(0)}s`;
+	    }
+
+	    let ingestedCompanies = [];
+	    let ingestedStatusBase = '';
 
     function renderIngestedCompanies() {
       if (!els.ingestedList || !els.ingestedCountPill) return;
@@ -1803,9 +1817,9 @@
       activeStream = null;
     }
 
-    async function doQuery(question) {
-      const settings = currentSettings();
-      writeSettings(settings);
+	    async function doQuery(question) {
+	      const settings = currentSettings();
+	      writeSettings(settings);
 
       els.queryBtn.disabled = true;
       els.stopBtn.disabled = false;
@@ -1828,14 +1842,45 @@
       lastRerankedChunks = [];
       lastRetrievedChunks = [];
 
-      let draftText = '';
-      let finalText = '';
-      let draftRenderTimer = null;
-      let finalRenderTimer = null;
-      let streamState = null;
+	      let draftText = '';
+	      let finalText = '';
+	      let draftRenderTimer = null;
+	      let finalRenderTimer = null;
+	      let streamState = null;
+	      const queryT0 = performance.now();
+	      const stepStarts = new Map(); // step -> perf.now()
+	      const stepDurations = new Map(); // step -> ms
+	      const startStep = (step) => {
+	        const s = String(step || '').trim();
+	        if (!s) return;
+	        if (!stepStarts.has(s)) stepStarts.set(s, performance.now());
+	      };
+	      const finishStep = (step, serverMs) => {
+	        const s = String(step || '').trim();
+	        if (!s) return null;
+	        let ms = null;
+	        if (typeof serverMs === 'number' && Number.isFinite(serverMs) && serverMs >= 0) {
+	          ms = serverMs;
+	        } else {
+	          const t0 = stepStarts.get(s);
+	          if (typeof t0 === 'number') ms = performance.now() - t0;
+	        }
+	        if (ms != null) stepDurations.set(s, ms);
+	        return ms;
+	      };
+	      const stepSummary = () => {
+	        const order = ['retrieve', 'rerank', 'draft', 'final'];
+	        const parts = [];
+	        for (const k of order) {
+	          if (!stepDurations.has(k)) continue;
+	          const ms = stepDurations.get(k);
+	          parts.push(`${k} ${formatDuration(ms)}`);
+	        }
+	        return parts.length ? parts.join(' · ') : '';
+	      };
 
-      try {
-        await stopActiveQuery();
+	      try {
+	        await stopActiveQuery();
         const controller = new AbortController();
         streamState = { controller, requestId: null };
         activeStream = streamState;
@@ -1868,7 +1913,7 @@
           }, 120);
         };
 
-        while (true) {
+	        while (true) {
           const { value, done } = await reader.read();
           if (done) break;
           buf += decoder.decode(value, { stream: true });
@@ -1880,47 +1925,54 @@
             let evt = null;
             try { evt = JSON.parse(line); } catch { continue; }
 
-            const type = String(evt?.type || '');
-            if (type === 'start') {
-              streamState.requestId = String(evt?.request_id || '');
-              els.requestIdPill.textContent = streamState.requestId ? ('req ' + streamState.requestId.slice(0, 8)) : 'req';
-              appendProgress('Started ' + els.requestIdPill.textContent);
-              continue;
-            }
+	            const type = String(evt?.type || '');
+	            if (type === 'start') {
+	              streamState.requestId = String(evt?.request_id || '');
+	              els.requestIdPill.textContent = streamState.requestId ? ('req ' + streamState.requestId.slice(0, 8)) : 'req';
+	              appendProgress('Started ' + els.requestIdPill.textContent);
+	              continue;
+	            }
 
-            if (type === 'status') {
-              const msg = String(evt?.message || '');
-              const step = String(evt?.step || '');
-              els.queryStatus.textContent = msg || (step ? ('Step: ' + step) : '');
-              appendProgress(step ? (step + ': ' + msg) : msg);
-              if (step === 'draft') {
-                els.draftStatePill.textContent = 'streaming';
-                els.draftDetails.open = true;
+	            if (type === 'status') {
+	              const msg = String(evt?.message || '');
+	              const step = String(evt?.step || '');
+	              if (step) startStep(step);
+	              els.queryStatus.textContent = msg || (step ? ('Step: ' + step) : '');
+	              appendProgress(step ? (step + ': ' + msg) : msg);
+	              if (step === 'draft') {
+	                els.draftStatePill.textContent = 'streaming';
+	                els.draftDetails.open = true;
               }
               continue;
             }
 
-            if (type === 'retrieved') {
-              const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
-              lastRetrievedChunks = chunks;
-              renderChunks(chunks, { container: els.retrievedChunks, countPill: els.retrievedCountPill });
-              els.retrievedDetails.open = true;
-              appendProgress('Retrieved ' + String(evt?.count ?? chunks.length) + ' chunks');
-              continue;
-            }
+	            if (type === 'retrieved') {
+	              const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
+	              lastRetrievedChunks = chunks;
+	              renderChunks(chunks, { container: els.retrievedChunks, countPill: els.retrievedCountPill });
+	              els.retrievedDetails.open = true;
+	              const ms = finishStep('retrieve', evt?.step_ms ?? evt?.retrieve_ms);
+	              const dur = formatDuration(ms);
+	              const count = String(evt?.count ?? chunks.length);
+	              appendProgress(dur ? (`retrieve: ${dur} · ${count} chunks`) : (`Retrieved ${count} chunks`));
+	              continue;
+	            }
 
-            if (type === 'reranked') {
-              const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
-              lastRerankedChunks = chunks;
-              updateCitationTargetsFromChunks(chunks);
-              renderChunks(chunks, { container: els.chunks, countPill: els.chunkCountPill });
-              lastChunksBySource = buildChunksBySource(chunks);
-              populateSourceSelect();
-              scheduleDraftRender();
-              scheduleFinalRender();
-              appendProgress('Reranked ' + String(evt?.count ?? chunks.length) + ' chunks');
-              continue;
-            }
+	            if (type === 'reranked') {
+	              const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
+	              lastRerankedChunks = chunks;
+	              updateCitationTargetsFromChunks(chunks);
+	              renderChunks(chunks, { container: els.chunks, countPill: els.chunkCountPill });
+	              lastChunksBySource = buildChunksBySource(chunks);
+	              populateSourceSelect();
+	              scheduleDraftRender();
+	              scheduleFinalRender();
+	              const ms = finishStep('rerank', evt?.step_ms ?? evt?.rerank_ms);
+	              const dur = formatDuration(ms);
+	              const count = String(evt?.count ?? chunks.length);
+	              appendProgress(dur ? (`rerank: ${dur} · ${count} chunks`) : (`Reranked ${count} chunks`));
+	              continue;
+	            }
 
             if (type === 'draft_delta') {
               const delta = String(evt?.delta || '');
@@ -1932,11 +1984,13 @@
               continue;
             }
 
-            if (type === 'draft_done') {
-              els.draftStatePill.textContent = 'done';
-              appendProgress('Draft ready');
-              continue;
-            }
+	            if (type === 'draft_done') {
+	              els.draftStatePill.textContent = 'done';
+	              const ms = finishStep('draft', evt?.step_ms ?? evt?.draft_ms);
+	              const dur = formatDuration(ms);
+	              appendProgress(dur ? (`draft: ${dur} · ready`) : 'Draft ready');
+	              continue;
+	            }
 
             if (type === 'final_delta') {
               const delta = String(evt?.delta || '');
@@ -1947,22 +2001,23 @@
               continue;
             }
 
-            if (type === 'cancelled') {
-              els.queryStatus.textContent = 'Cancelled.';
-              appendProgress('Cancelled');
-              break;
-            }
+	            if (type === 'cancelled') {
+	              els.queryStatus.textContent = 'Cancelled.';
+	              const elapsed = performance.now() - queryT0;
+	              appendProgress(`Cancelled · ${formatDuration(elapsed)}`);
+	              break;
+	            }
 
-            if (type === 'error') {
-              const err = String(evt?.error || 'Unknown error');
-              els.queryStatus.textContent = 'Error: ' + err;
-              appendProgress('Error: ' + err);
-              break;
-            }
+	            if (type === 'error') {
+	              const err = String(evt?.error || 'Unknown error');
+	              els.queryStatus.textContent = 'Error: ' + err;
+	              appendProgress('Error: ' + err);
+	              break;
+	            }
 
-            if (type === 'done') {
-              const data = evt?.response || {};
-              lastQueryResponse = data;
+	            if (type === 'done') {
+	              const data = evt?.response || {};
+	              lastQueryResponse = data;
               els.queryStatus.textContent = '';
 
               // Re-render with the final, full payload (includes full chunk text/context).
@@ -1981,14 +2036,20 @@
               els.copyAnswerBtn.disabled = !String(finalText || '').trim();
               els.copyDebugBtn.disabled = false;
 
-              // Refresh persisted history so the new entry shows up with its server timestamp/id.
-              await loadHistoryFromServer();
-              appendProgress('Done in ' + String(evt?.elapsed_ms ?? '') + 'ms');
-              break;
-            }
-          }
-        }
-      } catch (e) {
+	              // Refresh persisted history so the new entry shows up with its server timestamp/id.
+	              await loadHistoryFromServer();
+	              finishStep('final', evt?.final_ms);
+	              const totalMs = Number(evt?.elapsed_ms);
+	              const total = Number.isFinite(totalMs) ? totalMs : (performance.now() - queryT0);
+	              const summary = stepSummary();
+	              appendProgress(
+	                `Done in ${formatDuration(total)}${summary ? (' · ' + summary) : ''}`
+	              );
+	              break;
+	            }
+	          }
+	        }
+	      } catch (e) {
         if (String(e?.name || '') === 'AbortError') {
           els.queryStatus.textContent = 'Cancelled.';
           appendProgress('Cancelled');
