@@ -321,11 +321,6 @@ class ReviewUpdateResponse(BaseModel):
 router = APIRouter()
 
 
-@router.get("/")
-def review_root():
-    return RedirectResponse(url="/review")
-
-
 @router.get("/favicon.ico")
 def review_favicon():
     if not FAVICON_PATH.exists():

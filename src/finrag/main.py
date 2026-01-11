@@ -926,6 +926,7 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 }
             )
 
+            # TODO: simplify this if-else. duplicated code for the draft answer streaming.
             if settings.enable_refine:
                 yield ndjson_bytes(
                     {"type": "status", "step": "draft", "message": "Generating draft…", "is_draft": True}
