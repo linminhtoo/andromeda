@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable, Optional, Protocol, cast
 
 import numpy as np
 from loguru import logger
-from pymilvus import AnnSearchRequest, DataType, MilvusClient, RRFRanker
+from pymilvus import AnnSearchRequest, DataType, Function, FunctionType, MilvusClient, RRFRanker
 from pymilvus.model.hybrid import BGEM3EmbeddingFunction
 from pymilvus.model.sparse import BM25EmbeddingFunction
 from qdrant_client import QdrantClient
@@ -207,6 +207,8 @@ class QdrantHybridRetriever:
             self._bm25 = None
             self._bm25_dirty = False
             return
+        # TODO and FIXME: deprecate this and migrate to proper built-in BM25.
+        # BM25Okapi requires full corpus rebuild on ingesting new documents (same issue as legacy Milvus BM25).
         self._bm25 = BM25Okapi(self._bm25_corpus)
         self._bm25_dirty = False
 
@@ -466,12 +468,11 @@ class MilvusContextualRetriever:
 
     Notes
     -----
-    - One issue with this design is the storing of sparse vectors in Milvus,
-        which makes online ingestion with BM25 or other sparse methods problematic.
-        To keep sparse vectors consistent, BM25 should be fitted/loaded and the
-        entire index re-built in batch after ingestion.
-        An option is to use BGE-M3 sparse embeddings which do not require fitting.
-        Lastly, one could disable sparse vectors for online ingestion.
+    - When using Milvus built-in BM25 (recommended), new chunks can be inserted
+        without refitting a local BM25 model: Milvus maintains the BM25 index and
+        corpus statistics internally.
+    - When using vector-based sparse embeddings (e.g. BGE-M3 sparse vectors),
+        sparse vectors are computed client-side and stored in Milvus.
 
     Parameters
     ----------
@@ -517,6 +518,8 @@ class MilvusContextualRetriever:
         index_text_key: str = "index_text",
         context_metadata_key: str = "context",
         dense_embedding_function: DenseEmbedder | None = None,
+        # TODO: phase out this hotfix argument
+        legacy_bm25: bool = False,
     ):
         if dense_embedding_function is None:
             if llm_client is None:
@@ -532,12 +535,17 @@ class MilvusContextualRetriever:
         self.sparse_embedding_function = sparse_embedding_function
         self._bm25_path = bm25_path
         self._bm25_ready = False
+        self._bm25_builtin = not legacy_bm25  # For backward compatibility
+        self._bm25_text_field = "text"
+        self._bm25_output_field = "sparse_vector"
 
         if self.use_sparse and self.sparse_embedding_function is None:
             if isinstance(dense_embedding_function, BGEM3EmbeddingFunction):
                 self.sparse_embedding_function = dense_embedding_function
             else:
                 self.sparse_embedding_function = BM25EmbeddingFunction()
+                self._bm25_builtin = True
+        logger.info(f"Using built-in BM25: {self._bm25_builtin}, legacy_bm25={legacy_bm25}")
 
         self._context_builder = context_builder
         self._index_text_key = index_text_key
@@ -551,30 +559,80 @@ class MilvusContextualRetriever:
     def uses_bm25(self) -> bool:
         return isinstance(self.sparse_embedding_function, BM25EmbeddingFunction)
 
+    @property
+    def bm25_requires_fit(self) -> bool:
+        """
+        Whether BM25 requires local fitting/loading.
+
+        If the collection uses Milvus built-in BM25 (function-based), this is False.
+        """
+
+        return bool(self.use_sparse and self.uses_bm25 and not self._bm25_builtin)
+
+    @staticmethod
+    def _truthy(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+        return False
+
+    def _detect_builtin_bm25(self, info: dict[str, Any]) -> bool:
+        fields = info.get("fields") or info.get("schema", {}).get("fields")
+        if not isinstance(fields, list):
+            return False
+
+        text_field: dict[str, Any] | None = None
+        sparse_field: dict[str, Any] | None = None
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            name = field.get("name")
+            if name == self._bm25_text_field:
+                text_field = field
+            elif name == self._bm25_output_field:
+                sparse_field = field
+
+        if not text_field or not sparse_field:
+            return False
+
+        # Best-effort checks for Milvus built-in BM25 schema.
+        # Some Milvus deployments don't expose function metadata in describe_collection(),
+        # so we treat the presence of a dedicated analyzed text field as the primary signal.
+        text_params = text_field.get("params") or {}
+        if "enable_analyzer" in text_params and not self._truthy(text_params.get("enable_analyzer")):
+            return False
+        return True
+
     def _load_existing_collection(self) -> None:
         if not self.client.has_collection(self.collection_name):
-            return
-        if self.vector_dim is not None:
             return
         try:
             info = cast(dict[str, Any], self.client.describe_collection(self.collection_name))
         except Exception:
             return
-        fields = info.get("fields") or info.get("schema", {}).get("fields")
-        if not isinstance(fields, list):
-            return
-        for field in fields:
-            if not isinstance(field, dict):
-                continue
-            if field.get("name") == "dense_vector":
-                params = field.get("params") or {}
-                dim = params.get("dim")
-                if isinstance(dim, int):
-                    self.vector_dim = dim
-                break
+        if self.vector_dim is None:
+            fields = info.get("fields") or info.get("schema", {}).get("fields")
+            if not isinstance(fields, list):
+                return
+            for field in fields:
+                if not isinstance(field, dict):
+                    continue
+                if field.get("name") == "dense_vector":
+                    params = field.get("params") or {}
+                    dim = params.get("dim")
+                    if isinstance(dim, int):
+                        self.vector_dim = dim
+                    break
+
+        # Detect whether this collection is configured for Milvus built-in BM25.
+        if self.use_sparse and self.uses_bm25:
+            self._bm25_builtin = self._detect_builtin_bm25(info)
 
     def _load_bm25(self) -> None:
-        if not (self.use_sparse and self.uses_bm25 and self._bm25_path):
+        if not (self.bm25_requires_fit and self._bm25_path):
             return
         path = Path(self._bm25_path)
         if not path.exists():
@@ -636,36 +694,38 @@ class MilvusContextualRetriever:
         schema.add_field(field_name="chunk_id", datatype=DataType.VARCHAR, is_primary=True, max_length=256)
         schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=dense_dim)
         if self.use_sparse:
-            schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
+            if self.uses_bm25 and self._bm25_builtin:
+                schema.add_field(
+                    field_name=self._bm25_text_field, datatype=DataType.VARCHAR, max_length=16384, enable_analyzer=True
+                )
+                schema.add_field(
+                    field_name=self._bm25_output_field,
+                    datatype=DataType.SPARSE_FLOAT_VECTOR,
+                    description="BM25 sparse embedding auto-generated by Milvus built-in BM25 function",
+                )
+                bm25_function = Function(
+                    name="text_bm25_emb",
+                    input_field_names=[self._bm25_text_field],
+                    output_field_names=[self._bm25_output_field],
+                    function_type=FunctionType.BM25,
+                )
+                schema.add_function(bm25_function)
+            else:
+                schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
         schema.add_field(field_name="payload", datatype=DataType.JSON)
-
-        # TODO / FIXME: use Milvus recommended way to build BM25 index that doesn't require manual fitting of BM25 corpus
-        # see: https://milvus.io/docs/full-text-search.md#Define-the-BM25-function
-        # schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=1000, enable_analyzer=True) # Text field
-        # schema.add_field(field_name="sparse", datatype=DataType.SPARSE_FLOAT_VECTOR) # Sparse vector field; no dim required for sparse vectors
-        # bm25_function = Function(
-        #     name="text_bm25_emb", # Function name
-        #     input_field_names=["text"], # Name of the VARCHAR field containing raw text data
-        #     output_field_names=["sparse"], # Name of the SPARSE_FLOAT_VECTOR field reserved to store generated embeddings
-        #     function_type=FunctionType.BM25, # Set to `BM25`
-        # )
-        # schema.add_function(bm25_function)
-        # index_params = client.prepare_index_params()
-        # index_params.add_index(
-        #     field_name="sparse",
-        #     index_type="SPARSE_INVERTED_INDEX",
-        #     metric_type="BM25",
-        #     params={
-        #         "inverted_index_algo": "DAAT_MAXSCORE",
-        #         "bm25_k1": 1.2,
-        #         "bm25_b": 0.75
-        #     }
-        # )
 
         index_params = self.client.prepare_index_params()
         index_params.add_index(field_name="dense_vector", index_type="FLAT", metric_type="IP")
         if self.use_sparse:
-            index_params.add_index(field_name="sparse_vector", index_type="SPARSE_INVERTED_INDEX", metric_type="IP")
+            if self.uses_bm25 and self._bm25_builtin:
+                index_params.add_index(
+                    field_name=self._bm25_output_field,
+                    index_type="SPARSE_INVERTED_INDEX",
+                    metric_type="BM25",
+                    params={"bm25_k1": 1.2, "bm25_b": 0.75, "inverted_index_algo": "DAAT_MAXSCORE"},
+                )
+            else:
+                index_params.add_index(field_name="sparse_vector", index_type="SPARSE_INVERTED_INDEX", metric_type="IP")
 
         self.client.create_collection(
             collection_name=self.collection_name, schema=schema, index_params=index_params, enable_dynamic_field=True
@@ -689,6 +749,8 @@ class MilvusContextualRetriever:
 
         if not self.uses_bm25:
             raise RuntimeError("BM25 fitting is only available when using BM25EmbeddingFunction.")
+        if self._bm25_builtin:
+            raise RuntimeError("Milvus built-in BM25 does not require fitting; rebuild the collection if needed.")
         if self.sparse_embedding_function is None:
             raise RuntimeError("Sparse embedding function is not configured.")
         self.sparse_embedding_function.fit(corpus)  # type: ignore[call-arg]
@@ -706,6 +768,8 @@ class MilvusContextualRetriever:
 
         if not self.uses_bm25:
             raise RuntimeError("BM25 loading is only available when using BM25EmbeddingFunction.")
+        if self._bm25_builtin:
+            raise RuntimeError("Milvus built-in BM25 does not use on-disk BM25 parameters.")
         if self.sparse_embedding_function is None:
             raise RuntimeError("Sparse embedding function is not configured.")
         self.sparse_embedding_function.load(path)  # type: ignore[call-arg]
@@ -723,6 +787,8 @@ class MilvusContextualRetriever:
 
         if not self.uses_bm25:
             raise RuntimeError("BM25 saving is only available when using BM25EmbeddingFunction.")
+        if self._bm25_builtin:
+            raise RuntimeError("Milvus built-in BM25 does not use on-disk BM25 parameters.")
         out_path = Path(path or self._bm25_path or "")
         if not out_path:
             raise ValueError("BM25 path is not set")
@@ -824,18 +890,20 @@ class MilvusContextualRetriever:
         chunks : list[DocChunk]
             Chunks to embed and insert.
         rebuild_bm25 : bool, optional
-            Reserved for API parity. When using BM25 sparse embeddings,
-            call `fit_bm25` or `load_bm25` before indexing.
+            Reserved for API parity. For Milvus built-in BM25 (recommended),
+            no local BM25 fitting/loading is required. For legacy BM25 sparse
+            vectors (client-side BM25EmbeddingFunction), call `fit_bm25` or
+            `load_bm25` before indexing.
 
         Raises
         ------
         RuntimeError
-            If BM25 sparse embeddings are enabled but not fitted/loaded.
+            If legacy BM25 sparse embeddings are enabled but not fitted/loaded.
         """
 
         if not chunks:
             return
-        if self.use_sparse and self.uses_bm25 and not self._bm25_ready:
+        if self.bm25_requires_fit and not self._bm25_ready:
             raise RuntimeError("BM25 sparse embeddings are not ready. Call fit_bm25() or load_bm25() first.")
 
         texts_with_context: list[str] = []
@@ -856,16 +924,21 @@ class MilvusContextualRetriever:
         if not self.client.has_collection(self.collection_name):
             self.build_collection(vector_dim=int(self.vector_dim or dense_vectors.shape[1]))
 
-        sparse_vectors = self._sparse_from_documents(texts_with_context) if self.use_sparse else None
+        sparse_vectors = None
+        if self.use_sparse and not (self.uses_bm25 and self._bm25_builtin):
+            sparse_vectors = self._sparse_from_documents(texts_with_context)
 
         data: list[dict[str, Any]] = []
         for idx, chunk in enumerate(chunks):
             payload = self._payload_from_chunk(chunk, contexts[idx])
             row = {"chunk_id": chunk.id, "dense_vector": dense_vectors[idx].tolist(), "payload": payload}
             if self.use_sparse:
-                if sparse_vectors is None:
-                    raise RuntimeError("use_sparse=True but sparse_vectors is None")
-                row["sparse_vector"] = self._sparse_row(sparse_vectors, idx)
+                if self.uses_bm25 and self._bm25_builtin:
+                    row[self._bm25_text_field] = texts_with_context[idx]
+                else:
+                    if sparse_vectors is None:
+                        raise RuntimeError("use_sparse=True but sparse_vectors is None")
+                    row["sparse_vector"] = self._sparse_row(sparse_vectors, idx)
             data.append(row)
 
         if hasattr(self.client, "upsert"):
@@ -911,41 +984,63 @@ class MilvusContextualRetriever:
             return []
 
         sparse_vecs = None
+        bm25_query: str | None = None
         if self.use_sparse:
-            try:
-                sparse_vecs = self._sparse_from_queries([query])
-            except Exception as exc:
-                logger.warning("Sparse query embedding failed (Milvus); falling back to dense-only: %r", exc)
-                sparse_vecs = None
-        if sparse_vecs is None and dense_vec is None:
+            if self.uses_bm25 and self._bm25_builtin:
+                bm25_query = query
+            else:
+                try:
+                    sparse_vecs = self._sparse_from_queries([query])
+                except Exception as exc:
+                    logger.warning("Sparse query embedding failed (Milvus); falling back to dense-only: %r", exc)
+                    sparse_vecs = None
+        if sparse_vecs is None and bm25_query is None and dense_vec is None:
             raise RuntimeError("Both dense and sparse query embeddings failed; cannot search.")
 
-        if self.use_sparse and sparse_vecs is not None and dense_vec is not None:
+        if self.use_sparse and dense_vec is not None and (sparse_vecs is not None or bm25_query is not None):
             dense_req = AnnSearchRequest(
                 data=[dense_vec.tolist()],
                 anns_field="dense_vector",
                 param={"metric_type": "IP"},
                 limit=max(top_k_semantic, top_k_final),
             )
-            sparse_req = AnnSearchRequest(
-                data=[self._sparse_row(sparse_vecs, 0)],
-                anns_field="sparse_vector",
-                param={"metric_type": "IP"},
-                limit=max(top_k_bm25, top_k_final),
-            )
+            if bm25_query is not None:
+                sparse_req = AnnSearchRequest(
+                    data=[bm25_query],
+                    anns_field=self._bm25_output_field,
+                    param={"metric_type": "BM25"},
+                    limit=max(top_k_bm25, top_k_final),
+                )
+            else:
+                sparse_req = AnnSearchRequest(
+                    data=[self._sparse_row(sparse_vecs, 0)],
+                    anns_field="sparse_vector",
+                    param={"metric_type": "IP"},
+                    limit=max(top_k_bm25, top_k_final),
+                )
             results = self.client.hybrid_search(
                 self.collection_name, [dense_req, sparse_req], RRFRanker(), top_k_final, output_fields=output_fields
             )
             hits = results[0] if results else []
-        elif self.use_sparse and sparse_vecs is not None and dense_vec is None:
-            results = self.client.search(
-                self.collection_name,
-                data=[self._sparse_row(sparse_vecs, 0)],
-                anns_field="sparse_vector",
-                limit=top_k_final,
-                output_fields=output_fields,
-            )
-            hits = results[0] if results else []
+        elif self.use_sparse and dense_vec is None and (sparse_vecs is not None or bm25_query is not None):
+            if bm25_query is not None:
+                results = self.client.search(
+                    self.collection_name,
+                    data=[bm25_query],
+                    anns_field=self._bm25_output_field,
+                    limit=top_k_final,
+                    output_fields=output_fields,
+                )
+                hits = results[0] if results else []
+            else:
+                results = self.client.search(
+                    self.collection_name,
+                    data=[self._sparse_row(sparse_vecs, 0)],
+                    anns_field="sparse_vector",
+                    limit=top_k_final,
+                    output_fields=output_fields,
+                )
+                hits = results[0] if results else []
         elif dense_vec is not None:
             results = self.client.search(
                 self.collection_name,
