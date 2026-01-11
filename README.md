@@ -27,14 +27,14 @@ GitHub renders these diagrams automatically (Mermaid).
 
 ```mermaid
 flowchart LR
-  EDGAR[EDGAR (SEC filings)] --> DL[scripts/download.py] --> HTML[Raw HTML]
-  HTML --> H2M[scripts/process_html_to_markdown.py<br/>(Marker + optional OCR)] --> MD[Processed Markdown]
+  EDGAR["EDGAR (SEC filings)"] --> DL[scripts/download.py] --> HTML[Raw HTML]
+  HTML --> H2M["scripts/process_html_to_markdown.py<br>(Marker + optional OCR)"] --> MD[Processed Markdown]
   MD --> CH[scripts/chunk.py] --> CHOUT[Chunk exports]
-  CHOUT --> IDX[scripts/build_index.py<br/>(BM25 + dense embeddings)] --> DB[(Hybrid index<br/>Milvus Lite / Qdrant)]
+  CHOUT --> IDX["scripts/build_index.py<br>(BM25 + dense embeddings)"] --> DB[(Hybrid index<br>Milvus Lite / Qdrant)]
 
   subgraph Models["Pluggable model endpoints"]
-    OCR[OpenAI-compatible multimodal OCR<br/>(e.g. vLLM)]
-    EMB[Embeddings<br/>(local model or OpenAI-compatible)]
+    OCR["OpenAI-compatible multimodal OCR<br>(e.g. vLLM)"]
+    EMB["Embeddings<br>(local model or OpenAI-compatible)"]
   end
 
   H2M -.-> OCR
@@ -73,10 +73,10 @@ sequenceDiagram
 ```mermaid
 flowchart TB
   Q[scripts/make_eval_set.py] --> QL[eval_queries.jsonl]
-  QL --> RUN[scripts/run_eval.py<br/>(runs the same RAG pipeline)] --> GEN[generations.jsonl]
+  QL --> RUN["scripts/run_eval.py<br>(runs the same RAG pipeline)"] --> GEN[generations.jsonl]
   GEN --> SCORE[scripts/score_eval.py] --> ART[score_summary.json + scores.jsonl + cases.jsonl + review.csv]
-  ART --> REVIEW[/review UI<br/>(label failures)] --> LABELS[human_label + human_notes]
-  LABELS --> ALIGN[scripts/align_judge.py] --> RPT[judge alignment report<br/>(precision/recall/F1/kappa)]
+  ART --> REVIEW["/review UI<br>(label failures)"] --> LABELS[human_label + human_notes]
+  LABELS --> ALIGN[scripts/align_judge.py] --> RPT["judge alignment report<br>(precision/recall/F1/kappa)"]
   RPT --> ITER[iterate on retrieval/prompt/config] --> RUN
 ```
 
