@@ -14,7 +14,6 @@ export MILVUS_SPARSE_EMBEDDING="bm25"
 export CONTEXT_STRATEGY="neighbors"
 export CONTEXT_WINDOW=8
 
-# FIXME: MILVUS_URI only accepts https:// , so we must use MILVUS_PATH for local storage
 export MILVUS_PATH="/home/mlin/repos/z_scratch/financial-rag/data/sec_filings_md_v5/chunked_1024_128/milvus.db"
 export BM25_PATH="/home/mlin/repos/z_scratch/financial-rag/data/sec_filings_md_v5/chunked_1024_128/bm25.pkl"
 export FINRAG_DOC_INDEX_PATH="/home/mlin/repos/z_scratch/financial-rag/data/sec_filings_md_v5/chunked_1024_128/doc_index.jsonl"
@@ -31,6 +30,11 @@ export FINRAG_DOC_INDEX_PATH="/home/mlin/repos/z_scratch/financial-rag/data/sec_
 # FINRAG_OTEL_INCLUDE_QUESTION=false to exclude tracking questions (will only track length + fingerprint)
 export FINRAG_OTEL_CONSOLE=false
 export FINRAG_OTEL_ENABLED=true
+
+# Live trace artifacts (enabled by default)
+# FINRAG_TRACES_ENABLED=true|false (default true)
+# FINRAG_TRACES_DIR=./logs/traces (default)
+# FINRAG_TRACES_MAX_CHUNKS=50, FINRAG_TRACES_CHUNK_TEXT_CHARS=2000, FINRAG_TRACES_CHUNK_CONTEXT_CHARS=2000
 
 source /home/mlin/repos/z_scratch/financial-rag/.venv/bin/activate
 PYTHONPATH=src uvicorn finrag.main:app --host 0.0.0.0 --port 8236

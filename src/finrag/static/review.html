@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FinRAG • Eval Review</title>
+    <style>
+      :root{
+        --bg: #0b1020;
+        --panel: rgba(255,255,255,0.06);
+        --panel2: rgba(255,255,255,0.08);
+        --text: rgba(255,255,255,0.92);
+        --muted: rgba(255,255,255,0.65);
+        --border: rgba(255,255,255,0.12);
+        --accent: #7c3aed;
+        --accent2: #22c55e;
+        --danger: #ef4444;
+        --shadow: 0 18px 45px rgba(0,0,0,0.35);
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(1200px 700px at 20% 10%, rgba(124,58,237,0.28), transparent 55%),
+          radial-gradient(1100px 650px at 80% 20%, rgba(34,197,94,0.22), transparent 55%),
+          radial-gradient(900px 500px at 50% 90%, rgba(59,130,246,0.20), transparent 55%),
+          var(--bg);
+        color: var(--text);
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(14px);
+        background: linear-gradient(to bottom, rgba(11,16,32,0.92), rgba(11,16,32,0.65));
+        border-bottom: 1px solid var(--border);
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 1rem 1.25rem;
+        max-width: 1500px;
+        margin: 0 auto;
+      }
+      .brand { display: flex; align-items: baseline; gap: 0.8rem; }
+      h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.2px; }
+      .subtitle { color: var(--muted); font-size: 0.9rem; }
+      .actions { display:flex; gap: 0.5rem; align-items:center; flex-wrap: wrap; }
+      main {
+        max-width: 1800px;
+        margin: 0 auto;
+        padding: 1.25rem;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: clamp(260px, 24vw, 460px) 1fr;
+        gap: 1rem;
+        align-items: start;
+      }
+      @media (max-width: 1100px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        min-width: 0;
+      }
+      .panelHeader {
+        padding: 0.9rem 1rem;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        background: rgba(255,255,255,0.03);
+      }
+      .panelHeader h2 { margin: 0; font-size: 0.95rem; }
+      .panelBody { padding: 1rem; }
+      .muted { color: var(--muted); }
+      .row { display:flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+      .spacer { flex: 1; }
+      input[type="text"], textarea, select {
+        width: 100%;
+        padding: 0.75rem 0.85rem;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.06);
+        color: var(--text);
+        outline: none;
+      }
+      textarea { min-height: 70px; resize: vertical; }
+      input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.45); }
+      .btn {
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.06);
+        color: var(--text);
+        padding: 0.55rem 0.8rem;
+        border-radius: 999px;
+        cursor: pointer;
+        font-weight: 650;
+        letter-spacing: 0.2px;
+      }
+      .btn:hover { background: rgba(255,255,255,0.10); }
+      .btn.primary { background: linear-gradient(135deg, rgba(124,58,237,0.95), rgba(59,130,246,0.85)); border-color: rgba(124,58,237,0.25); }
+      .btn.primary:hover { filter: brightness(1.05); }
+      .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+      .pill {
+        font-size: 0.78rem;
+        padding: 0.15rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.06);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .pill.pass { border-color: rgba(34,197,94,0.35); background: rgba(34,197,94,0.12); color: rgba(220,255,232,0.92); }
+      .pill.fail { border-color: rgba(239,68,68,0.40); background: rgba(239,68,68,0.14); color: rgba(255,228,228,0.92); }
+      .pill.err { border-color: rgba(239,68,68,0.40); background: rgba(239,68,68,0.14); color: rgba(255,228,228,0.92); }
+      .pill.kind { border-color: rgba(147,197,253,0.30); background: rgba(147,197,253,0.10); color: rgba(220,236,255,0.95); }
+
+      .listControls { display:grid; grid-template-columns: 1fr; gap: 0.75rem; }
+      .filters { display:grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+      @media (max-width: 1100px) { .filters { grid-template-columns: 1fr; } }
+
+      .caseList { max-height: calc(100vh - 220px); overflow: auto; }
+      @media (max-width: 1100px) { .caseList { max-height: 60vh; } }
+      .caseItem {
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+      }
+      .caseItem:hover { background: rgba(255,255,255,0.06); }
+      .caseItem.active { background: rgba(124,58,237,0.14); }
+      .caseQ { font-weight: 650; font-size: 0.92rem; line-height: 1.25rem; }
+      .caseMeta { margin-top: 0.35rem; font-size: 0.82rem; color: var(--muted); display:flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+
+      .kv { display:grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+      @media (max-width: 980px) { .kv { grid-template-columns: 1fr; } }
+      .block { margin-top: 1rem; }
+      .blockTitle { display:flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.5rem; }
+      .blockTitle h3 { margin: 0; font-size: 0.95rem; }
+      .code {
+        font-family: var(--mono);
+        font-size: 0.86rem;
+        background: rgba(0,0,0,0.35);
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 12px;
+        padding: 0.75rem;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+      details {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.04);
+        overflow: hidden;
+      }
+      summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 0.7rem 0.85rem;
+        display:flex;
+        gap: 0.5rem;
+        align-items: center;
+        justify-content: space-between;
+        user-select: none;
+      }
+      summary::-webkit-details-marker { display: none; }
+      .chunkBody { padding: 0.85rem; border-top: 1px solid var(--border); }
+      .chunkMeta { display:flex; flex-wrap: wrap; gap: 0.5rem; align-items:center; margin-bottom: 0.6rem; }
+      .chunkMeta .mono { font-family: var(--mono); font-size: 0.82rem; }
+      .chunkText { margin-top: 0.6rem; }
+      .chunkGold summary { background: rgba(34,197,94,0.12); }
+      a { color: rgba(147,197,253,0.95); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+
+      .statusLine { font-size: 0.9rem; color: var(--muted); }
+      .statusOk { color: rgba(220,255,232,0.92); }
+      .statusBad { color: rgba(255,228,228,0.92); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="topbar">
+        <div class="brand">
+          <h1>FinRAG • Eval Review</h1>
+          <div class="subtitle">Label cases, inspect answers, and audit retrieval</div>
+        </div>
+	        <div class="actions">
+	          <select id="runSelect" title="Eval run directory"></select>
+	          <button class="btn" type="button" id="toggleJudgeBtn">Judge: off</button>
+	          <button class="btn" type="button" id="exportFailBtn">Export fails</button>
+	          <button class="btn" type="button" id="reloadBtn">Reload</button>
+	        </div>
+	      </div>
+	    </header>
+
+    <main>
+      <div class="grid">
+        <section class="panel">
+          <div class="panelHeader">
+            <h2>Cases</h2>
+            <span class="pill" id="caseCounts">—</span>
+          </div>
+          <div class="panelBody">
+            <div class="listControls">
+              <input type="text" id="search" placeholder="Search questions/tickers/tags…" />
+              <div class="filters">
+	                <select id="filterKind" title="Kind filter">
+	                  <option value="">All kinds</option>
+	                  <option value="factual">factual</option>
+	                  <option value="open_ended">open_ended</option>
+	                  <option value="refusal">refusal</option>
+	                  <option value="distractor">distractor</option>
+	                  <option value="comparison">comparison</option>
+	                  <option value="trace">trace</option>
+	                </select>
+                <select id="filterLabel" title="Label filter">
+                  <option value="">All labels</option>
+                  <option value="unlabeled">Unlabeled</option>
+                  <option value="0">Pass (0)</option>
+                  <option value="1">Fail (1)</option>
+                </select>
+              </div>
+              <div class="statusLine" id="status"></div>
+            </div>
+          </div>
+          <div class="caseList" id="caseList"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panelHeader">
+            <h2>Case</h2>
+            <div class="row">
+              <span class="pill" id="activeId">—</span>
+              <span class="pill kind" id="activeKind">—</span>
+            </div>
+          </div>
+          <div class="panelBody" id="detailEmpty">
+            <div class="muted">Select a case to begin.</div>
+          </div>
+          <div class="panelBody" id="detailContent" style="display:none;">
+            <div class="kv">
+              <div>
+                <div class="muted" style="margin-bottom:0.35rem;">Human label</div>
+                <select id="humanLabel">
+                  <option value="">Unlabeled</option>
+                  <option value="0">Pass (0)</option>
+                  <option value="1">Fail (1)</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted" style="margin-bottom:0.35rem;">Save</div>
+                <div class="row">
+                  <button class="btn primary" type="button" id="saveBtn">Save</button>
+                  <span class="statusLine" id="saveStatus"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="block">
+              <div class="blockTitle"><h3>Notes</h3></div>
+              <textarea id="humanNotes" placeholder="Optional comments about answer quality, retrieval quality, failure modes…"></textarea>
+            </div>
+
+            <div class="block">
+              <div class="blockTitle"><h3>Question</h3></div>
+              <div class="code" id="questionText"></div>
+              <div class="row" style="margin-top:0.6rem;">
+                <span class="pill" id="metaTags"></span>
+                <span class="pill" id="metaTickers"></span>
+                <span class="pill" id="metaJudge"></span>
+              </div>
+            </div>
+
+            <div class="block" id="judgeBlock" style="display:none;">
+              <details>
+                <summary>
+                  <span>Judge</span>
+                  <span class="pill" id="judgePredPill">—</span>
+                </summary>
+                <div class="chunkBody">
+                  <div class="row" style="margin-bottom:0.6rem;">
+                    <span class="pill" id="judgeIdPill">—</span>
+                  </div>
+                  <div class="muted" style="margin-bottom:0.35rem;">Explanation</div>
+                  <div class="code" id="judgeExplanation"></div>
+                </div>
+              </details>
+            </div>
+
+            <div class="block">
+              <div class="blockTitle"><h3>Final answer</h3></div>
+              <div class="code" id="finalAnswer"></div>
+            </div>
+
+            <div class="block">
+              <details>
+                <summary>
+                  <span>Draft answer</span>
+                  <span class="pill">toggle</span>
+                </summary>
+                <div class="chunkBody">
+                  <div class="code" id="draftAnswer"></div>
+                </div>
+              </details>
+            </div>
+
+            <div class="block">
+              <div class="blockTitle"><h3>Reranked chunks (used for answer)</h3></div>
+              <div id="rerankedEmpty" class="muted">No chunks recorded.</div>
+              <div id="chunksReranked"></div>
+            </div>
+
+            <div class="block">
+              <details id="retrievedDetails">
+                <summary>
+                  <span>Retrieved chunks (pre-rerank)</span>
+                  <span class="pill" id="retrievedCountPill">—</span>
+                </summary>
+                <div class="chunkBody">
+                  <div id="retrievedEmpty" class="muted">This run does not include `retrieved_chunks` (rerun eval with updated code).</div>
+                  <div id="chunksRetrieved"></div>
+                </div>
+              </details>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+	      const els = {
+	        runSelect: document.getElementById('runSelect'),
+	        toggleJudgeBtn: document.getElementById('toggleJudgeBtn'),
+	        exportFailBtn: document.getElementById('exportFailBtn'),
+	        reloadBtn: document.getElementById('reloadBtn'),
+	        status: document.getElementById('status'),
+        search: document.getElementById('search'),
+        filterKind: document.getElementById('filterKind'),
+        filterLabel: document.getElementById('filterLabel'),
+        caseCounts: document.getElementById('caseCounts'),
+        caseList: document.getElementById('caseList'),
+        detailEmpty: document.getElementById('detailEmpty'),
+        detailContent: document.getElementById('detailContent'),
+        activeId: document.getElementById('activeId'),
+        activeKind: document.getElementById('activeKind'),
+        humanLabel: document.getElementById('humanLabel'),
+        humanNotes: document.getElementById('humanNotes'),
+        saveBtn: document.getElementById('saveBtn'),
+        saveStatus: document.getElementById('saveStatus'),
+        questionText: document.getElementById('questionText'),
+        metaTags: document.getElementById('metaTags'),
+        metaTickers: document.getElementById('metaTickers'),
+        metaJudge: document.getElementById('metaJudge'),
+        judgeBlock: document.getElementById('judgeBlock'),
+        judgePredPill: document.getElementById('judgePredPill'),
+        judgeIdPill: document.getElementById('judgeIdPill'),
+        judgeExplanation: document.getElementById('judgeExplanation'),
+        draftAnswer: document.getElementById('draftAnswer'),
+        finalAnswer: document.getElementById('finalAnswer'),
+        chunksReranked: document.getElementById('chunksReranked'),
+        chunksRetrieved: document.getElementById('chunksRetrieved'),
+        rerankedEmpty: document.getElementById('rerankedEmpty'),
+        retrievedEmpty: document.getElementById('retrievedEmpty'),
+        retrievedDetails: document.getElementById('retrievedDetails'),
+        retrievedCountPill: document.getElementById('retrievedCountPill'),
+      };
+
+      const state = {
+        runs: [],
+        runDir: null,
+        cases: [],
+        filtered: [],
+        selectedId: null,
+        selectedDetail: null,
+        saveTimer: null,
+        dirty: false,
+        showJudge: false,
+      };
+
+      function setStatus(msg, kind) {
+        els.status.textContent = msg || '';
+        els.status.classList.remove('statusOk', 'statusBad');
+        if (kind === 'ok') els.status.classList.add('statusOk');
+        if (kind === 'bad') els.status.classList.add('statusBad');
+      }
+
+      function setSaveStatus(msg, kind) {
+        els.saveStatus.textContent = msg || '';
+        els.saveStatus.classList.remove('statusOk', 'statusBad');
+        if (kind === 'ok') els.saveStatus.classList.add('statusOk');
+        if (kind === 'bad') els.saveStatus.classList.add('statusBad');
+      }
+
+      async function fetchJSON(url, opts) {
+        const res = await fetch(url, opts);
+        if (!res.ok) {
+          let detail = '';
+          try {
+            const j = await res.json();
+            detail = j && j.detail ? String(j.detail) : JSON.stringify(j);
+          } catch {
+            detail = await res.text();
+          }
+          throw new Error(`HTTP ${res.status}: ${detail || res.statusText}`);
+        }
+        return await res.json();
+      }
+
+      function updateURL(runDir, queryId) {
+        const u = new URL(window.location.href);
+        if (runDir) u.searchParams.set('run_dir', runDir);
+        if (queryId) u.searchParams.set('query_id', queryId);
+        history.replaceState(null, '', u.toString());
+      }
+
+      function normalizeLabel(lbl) {
+        const v = (lbl || '').trim();
+        if (v === '0') return '0';
+        if (v === '1') return '1';
+        return '';
+      }
+
+      function syncJudgeToggleUI() {
+        els.toggleJudgeBtn.textContent = state.showJudge ? 'Judge: on' : 'Judge: off';
+      }
+
+      function labelPill(lbl) {
+        const v = normalizeLabel(lbl);
+        if (v === '0') return { text: 'pass', cls: 'pass' };
+        if (v === '1') return { text: 'fail', cls: 'fail' };
+        return { text: 'unlabeled', cls: '' };
+      }
+
+      function judgePill(pred) {
+        const v = normalizeLabel(pred);
+        if (v === '0') return { text: 'judge: pass', cls: 'pass' };
+        if (v === '1') return { text: 'judge: fail', cls: 'fail' };
+        return { text: 'judge: —', cls: '' };
+      }
+
+      function applyFilters() {
+        const q = (els.search.value || '').trim().toLowerCase();
+        const kind = (els.filterKind.value || '').trim();
+        const lab = (els.filterLabel.value || '').trim();
+
+        const out = [];
+        for (const c of state.cases) {
+          if (kind && c.kind !== kind) continue;
+          const cl = normalizeLabel(c.human_label);
+          if (lab === 'unlabeled' && cl !== '') continue;
+          if (lab === '0' && cl !== '0') continue;
+          if (lab === '1' && cl !== '1') continue;
+          if (q) {
+            const hay = [
+              c.question || '',
+              c.tags || '',
+              c.target_tickers || '',
+              c.query_id || ''
+            ].join(' ').toLowerCase();
+            if (!hay.includes(q)) continue;
+          }
+          out.push(c);
+        }
+        state.filtered = out;
+      }
+
+      function renderCaseList() {
+        els.caseList.innerHTML = '';
+        applyFilters();
+
+        const n = state.cases.length;
+        const nPass = state.cases.filter(c => normalizeLabel(c.human_label) === '0').length;
+        const nFail = state.cases.filter(c => normalizeLabel(c.human_label) === '1').length;
+        const nUnl = n - nPass - nFail;
+        els.caseCounts.textContent = `total ${n} • pass ${nPass} • fail ${nFail} • unlabeled ${nUnl}`;
+
+        if (!state.filtered.length) {
+          const empty = document.createElement('div');
+          empty.className = 'caseItem';
+          empty.innerHTML = '<div class="muted">No cases match current filters.</div>';
+          els.caseList.appendChild(empty);
+          return;
+        }
+
+        for (const c of state.filtered) {
+          const item = document.createElement('div');
+          item.className = 'caseItem' + (c.query_id === state.selectedId ? ' active' : '');
+          item.dataset.qid = c.query_id;
+
+          const q = document.createElement('div');
+          q.className = 'caseQ';
+          q.textContent = c.question || '(missing question)';
+          item.appendChild(q);
+
+          const meta = document.createElement('div');
+          meta.className = 'caseMeta';
+
+          const lp = labelPill(c.human_label);
+          const p1 = document.createElement('span');
+          p1.className = 'pill ' + (lp.cls || '');
+          p1.textContent = lp.text;
+          meta.appendChild(p1);
+
+          const p2 = document.createElement('span');
+          p2.className = 'pill kind';
+          p2.textContent = c.kind || '';
+          meta.appendChild(p2);
+
+          if (state.showJudge && c.judge_prediction) {
+            const jp = judgePill(c.judge_prediction);
+            const pj = document.createElement('span');
+            pj.className = 'pill ' + (jp.cls || '');
+            pj.textContent = jp.text;
+            meta.appendChild(pj);
+          }
+
+          if (c.target_tickers) {
+            const p3 = document.createElement('span');
+            p3.className = 'pill';
+            p3.textContent = c.target_tickers;
+            meta.appendChild(p3);
+          }
+
+          if (c.has_error) {
+            const pe = document.createElement('span');
+            pe.className = 'pill err';
+            pe.textContent = 'error';
+            meta.appendChild(pe);
+          }
+
+          item.appendChild(meta);
+          item.addEventListener('click', () => selectCase(c.query_id));
+          els.caseList.appendChild(item);
+        }
+      }
+
+      function renderChunks(container, chunks, opts) {
+        container.innerHTML = '';
+        if (!Array.isArray(chunks) || !chunks.length) return;
+
+        const goldChunkId = (opts && opts.goldChunkId) ? String(opts.goldChunkId) : '';
+        const goldDocId = (opts && opts.goldDocId) ? String(opts.goldDocId) : '';
+
+        chunks.forEach((ch, idx) => {
+          const details = document.createElement('details');
+          const isGold = (goldChunkId && ch.chunk_id === goldChunkId) || (goldDocId && ch.doc_id === goldDocId && ch.chunk_id === goldChunkId);
+          if (isGold) details.classList.add('chunkGold');
+
+          const summary = document.createElement('summary');
+          const left = document.createElement('span');
+          left.textContent = `#${idx + 1}  score=${(typeof ch.score === 'number' ? ch.score.toFixed(4) : ch.score)}`;
+
+          const right = document.createElement('span');
+          const doc = ch.metadata && ch.metadata.doc ? ch.metadata.doc : {};
+          const bits = [];
+          if (doc.ticker) bits.push(doc.ticker);
+          if (doc.filing_type) bits.push(doc.filing_type);
+          if (doc.filing_date) bits.push(doc.filing_date);
+          right.textContent = bits.join(' • ') || (ch.doc_id ? String(ch.doc_id).slice(0, 8) : '');
+
+          summary.appendChild(left);
+          summary.appendChild(right);
+          details.appendChild(summary);
+
+          const body = document.createElement('div');
+          body.className = 'chunkBody';
+
+          const meta = document.createElement('div');
+          meta.className = 'chunkMeta';
+
+          const mono1 = document.createElement('span');
+          mono1.className = 'pill';
+          mono1.textContent = ch.chunk_id ? `chunk ${String(ch.chunk_id).slice(0, 16)}` : 'chunk';
+          meta.appendChild(mono1);
+
+          if (ch.page_no !== null && ch.page_no !== undefined && ch.page_no !== '') {
+            const pg = document.createElement('span');
+            pg.className = 'pill';
+            pg.textContent = `page ${ch.page_no}`;
+            meta.appendChild(pg);
+          }
+
+          if (ch.source) {
+            const a = document.createElement('a');
+            a.href = `/source?path=${encodeURIComponent(ch.source)}`;
+            a.target = '_blank';
+            a.rel = 'noreferrer';
+            a.textContent = 'open source';
+            meta.appendChild(a);
+          }
+
+          body.appendChild(meta);
+
+          if (ch.context) {
+            const ctx = document.createElement('div');
+            ctx.className = 'muted';
+            ctx.style.marginBottom = '0.6rem';
+            ctx.textContent = String(ch.context);
+            body.appendChild(ctx);
+          }
+
+          const text = document.createElement('div');
+          text.className = 'code chunkText';
+          text.textContent = String(ch.text || ch.preview || '');
+          body.appendChild(text);
+
+          details.appendChild(body);
+          container.appendChild(details);
+        });
+      }
+
+      function setDetailVisible(on) {
+        els.detailEmpty.style.display = on ? 'none' : 'block';
+        els.detailContent.style.display = on ? 'block' : 'none';
+      }
+
+      function renderDetail(detail) {
+        if (!detail) {
+          setDetailVisible(false);
+          return;
+        }
+
+        setDetailVisible(true);
+        const row = detail.review_row || {};
+        const gen = detail.generation || {};
+
+        els.activeId.textContent = detail.query_id || '—';
+        els.activeKind.textContent = row.kind || '—';
+
+        els.questionText.textContent = row.question || '';
+        els.metaTags.textContent = row.tags ? `tags: ${row.tags}` : 'tags: —';
+        els.metaTickers.textContent = row.target_tickers ? `tickers: ${row.target_tickers}` : 'tickers: —';
+        if (state.showJudge) {
+          const jp = judgePill(row.judge_prediction || '');
+          els.metaJudge.textContent = jp.text;
+          els.metaJudge.className = 'pill ' + (jp.cls || '');
+          els.metaJudge.style.display = '';
+        } else {
+          els.metaJudge.style.display = 'none';
+        }
+
+        els.finalAnswer.textContent = gen.final_answer || row.final_answer || '';
+        els.draftAnswer.textContent = gen.draft_answer || '';
+
+        els.humanLabel.value = normalizeLabel(row.human_label);
+        els.humanNotes.value = row.human_notes || '';
+        state.dirty = false;
+        setSaveStatus('', null);
+
+        if (state.showJudge) {
+          els.judgeBlock.style.display = '';
+          const jp = judgePill(row.judge_prediction || '');
+          els.judgePredPill.textContent = jp.text.replace('judge: ', '');
+          els.judgePredPill.className = 'pill ' + (jp.cls || '');
+          els.judgeIdPill.textContent = row.judge_id ? `judge_id: ${row.judge_id}` : 'judge_id: —';
+          els.judgeExplanation.textContent = row.judge_explanation || '(no explanation recorded)';
+        } else {
+          els.judgeBlock.style.display = 'none';
+        }
+
+        const goldChunkId = row.gold_chunk_id || '';
+        const goldDocId = row.gold_doc_id || '';
+
+        const reranked = Array.isArray(gen.top_chunks) ? gen.top_chunks : [];
+        els.rerankedEmpty.style.display = reranked.length ? 'none' : 'block';
+        renderChunks(els.chunksReranked, reranked, { goldChunkId, goldDocId });
+
+        const retrieved = Array.isArray(gen.retrieved_chunks) ? gen.retrieved_chunks : [];
+        els.retrievedCountPill.textContent = retrieved.length ? `${retrieved.length} chunks` : '—';
+        els.retrievedEmpty.style.display = retrieved.length ? 'none' : 'block';
+        renderChunks(els.chunksRetrieved, retrieved, { goldChunkId, goldDocId });
+      }
+
+      async function loadRuns() {
+        const data = await fetchJSON('/api/review/runs');
+        state.runs = (data.runs || []);
+        els.runSelect.innerHTML = '';
+
+        if (!state.runs.length) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = 'No runs found';
+          els.runSelect.appendChild(opt);
+          return;
+        }
+
+        for (const r of state.runs) {
+          const opt = document.createElement('option');
+          opt.value = r.run_dir;
+          opt.textContent = r.has_review_csv ? r.name : `${r.name} (no review.csv)`;
+          if (!r.has_review_csv) opt.disabled = true;
+          els.runSelect.appendChild(opt);
+        }
+      }
+
+      async function loadCases(runDir) {
+        setStatus('Loading cases…', null);
+        const data = await fetchJSON(`/api/review/cases?run_dir=${encodeURIComponent(runDir)}`);
+        state.runDir = data.run_dir;
+        state.cases = data.cases || [];
+        state.selectedId = null;
+        state.selectedDetail = null;
+        renderCaseList();
+        setStatus(`Loaded ${state.cases.length} cases`, 'ok');
+      }
+
+      async function selectCase(queryId) {
+        if (!queryId || queryId === state.selectedId) return;
+        state.selectedId = queryId;
+        renderCaseList();
+        setStatus('Loading case…', null);
+        try {
+          const detail = await fetchJSON(`/api/review/case?run_dir=${encodeURIComponent(state.runDir)}&query_id=${encodeURIComponent(queryId)}`);
+          state.selectedDetail = detail;
+          renderDetail(detail);
+          updateURL(state.runDir, queryId);
+          setStatus('', null);
+        } catch (e) {
+          setStatus(String(e), 'bad');
+        }
+      }
+
+      function scheduleAutoSave() {
+        state.dirty = true;
+        if (state.saveTimer) clearTimeout(state.saveTimer);
+        state.saveTimer = setTimeout(() => saveCurrent(true), 700);
+      }
+
+      async function saveCurrent(isAuto) {
+        if (!state.selectedDetail || !state.selectedId) return;
+        const qid = state.selectedId;
+        const label = normalizeLabel(els.humanLabel.value);
+        const notes = els.humanNotes.value || '';
+
+        els.saveBtn.disabled = true;
+        setSaveStatus(isAuto ? 'Autosaving…' : 'Saving…', null);
+
+        try {
+          await fetchJSON('/api/review/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              run_dir: state.runDir,
+              query_id: qid,
+              human_label: label === '' ? null : parseInt(label, 10),
+              human_notes: notes,
+            })
+          });
+
+          // Update local state (avoid full reload).
+          const c = state.cases.find(x => x.query_id === qid);
+          if (c) c.human_label = label;
+          if (state.selectedDetail && state.selectedDetail.review_row) {
+            state.selectedDetail.review_row.human_label = label;
+            state.selectedDetail.review_row.human_notes = notes;
+          }
+
+          renderCaseList();
+          setSaveStatus('Saved', 'ok');
+          state.dirty = false;
+        } catch (e) {
+          setSaveStatus(String(e), 'bad');
+        } finally {
+          els.saveBtn.disabled = false;
+        }
+      }
+
+      function getInitialRunDir() {
+        const params = new URLSearchParams(window.location.search);
+        const fromUrl = (params.get('run_dir') || '').trim();
+        if (fromUrl) return fromUrl;
+        const first = state.runs.find(r => r.has_review_csv);
+        return first ? first.run_dir : null;
+      }
+
+      function getInitialQueryId() {
+        const params = new URLSearchParams(window.location.search);
+        const fromUrl = (params.get('query_id') || '').trim();
+        return fromUrl || null;
+      }
+
+      async function init() {
+        state.showJudge = (localStorage.getItem('finrag_review_show_judge') || '') === '1';
+        syncJudgeToggleUI();
+
+        try {
+          await loadRuns();
+        } catch (e) {
+          setStatus(String(e), 'bad');
+          return;
+        }
+
+        const runDir = getInitialRunDir();
+        if (!runDir) {
+          setStatus('No runnable eval runs found (need review.csv).', 'bad');
+          return;
+        }
+
+        // Ensure dropdown reflects the initial runDir (it may not be in the list if FINRAG_REVIEW_ROOTS differs).
+        els.runSelect.value = runDir;
+        if (els.runSelect.value !== runDir) {
+          const opt = document.createElement('option');
+          opt.value = runDir;
+          opt.textContent = runDir;
+          els.runSelect.insertBefore(opt, els.runSelect.firstChild);
+          els.runSelect.value = runDir;
+        }
+
+        try {
+          await loadCases(runDir);
+        } catch (e) {
+          setStatus(String(e), 'bad');
+          return;
+        }
+
+        const wantId = getInitialQueryId();
+        const firstId = wantId || (state.filtered[0] ? state.filtered[0].query_id : (state.cases[0] ? state.cases[0].query_id : null));
+        if (firstId) await selectCase(firstId);
+      }
+
+	      els.toggleJudgeBtn.addEventListener('click', () => {
+	        state.showJudge = !state.showJudge;
+	        localStorage.setItem('finrag_review_show_judge', state.showJudge ? '1' : '0');
+	        syncJudgeToggleUI();
+	        renderCaseList();
+	        renderDetail(state.selectedDetail);
+	      });
+
+	      els.exportFailBtn.addEventListener('click', () => {
+	        const runDir = state.runDir || els.runSelect.value;
+	        if (!runDir) return;
+	        const url = `/api/review/export_jsonl?run_dir=${encodeURIComponent(runDir)}&label=1`;
+	        const a = document.createElement('a');
+	        a.href = url;
+	        document.body.appendChild(a);
+	        a.click();
+	        a.remove();
+	      });
+
+	      els.runSelect.addEventListener('change', async () => {
+	        const runDir = els.runSelect.value;
+	        if (!runDir) return;
+        updateURL(runDir, null);
+        try {
+          await loadCases(runDir);
+          if (state.cases[0]) await selectCase(state.cases[0].query_id);
+        } catch (e) {
+          setStatus(String(e), 'bad');
+        }
+      });
+
+      els.reloadBtn.addEventListener('click', async () => {
+        if (!state.runDir) return;
+        try {
+          await loadCases(state.runDir);
+          if (state.cases[0]) await selectCase(state.cases[0].query_id);
+        } catch (e) {
+          setStatus(String(e), 'bad');
+        }
+      });
+
+      els.search.addEventListener('input', () => renderCaseList());
+      els.filterKind.addEventListener('change', () => renderCaseList());
+      els.filterLabel.addEventListener('change', () => renderCaseList());
+
+      els.saveBtn.addEventListener('click', () => saveCurrent(false));
+      els.humanLabel.addEventListener('change', () => scheduleAutoSave());
+      els.humanNotes.addEventListener('input', () => scheduleAutoSave());
+      els.humanNotes.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          saveCurrent(false);
+        }
+      });
+
+      window.addEventListener('beforeunload', (e) => {
+        if (!state.dirty) return;
+        e.preventDefault();
+        e.returnValue = '';
+      });
+
+      init();
+    </script>
+  </body>
+</html>
