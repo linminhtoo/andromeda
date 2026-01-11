@@ -611,6 +611,40 @@ Key inputs/outputs:
 - Input: `--html-dir` (usually `./data/sec_filings/raw_htmls/`)
 - Output root: `--output-dir` (creates `intermediate_pdf/`, `processed_markdown/`, `debug/`)
 
+#### What happens under the hood (Marker pipeline)
+
+`scripts/process_html_to_markdown.py` wraps Marker’s PDF pipeline:
+
+- **HTML → PDF (WeasyPrint)**: renders a paginated PDF using SEC-friendly CSS (page breaks, multi-page tables). It can optionally strip the common repeated “Table of Contents” backlink artifact and re-render.
+- **PDF → Marker Document**: `PdfConverter.build_document()` creates a `Document` (pages + blocks) via layout/line/OCR builders, then runs a processor chain (heuristics + optional LLM rewrites).
+- **Document → Markdown**: `MarkdownRenderer` converts block HTML to Markdown and emits per-page metadata (used for debugging).
+
+```mermaid
+flowchart TB
+  HTML["Raw filing HTML"] --> WP["WeasyPrint render<br>(custom CSS + page breaks)"] --> PDF["Intermediate PDF"]
+  PDF --> START["PdfConverter.build_document()"]
+
+  subgraph Marker["Marker (local fork)"]
+    START --> PROVIDER["PdfProvider<br>(pdftext extraction + page rendering)"]
+    PROVIDER --> DOC["DocumentBuilder<br>(PageGroup low-res + high-res images)"]
+    DOC --> LAYOUT["LayoutBuilder (Surya)<br>detect regions/blocks"]
+    DOC --> LINES["LineBuilder<br>(pdftext vs Surya; decide OCR)"]
+    LINES --> OCR["OcrBuilder (Surya)<br>OCR pages flagged 'surya'"]
+    LAYOUT --> STRUCT["StructureBuilder<br>group captions/lists"]
+    OCR --> STRUCT
+    STRUCT --> PROCESSORS["Processor chain<br>(tables, headers, references, ...)"]
+    PROCESSORS --> RENDER["MarkdownRenderer<br>HTML → Markdown + metadata"]
+  end
+
+  PROCESSORS --> SERVICE["LLM service<br>(CustomOpenAIService + X-Marker-* trace headers)"] --> LLMAPI["OpenAI-compatible endpoint<br>(e.g. vLLM)"]
+  RENDER --> OUT["Outputs<br>processed_markdown/ and debug/"]
+```
+
+Notable Marker LLM steps for SEC filings:
+- `LLMTableProcessor`: runs after `TableProcessor` (cell grid + initial HTML), then corrects table HTML from table images (chunks long tables by rows; can re-run low-confidence chunks). `--analysis-style deep` often improves corrections on noisy OCR.
+- `LLMSectionHeaderProcessor`: runs after `SectionHeaderProcessor` (find candidate headers), then corrects heading levels (optionally chunks by token count and injects neighbor text + recent-header context). You can route these calls to a different endpoint via `SECTIONHEADER_OPENAI_BASE_URL`.
+- `LLMPageCorrectionProcessor`: optional final per-page reorder/rewrite pass for stubborn layout/OCR issues.
+
 Args you’ll most often change:
 - `--openai-model`: the multimodal model name exposed by your OpenAI-compatible server (e.g. vLLM).
 - `--year-cutoff`: filter to recent filings (based on `..._YYYY-MM-DD.html` filename suffix).
