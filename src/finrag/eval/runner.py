@@ -1,17 +1,30 @@
+import atexit
 import concurrent.futures
 import json
-import os
 import multiprocessing
+import os
+import re
+import shutil
+import signal
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
+
+from loguru import logger
+from tqdm import tqdm
 
 from finrag.dataclasses import TopChunk
+from finrag.eval.schema import EvalGeneration, EvalKind, EvalQuery, RetrievedChunk
 from finrag.generation_controls import AnswerStyle, GenerationSettings, resolve_generation_settings
-from finrag.eval.schema import EvalGeneration, EvalQuery, RetrievedChunk, EvalKind
-from finrag.main import RAGService
+
+if TYPE_CHECKING:
+    # try to avoid importing main here to prevent potential issues with multiprocessing
+    from finrag.main import RAGService
+else:
+    RAGService = Any
 
 
 @dataclass(frozen=True)
@@ -58,6 +71,13 @@ _WORKER_SETTINGS: GenerationSettings | None = None
 _WORKER_CFG: RunConfig | None = None
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -92,8 +112,9 @@ def _run_one(
     t0 = time.perf_counter()
     created = _utcnow()
     try:
-        resp = service.answer_question(question, settings)
+        resp = service.answer_question(question, settings, include_retrieved_chunks=True)
         chunks = [_to_retrieved_chunk(tc, cfg) for tc in (resp.top_chunks or [])[: cfg.max_chunks]]
+        retrieved_chunks = [_to_retrieved_chunk(tc, cfg) for tc in (resp.retrieved_chunks or [])[: cfg.max_chunks]]
         gen = EvalGeneration(
             query_id=query_id,
             kind=kind,
@@ -114,9 +135,11 @@ def _run_one(
             draft_answer=resp.draft_answer,
             final_answer=resp.final_answer,
             top_chunks=chunks,
+            retrieved_chunks=retrieved_chunks,
         )
         ok = True
     except Exception as exc:  # noqa: BLE001
+        logger.error(f"Error during eval generation for query_id={query_id}: {exc}", exc_info=True)
         gen = EvalGeneration(
             query_id=query_id,
             kind=kind,
@@ -132,31 +155,129 @@ def _run_one(
     return gen, ms, ok
 
 
-def _worker_init(cfg_dict: dict[str, Any], storage_path: str | None) -> None:
+def get_worker_index() -> int:
+    identity = multiprocessing.current_process()._identity
+    if identity:
+        return identity[0]
+    match = re.search(r"(\d+)$", multiprocessing.current_process().name)
+    if match:
+        return int(match.group(1))
+    return 1
+
+
+def _worker_init(
+    cfg_dict: dict[str, Any], storage_path: str | None, milvus_copies_dir: str | None, gpu_ids: list[str] | None = None
+) -> None:
     global _WORKER_SERVICE, _WORKER_SETTINGS, _WORKER_CFG
 
     if storage_path is not None:
         os.environ["QDRANT_STORAGE_PATH"] = storage_path
+
+    if gpu_ids:
+        worker_index = get_worker_index()
+        gpu_id = gpu_ids[(worker_index - 1) % len(gpu_ids)]
+        logger.info(f"Worker {worker_index} assigned GPU {gpu_id} (from {gpu_ids})")
+
+        # In a spawn'ed worker, this runs before we import `finrag.main` (and
+        # before sentence-transformers loads torch models), so we can safely
+        # restrict visibility. This ensures code that defaults to `cuda:0`
+        # actually uses the intended physical GPU.
+        # NOTE that this is different from logic in process_html_to_markdown.py where setting env var was too late
+        # and torch.cuda.set_device(gpu_id) was required instead.
+        os.environ["CUDA_DEVICE_ORDER"] = os.environ.get("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.set_device(0)
+        except Exception as exc:  # noqa: BLE001 - best effort logging
+            logger.warning(f"Unable to pin CUDA device for worker {worker_index}: {exc}")
+
+    # HOTFIX: Milvus Lite uses an exclusive lock on local DB files, so spawned
+    # workers cannot share the same `MILVUS_PATH`. Duplicate the DB per worker.
+    backend = os.getenv("RETRIEVER_BACKEND", "milvus").strip().lower()
+    milvus_uri = (os.getenv("MILVUS_URI") or "").strip()
+    if backend == "milvus" and "://" not in milvus_uri:
+        original_home = (os.environ.get("HOME") or "").strip()
+        milvus_path = (os.getenv("MILVUS_PATH") or "").strip()
+        if not milvus_path:
+            project_root = Path(__file__).resolve().parents[3]
+            milvus_path = str(project_root / "data" / "milvus.db")
+        base = Path(os.path.expanduser(milvus_path)).resolve()
+        if base.is_dir():
+            base = base / "milvus.db"
+        if base.exists():
+            if milvus_copies_dir:
+                copies_root = Path(milvus_copies_dir)
+                copies_root.mkdir(parents=True, exist_ok=True)
+                worker_dir = copies_root / f"worker_{os.getpid()}"
+                worker_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                worker_dir = Path(tempfile.mkdtemp(prefix="finrag_eval_milvus_"))
+
+            # Milvus Lite uses `~/.cache/milvus` for internal storage; when many
+            # milvus-lite instances start concurrently, they can race on the same
+            # shared cache dir. Isolate HOME/XDG_CACHE_HOME per worker process.
+            os.environ["HOME"] = str(worker_dir)
+            os.environ["XDG_CACHE_HOME"] = str(worker_dir / ".cache")
+            (worker_dir / ".cache" / "milvus").mkdir(parents=True, exist_ok=True)
+
+            # Keep HF / torch caches pointed at the user's real home so we don't
+            # redownload models per worker.
+            if original_home:
+                os.environ.setdefault("HF_HOME", str(Path(original_home) / ".cache" / "huggingface"))
+                os.environ.setdefault("TORCH_HOME", str(Path(original_home) / ".cache" / "torch"))
+                os.environ.setdefault(
+                    "SENTENCE_TRANSFORMERS_HOME", str(Path(original_home) / ".cache" / "sentence_transformers")
+                )
+
+            dst = worker_dir / base.name
+            shutil.copy2(base, dst)
+            os.environ["MILVUS_PATH"] = str(dst)
+            os.environ.pop("MILVUS_URI", None)
+
+            keep_worker_dirs = _env_bool("FINRAG_EVAL_KEEP_WORKDIRS", default=False)
+
+            def _cleanup_milvus_lite() -> None:
+                # Best-effort cleanup: milvus-lite starts a subprocess; ensure it
+                # is stopped when the worker process exits. Then delete the
+                # per-worker directory unless explicitly kept for debugging.
+                try:
+                    from milvus_lite.server_manager import server_manager_instance
+
+                    server_manager_instance.release_all()
+                except Exception:
+                    pass
+                if not keep_worker_dirs:
+                    shutil.rmtree(worker_dir, ignore_errors=True)
+
+            atexit.register(_cleanup_milvus_lite)
 
     cfg = RunConfig(**cfg_dict)
     settings = cfg.resolved_settings()
 
     import finrag.main as main
 
-    _WORKER_SERVICE = main.rag_service
+    _WORKER_SERVICE = main.get_rag_service()
     _WORKER_SETTINGS = settings
     _WORKER_CFG = cfg
 
 
 def _worker_run_one(query_id: str, kind: EvalKind, question: str) -> tuple[str, float, bool]:
-    if _WORKER_SERVICE is None or _WORKER_SETTINGS is None or _WORKER_CFG is None:  # pragma: no cover
+    if _WORKER_SERVICE is None or _WORKER_SETTINGS is None or _WORKER_CFG is None:
         raise RuntimeError("Worker not initialized")
     gen, ms, ok = _run_one(_WORKER_SERVICE, query_id, kind, question, _WORKER_SETTINGS, _WORKER_CFG)
     return gen.model_dump_json(), ms, ok
 
 
 def run_generation(
-    queries: Iterable[EvalQuery], *, out_jsonl: str | Path, cfg: RunConfig, storage_path: str | None = None
+    queries: Iterable[EvalQuery],
+    *,
+    out_jsonl: str | Path,
+    cfg: RunConfig,
+    storage_path: str | None = None,
+    gpu_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Run `EvalQuery`s through the app's `RAGService.answer_question()` pipeline and
@@ -164,8 +285,9 @@ def run_generation(
     """
     p = Path(out_jsonl)
     p.parent.mkdir(parents=True, exist_ok=True)
+    keep_worker_dirs = _env_bool("FINRAG_EVAL_KEEP_WORKDIRS", default=False)
 
-    # `finrag.main` constructs a global `rag_service` at import time.
+    # `finrag.main` lazily constructs a global RAG service via `get_rag_service()`.
     # Reuse it here to avoid initializing the whole stack twice.
     if storage_path is not None:
         os.environ["QDRANT_STORAGE_PATH"] = storage_path
@@ -178,13 +300,19 @@ def run_generation(
     concurrency = max(1, int(cfg.concurrency))
     wall_t0 = time.perf_counter()
 
+    # Allow setting GPU IDs via env without touching CLI.
+    if gpu_ids is None:
+        raw = (os.getenv("FINRAG_EVAL_GPU_IDS") or "").strip()
+        if raw:
+            gpu_ids = [s.strip() for s in raw.split(",") if s.strip()]
+
     if concurrency <= 1 or len(query_specs) <= 1:
         import finrag.main as main
 
-        service = main.rag_service
+        service = main.get_rag_service()
         settings = cfg.resolved_settings()
         with p.open("w", encoding="utf-8") as f:
-            for query_id, kind, question in query_specs:
+            for query_id, kind, question in tqdm(query_specs, desc="Inferencing on eval queries"):
                 gen, ms, ok = _run_one(service, query_id, kind, question, settings, cfg)
                 n += 1
                 total_ms += ms
@@ -200,18 +328,46 @@ def run_generation(
             next_to_write = 0
 
             mp_ctx = multiprocessing.get_context("spawn")
+            milvus_copies_root = p.parent / "_milvus_eval_copies"
+            if not keep_worker_dirs:
+                shutil.rmtree(milvus_copies_root, ignore_errors=True)
+            milvus_copies_root.mkdir(parents=True, exist_ok=True)
+
+            def _cleanup_parent() -> None:
+                if keep_worker_dirs:
+                    return
+                shutil.rmtree(milvus_copies_root, ignore_errors=True)
+
+            atexit.register(_cleanup_parent)
+
+            def _signal_handler(signum, _frame) -> None:
+                _cleanup_parent()
+                raise SystemExit(128 + int(signum))
+
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                try:
+                    signal.signal(sig, _signal_handler)
+                except Exception:
+                    pass
+
+            effective_workers = min(concurrency, len(query_specs))
+
             with concurrent.futures.ProcessPoolExecutor(
-                max_workers=min(concurrency, len(query_specs)),
+                max_workers=effective_workers,
                 mp_context=mp_ctx,
                 initializer=_worker_init,
-                initargs=(cfg.to_dict(), storage_path),
+                initargs=(cfg.to_dict(), storage_path, str(milvus_copies_root), gpu_ids),
             ) as ex:
                 fut_to_idx = {
                     ex.submit(_worker_run_one, query_id, kind, question): i
                     for i, (query_id, kind, question) in enumerate(query_specs)
                 }
 
-                for fut in concurrent.futures.as_completed(fut_to_idx):
+                for fut in tqdm(
+                    concurrent.futures.as_completed(fut_to_idx),
+                    total=len(fut_to_idx),
+                    desc=f"Inferencing on eval queries with {concurrency} workers",
+                ):
                     i = fut_to_idx[fut]
                     query_id, kind, question = query_specs[i]
                     try:
@@ -241,11 +397,16 @@ def run_generation(
                         f.write(pending.pop(next_to_write))
                         f.write("\n")
                         next_to_write += 1
+                        import torch
 
-            if pending:  # pragma: no cover
+                        torch.cuda.empty_cache()
+
+            if pending:
                 for i in sorted(pending):
                     f.write(pending[i])
                     f.write("\n")
+
+            _cleanup_parent()
 
     wall_t1 = time.perf_counter()
     wall_total_ms = (wall_t1 - wall_t0) * 1000.0

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import itertools
 import math
 import random
@@ -191,7 +189,8 @@ def _company_label(doc: dict[str, Any]) -> str:
 def _evidence_from_chunk(chunk: DocChunk, *, snippet_chars: int = 1200) -> EvidenceChunk:
     meta = chunk.metadata or {}
     section_path = meta.get("section_path") if isinstance(meta.get("section_path"), str) else None
-    snippet = (chunk.text or "").strip()
+    base_text = (meta.get("index_text") or chunk.text or "").strip()
+    snippet = base_text
     if len(snippet) > snippet_chars:
         snippet = snippet[: max(0, snippet_chars - 1)].rstrip() + "…"
     return EvidenceChunk(
@@ -332,10 +331,11 @@ def generate_factual_queries(
                 else:
                     period_s = f"for the period ended {period_end_date.strip()}"
 
-                if filing_type and filing_date and filing_date.strip():
-                    source_s = f"according to its {filing_type.strip()} filed {filing_date.strip()}"
-                    q = f"What was {company}'s {metric} {period_s}, {source_s}?"
-                elif filing_type:
+                # HOTFIX: this may be too confusing. the chunk's filing date can be many months later
+                # if filing_type and filing_date and filing_date.strip():
+                #     source_s = f"according to its {filing_type.strip()} filed {filing_date.strip()}"
+                #     q = f"What was {company}'s {metric} {period_s}, {source_s}?"
+                if filing_type:
                     q = f"What was {company}'s {metric} {period_s}, according to its {filing_type.strip()}?"
                 else:
                     q = f"What was {company}'s {metric} {period_s}?"
