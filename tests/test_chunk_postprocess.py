@@ -67,13 +67,7 @@ def test_document_context_postprocessor_extracts_from_filename_and_text() -> Non
             metadata={},
         ),
         DocChunk(
-            id="c2",
-            doc_id="doc1",
-            text="More text",
-            page_no=None,
-            headings=["APPLE INC."],
-            source=src,
-            metadata={},
+            id="c2", doc_id="doc1", text="More text", page_no=None, headings=["APPLE INC."], source=src, metadata={}
         ),
     ]
 
@@ -131,4 +125,3 @@ def test_heuristic_summary_postprocessor_builds_index_text_for_tables() -> None:
     assert "\nSection: Some Section" in index_text
     assert "\nPage: 3" in index_text
     assert "\n\n| A | B |" in index_text
-

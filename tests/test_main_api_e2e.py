@@ -53,4 +53,3 @@ def test_cancel_endpoint_not_found_by_default() -> None:
     resp = client.post("/cancel", json={"request_id": "does-not-exist"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "not_found"
-

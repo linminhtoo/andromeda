@@ -30,4 +30,3 @@ def test_seed_everything_makes_random_and_numpy_deterministic() -> None:
 
     assert r1 == r2
     assert n1 == n2
-

@@ -6,13 +6,7 @@ from finrag.chunking import MarkdownTableCodeFencer, MarkdownTablePreservingChun
 
 
 def test_markdown_table_code_fencer_wraps_tables_and_preserves_trailing_newline() -> None:
-    md = (
-        "| A | B |\n"
-        "|---|---|\n"
-        "| 1 | 2 |\n"
-        "\n"
-        "after\n"
-    )
+    md = "| A | B |\n|---|---|\n| 1 | 2 |\n\nafter\n"
     out = MarkdownTableCodeFencer(fence_lang="text").fence_tables(md)
     assert out.startswith("```text\n| A | B |")
     assert out.rstrip().endswith("after")
@@ -20,13 +14,7 @@ def test_markdown_table_code_fencer_wraps_tables_and_preserves_trailing_newline(
 
 
 def test_markdown_table_code_fencer_skips_existing_code_fences() -> None:
-    md = (
-        "```text\n"
-        "| A | B |\n"
-        "|---|---|\n"
-        "| 1 | 2 |\n"
-        "```\n"
-    )
+    md = "```text\n| A | B |\n|---|---|\n| 1 | 2 |\n```\n"
     out = MarkdownTableCodeFencer(fence_lang="text").fence_tables(md)
     assert out == md
 
@@ -72,14 +60,7 @@ def test_markdown_table_preserving_chunker_tracks_headings_pages_and_overlap(tmp
 
 
 def test_markdown_table_preserving_chunker_can_split_large_tables(tmp_path) -> None:
-    md = (
-        "# H\n\n"
-        "| A | B |\n"
-        "|---|---|\n"
-        "| 1 | 2 |\n"
-        "| 3 | 4 |\n"
-        "| 5 | 6 |\n"
-    )
+    md = "# H\n\n| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n"
     md_path = tmp_path / "doc.md"
     md_path.write_text(md, encoding="utf-8")
 
@@ -92,4 +73,3 @@ def test_markdown_table_preserving_chunker_can_split_large_tables(tmp_path) -> N
         lines = ch.text.splitlines()
         assert lines[0].strip().startswith("|")
         assert "---" in lines[1]
-

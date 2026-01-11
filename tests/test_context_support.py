@@ -23,13 +23,7 @@ def test_situate_context_truncates_and_calls_llm() -> None:
         return "  situated  "
 
     llm = RecordingLLM(chat_fn=chat_fn)
-    out = cs.situate_context(
-        llm,
-        context="c" * 50,
-        chunk="k" * 50,
-        max_context_chars=10,
-        max_chunk_chars=10,
-    )
+    out = cs.situate_context(llm, context="c" * 50, chunk="k" * 50, max_context_chars=10, max_chunk_chars=10)
     assert out == "situated"
 
 
@@ -102,4 +96,3 @@ def test_apply_context_strategy_unknown_raises() -> None:
     chunks = [DocChunk(id="c1", doc_id="d", text="t", page_no=None, headings=[], source="s", metadata={})]
     with pytest.raises(ValueError, match="Unknown context strategy"):
         cs.apply_context_strategy(chunks, strategy="nope", llm_for_context=RecordingLLM())
-

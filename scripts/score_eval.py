@@ -149,10 +149,7 @@ def main() -> None:
                     base_url=judge_client_kwargs["base_url"],
                 )
             return score_one(
-                q,
-                gens_by_id.get(q.id),
-                judge_llm=thread_local.judge_llm,
-                judge_context_chars=args.judge_context_chars,
+                q, gens_by_id.get(q.id), judge_llm=thread_local.judge_llm, judge_context_chars=args.judge_context_chars
             )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.judge_workers) as ex:

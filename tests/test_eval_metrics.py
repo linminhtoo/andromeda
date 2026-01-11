@@ -44,4 +44,3 @@ def test_cited_doc_ids_parses_inline_citations() -> None:
 def test_keyword_coverage_simple() -> None:
     score = keyword_coverage("We discuss revenue and margins.", ["Revenue increased a lot.", "Cash flow was strong."])
     assert score == 0.5
-

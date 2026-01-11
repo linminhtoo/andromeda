@@ -30,11 +30,7 @@ def main() -> None:
         "--concurrency", type=int, default=8, help="Max parallel questions to run (process-based; set 1 to disable)."
     )
     ap.add_argument(
-        "--gpu-ids",
-        nargs="*",
-        type=int,
-        default=None,
-        help="Optional list of GPU IDs to assign to workers.",
+        "--gpu-ids", nargs="*", type=int, default=None, help="Optional list of GPU IDs to assign to workers."
     )
 
     # Convenience: point the runner at an existing Milvus Lite + BM25 snapshot dir

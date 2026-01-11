@@ -75,4 +75,3 @@ def test_iter_chat_deltas_streams_tokens() -> None:
         return out
 
     assert asyncio.run(collect()) == ["a", "b"]
-

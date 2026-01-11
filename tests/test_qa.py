@@ -104,4 +104,3 @@ def test_answer_question_two_stage_calls_llm_twice() -> None:
     draft, final = answer_question_two_stage(llm, "Q?", reranked, draft_max_tokens=50, final_max_tokens=50)
     assert (draft, final) == ("draft1", "final1")
     assert len(llm.chat_calls) == 2
-

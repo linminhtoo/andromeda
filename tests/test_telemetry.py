@@ -32,4 +32,3 @@ def test_setup_opentelemetry_is_noop_when_disabled(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(tel, "FastAPIInstrumentor", DummyInstr)
     tel.setup_opentelemetry(FastAPI())
-

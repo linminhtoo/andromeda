@@ -584,6 +584,7 @@ def get_rag_service() -> "RAGService":
             _RAG_SERVICE = RAGService(storage_path=os.getenv("QDRANT_STORAGE_PATH"))
         return _RAG_SERVICE
 
+
 _CANCEL_LOCK = threading.Lock()
 _CANCEL_EVENTS: dict[str, threading.Event] = {}
 
@@ -704,13 +705,7 @@ def _stream_chunk_dict(sc, *, preview_chars: int, text_chars: int) -> dict:
 
 
 def _trace_chunk_dict(
-    sc,
-    *,
-    index_text_key: str,
-    context_key: str,
-    preview_chars: int,
-    text_chars: int,
-    context_chars: int,
+    sc, *, index_text_key: str, context_key: str, preview_chars: int, text_chars: int, context_chars: int
 ) -> dict:
     meta = sc.chunk.metadata if isinstance(sc.chunk.metadata, dict) else {}
     base_text = meta.get(index_text_key) or sc.chunk.text or ""

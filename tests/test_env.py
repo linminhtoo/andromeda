@@ -28,4 +28,3 @@ def test_load_project_dotenv_calls_load_dotenv_once(monkeypatch: pytest.MonkeyPa
         assert len(args) == 1
         assert isinstance(args[0], Path)
         assert Path(args[0]).name == ".env"
-

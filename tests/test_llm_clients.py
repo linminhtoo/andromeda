@@ -58,4 +58,3 @@ def test_get_llm_client_selects_wrappers(monkeypatch: pytest.MonkeyPatch) -> Non
     out2 = lc.get_llm_client(provider="mistral", chat_model="m2")
     assert isinstance(out2, DummyMistral)
     assert out2.kwargs["chat_model"] == "m2"
-

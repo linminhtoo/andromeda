@@ -50,8 +50,12 @@ class RecordingLLM:
             return np.asarray([[float(len(t or ""))] for t in texts], dtype=np.float32)
         return self.embed_fn(texts)
 
-    def chat(self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None) -> str:
-        self.chat_calls.append({"messages": list(messages), "temperature": float(temperature), "response_model": response_model})
+    def chat(
+        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
+    ) -> str:
+        self.chat_calls.append(
+            {"messages": list(messages), "temperature": float(temperature), "response_model": response_model}
+        )
         if self.chat_fn is None:
             return "OK"
         return self.chat_fn(messages, float(temperature), response_model)
@@ -67,4 +71,3 @@ class RecordingLLM:
             yield "K"
             return
         yield from self.stream_fn(messages, float(temperature), response_model)
-

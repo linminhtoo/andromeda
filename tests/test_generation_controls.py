@@ -41,4 +41,3 @@ def test_resolve_generation_settings_allows_boolean_overrides() -> None:
     s = resolve_generation_settings(mode="quick", enable_rerank=True, enable_refine=True)
     assert s.enable_rerank is True
     assert s.enable_refine is True
-

@@ -78,15 +78,7 @@ def run_dir_lock(run_dir: Path):
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
-TRACE_REVIEW_FIELDNAMES = [
-    "query_id",
-    "kind",
-    "question",
-    "tags",
-    "target_tickers",
-    "human_label",
-    "human_notes",
-]
+TRACE_REVIEW_FIELDNAMES = ["query_id", "kind", "question", "tags", "target_tickers", "human_label", "human_notes"]
 
 
 def _ensure_review_csv(run_dir: Path) -> Path:
@@ -117,7 +109,9 @@ class TraceWriteResult:
     review_path: Path
 
 
-def write_trace(*, generation: dict[str, Any], review_row: dict[str, Any], now: datetime | None = None) -> TraceWriteResult:
+def write_trace(
+    *, generation: dict[str, Any], review_row: dict[str, Any], now: datetime | None = None
+) -> TraceWriteResult:
     """
     Append a single trace to:
       - generations.jsonl (full payload)

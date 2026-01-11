@@ -50,4 +50,3 @@ def test_pdf_to_markdown_joins_pages(monkeypatch: pytest.MonkeyPatch) -> None:
     c = ocrmod.MistralOCRClient(api_key="test")
     monkeypatch.setattr(c, "pdf_to_markdown_pages", lambda _src: ["p1", "p2"])
     assert c.pdf_to_markdown("whatever.pdf", page_separator="--") == "p1--p2"
-
