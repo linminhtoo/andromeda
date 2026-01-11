@@ -648,14 +648,37 @@ Live traces (for quality monitoring):
 
 ---
 
-## Evaluation: product evals (WIP)
-
-NOTE: evaluation is a work in progress. Proceed with caution!
+## Evaluation: product-style evals
 
 This repo includes a product-style eval workflow inspired by:
 - Label a small dataset of real input/output pairs (binary pass/fail).
 - Align LLM-as-a-judge against those human labels (one judge per dimension).
-- Run the same harness after each config change.
+- Re-run the same harness after each retrieval/prompt/config change.
+
+### What gets measured (current)
+
+Deterministic metrics (available with `--no-judge`):
+- **Retrieval (all)**: `retrieved_chunks`, `retrieved_docs_unique`, `retrieved_tickers_unique` (+ `retrieved_tickers_top` for quick inspection)
+- **Retrieval (factual)**: `gold_chunk_rank`, `gold_doc_rank`, `gold_chunk_mrr`, `gold_doc_mrr`
+- **Retrieval (comparison)**: `comparison_target_tickers`, `comparison_retrieved_tickers_unique`, `comparison_all_targets_retrieved`
+- **Answer (factual)**: `numeric_matched`, `numeric_best_rel_error`, `numeric_best_pred`, `cited_doc_ids`, `cited_gold_doc`
+- **Robustness / behavior**:
+  - `refused_heuristic` (refusal-like phrasing detector for out-of-scope prompts)
+  - `mentions_target_ticker` (distractor questions: does the answer mention the intended ticker?)
+  - `mentions_all_target_tickers` (comparison answers: does the response mention each requested ticker?)
+
+LLM-as-a-judge metrics (optional; `prediction: 0=pass, 1=fail`):
+- `factual_correctness_v1` (factual numeric correctness vs expected + evidence excerpt)
+- `faithfulness_v1` (groundedness / hallucination check for open-ended answers)
+- `refusal_v1` (refusal appropriateness for out-of-scope / prompt-injection queries)
+- `focus_v1` (stay focused on the main question in distractor cases)
+- `comparison_v1` (balanced multi-company comparison)
+
+Run artifacts:
+- `scores.jsonl`: per-case metric dicts (`retrieval`, `answer`, `judges`)
+- `score_summary.json`: copy/paste-friendly aggregates (hit rates, accuracies, judge fail rates)
+- `review.csv`: spreadsheet-friendly view + `human_label`/`human_notes`
+- `cases.jsonl`: merged query + generation + score (easy for ad-hoc analysis)
 
 ### 1) Generate eval queries (JSONL)
 
@@ -673,8 +696,8 @@ python3 scripts/make_eval_set.py \
 
 Each JSONL line is a `finrag.eval.schema.EvalQuery`:
 - `kind="factual"`: includes `expected_numeric` + a single “golden” chunk (`golden_evidence`) for retrieval + answer checks.
-  * Note that the golden chunk is likely not unique as there are likely multiple chunks within the same (or even different) SEC filing documents that contain the piece of factual information (eg a company's earnings per share in a specific quarter).
-  * Note also that there are issues with reliably parsing scale units (eg thousands vs milions vs billions) from chunks using only regex/rules.
+  * Note that the golden chunk is likely not unique: multiple chunks in the same (or different) filings can contain the same fact (e.g. EPS for a specific quarter).
+  * Note also that scale units (e.g. thousands vs millions vs billions) are not always reliably parseable from raw text with simple rules.
 - `kind="open_ended"`: no ground truth; intended for human labeling + judge alignment.
 - `kind="refusal"`: out-of-scope / missing-context queries; the system should refuse/decline rather than hallucinate.
 - `kind="distractor"`: valid investment questions with distracting user context; the system should stay focused on the main question.
@@ -687,11 +710,10 @@ This runs the same `RAGService.answer_question()` pipeline used by the app and s
 NOTE: please export the same environment variables as `scripts/launch_app.sh`.
 
 ```bash
-# NOTE: PLEASE EXPORT ADDITIONAL ENV VARS AS PER scripts/launch_app.sh on top of .env
-now=$(date +"%Y%m%d_%H%M%S")
+# NOTE: export any required env vars per scripts/launch_app.sh on top of .env
 python3 -m scripts.run_eval \
   --eval-queries ./eval/eval_queries.jsonl \
-  --out-dir ./eval/results/${now} \
+  --out-dir ./eval/results \
   --index-dir ./data/sec_filings_md_v5/chunked_1024_128 \
   --mode normal \
   --concurrency 8
@@ -706,7 +728,7 @@ This creates a new run directory under `--out-dir` with:
 
 ```bash
 python3 -m scripts.score_eval \
-  --run-dir ./results/eval_run.<...> \
+  --run-dir ./eval/results/eval_run.<...> \
   --judge-workers 8
 ```
 
@@ -717,7 +739,7 @@ This writes `scores.jsonl`, `cases.jsonl` (merged records), `review.csv`, and `s
 If you want to skip LLM-as-a-judge and only compute deterministic metrics:
 
 ```bash
-python3 -m scripts.score_eval --run-dir ./results/eval_run.<...> --no-judge
+python3 -m scripts.score_eval --run-dir ./eval/results/eval_run.<...> --no-judge
 ```
 
 ### 4) Human labels + judge alignment (open-ended)
@@ -731,7 +753,7 @@ python3 -m scripts.score_eval --run-dir ./results/eval_run.<...> --no-judge
 bash scripts/launch_review.sh
 ```
 
-Then open `http://localhost:8237/review`.
+Then open `http://localhost:8236/review`.
 
 Set:
 - `human_label`: `0` = pass, `1` = fail
@@ -742,11 +764,14 @@ Tip: re-running `scripts/score_eval.py` preserves existing `human_label`/`human_
 2) Evaluate how well the judge matches your labels on a **dev** split (use this to iteratively tune the judge prompt):
 
 ```bash
-python3 -m scripts.align_judge --run-dir ./results/eval_run.<...> --judge faithfulness_v1
+python3 -m scripts.align_judge --run-dir ./eval/results/eval_run.<...> --judge faithfulness_v1
 ```
 
 When you're done tuning, run one final time with `--eval-test` to score the held-out test split:
 
 ```bash
-python3 -m scripts.align_judge --run-dir ./results/eval_run.<...> --judge faithfulness_v1 --eval-test
+python3 -m scripts.align_judge --run-dir ./eval/results/eval_run.<...> --judge faithfulness_v1 --eval-test
 ```
+
+`scripts/align_judge.py` reports agreement metrics against your `human_label` values, including confusion matrix counts
+(`tp/fp/tn/fn`), `precision_fail`, `recall_fail`, `f1_fail`, and `cohen_kappa` (treating **fail** as the positive class).
