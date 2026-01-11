@@ -5,6 +5,7 @@ data/**/*.md
 debug_outputs/
 data/
 eval/
+logs/traces/
 
 ngrok
 ngrok*.tgz
