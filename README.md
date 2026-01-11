@@ -80,6 +80,357 @@ flowchart TB
   RPT --> ITER[iterate on retrieval/prompt/config] --> RUN
 ```
 
+### Data model (PostgreSQL revamp)
+
+Today, Andromeda persists most state as **filesystem artifacts** (JSONL/CSV) plus **vector-store payloads** (Milvus/Qdrant).
+For the planned PostgreSQL revamp, the goal is to make Postgres the **system of record** for corpus + runs, and treat
+embeddings / indexes as derived.
+
+Below is a PostgreSQL-friendly entity model that mirrors the current pipeline and makes relationships explicit.
+
+**Design goals**
+- Deterministic, joinable IDs across pipeline stages (company → filing → document → chunk).
+- Preserve natural uniqueness constraints (e.g., `ticker`, `accession`) alongside stable internal IDs.
+- First-class provenance: which corpus/index/run produced which artifacts.
+- Support hybrid retrieval (dense + sparse) and auditability (store retrieved/reranked chunks per run).
+
+**1) Corpus + ingestion entities (system of record)**
+
+```mermaid
+erDiagram
+  CORPUS_SNAPSHOT {
+    uuid corpus_snapshot_id PK
+    text name
+    timestamptz created_at
+    jsonb params
+  }
+
+  COMPANY {
+    uuid company_id PK
+    text ticker
+    text cik
+    text name
+  }
+
+  SEC_FILING {
+    uuid filing_id PK
+    uuid company_id FK
+    uuid corpus_snapshot_id FK
+    text accession
+    text form_type
+    date filing_date
+    date period_end_date
+    text source_url
+    text primary_document
+  }
+
+  DOCUMENT {
+    text doc_id PK
+    uuid filing_id FK
+    text canonical_format
+    text canonical_path
+    text content_sha256
+  }
+
+  DOCUMENT_ARTIFACT {
+    uuid artifact_id PK
+    uuid filing_id FK
+    text artifact_type
+    text path
+    text content_sha256
+    timestamptz created_at
+  }
+
+  SECTION {
+    text section_id PK
+    text doc_id FK
+    text parent_section_id
+    text section_path
+    int level
+  }
+
+  CHUNK {
+    text chunk_id PK
+    text doc_id FK
+    text section_id FK
+    int chunk_index
+    int section_index
+    int page_no
+    text source_path
+    text block_type
+    text text
+    text index_text
+    text summary
+    jsonb metadata
+  }
+
+  CHUNK_CONTEXT {
+    uuid chunk_context_id PK
+    text chunk_id FK
+    text strategy
+    int neighbor_window
+    text context_text
+    uuid llm_call_id
+    timestamptz created_at
+  }
+
+  COMPANY ||--o{ SEC_FILING : files
+  CORPUS_SNAPSHOT ||--o{ SEC_FILING : contains
+  SEC_FILING ||--|| DOCUMENT : canonical_text
+  SEC_FILING ||--o{ DOCUMENT_ARTIFACT : has
+  DOCUMENT ||--o{ SECTION : has
+  DOCUMENT ||--o{ CHUNK : yields
+  SECTION ||--o{ CHUNK : groups
+  CHUNK ||--o{ CHUNK_CONTEXT : context_versions
+```
+
+Notes (mapped to current artifacts/objects):
+- `SEC_FILING` is populated from `scripts/download.py` metadata (`data/sec_filings/.../meta/*.json`) and filename conventions.
+- `DOCUMENT`/`DOCUMENT_ARTIFACT` correspond to `raw_htmls/*.html`, `intermediate_pdf/*.pdf`, `processed_markdown/*.md`, and per-file `debug/*`.
+- `CHUNK` corresponds to `scripts/chunk.py` outputs (`chunks/**/*.jsonl`) and `finrag.dataclasses.DocChunk`.
+- `DOCUMENT.doc_id` is the join key used throughout the app (and appears in citations as `[doc=...]`), so it should be stable across re-ingestion.
+- `SECTION` mirrors `SectionLinkPostprocessor` (`section_id`, `parent_section_id`, `section_path`, `section_index`).
+- Chunk adjacency (e.g. `prev_chunk_id`, `next_chunk_id`, section neighbors) can be represented explicitly or derived from `chunk_index`/`section_index`.
+- `CHUNK_CONTEXT` represents LLM-situated context from `apply_context_strategy()` (stored today in chunk metadata under `context`).
+
+**2) Indexing + retrieval entities (derived, but persisted for reproducibility)**
+
+```mermaid
+erDiagram
+  CORPUS_SNAPSHOT {
+    uuid corpus_snapshot_id PK
+  }
+
+  CHUNK {
+    text chunk_id PK
+  }
+
+  INDEX_SNAPSHOT {
+    uuid index_snapshot_id PK
+    uuid corpus_snapshot_id FK
+    text backend
+    text collection_name
+    text dense_model
+    text sparse_model
+    text context_strategy
+    int context_window
+    jsonb build_params
+    timestamptz created_at
+  }
+
+  CHUNK_EMBEDDING {
+    uuid index_snapshot_id FK
+    text chunk_id FK
+    vector dense_vector
+    jsonb sparse_vector
+    text dense_text_version
+    timestamptz created_at
+  }
+
+  CORPUS_SNAPSHOT ||--o{ INDEX_SNAPSHOT : indexed_as
+  INDEX_SNAPSHOT ||--o{ CHUNK_EMBEDDING : stores
+  CHUNK ||--o{ CHUNK_EMBEDDING : embedded_as
+```
+
+Notes:
+- Today, these live in Milvus/Qdrant payloads plus sidecar files like `bm25.pkl` (see `scripts/build_index.py`).
+- In Postgres, dense vectors map cleanly to `pgvector`; sparse retrieval can be implemented via `tsvector`/FTS or a BM25 extension.
+
+**3) Answer-generation runs (audit trail)**
+
+```mermaid
+erDiagram
+  INDEX_SNAPSHOT {
+    uuid index_snapshot_id PK
+  }
+
+  CHUNK {
+    text chunk_id PK
+  }
+
+  QA_RUN {
+    uuid qa_run_id PK
+    uuid index_snapshot_id FK
+    timestamptz created_at
+    text question
+    text mode
+    jsonb settings
+    text draft_answer
+    text final_answer
+    jsonb timing_ms
+    text error
+  }
+
+  QA_RUN_CHUNK {
+    uuid qa_run_id FK
+    text chunk_id FK
+    text stage
+    int rank
+    float score
+    text source
+  }
+
+  LLM_CALL {
+    uuid llm_call_id PK
+    uuid qa_run_id FK
+    text step
+    text provider
+    text model
+    text base_url
+    jsonb request
+    text response
+    jsonb usage
+    int latency_ms
+    timestamptz created_at
+  }
+
+  REVIEW_LABEL {
+    uuid review_label_id PK
+    uuid qa_run_id FK
+    int human_label
+    text human_notes
+    timestamptz created_at
+  }
+
+  INDEX_SNAPSHOT ||--o{ QA_RUN : serves
+  QA_RUN ||--o{ QA_RUN_CHUNK : retrieved_and_reranked
+  CHUNK ||--o{ QA_RUN_CHUNK : appears_in
+  QA_RUN ||--o{ LLM_CALL : invokes
+  QA_RUN ||--o{ REVIEW_LABEL : reviewed_as
+```
+
+Notes:
+- `QA_RUN` is what’s currently stored in `data/qa_history.jsonl` (interactive) and `logs/traces/trace_run.*/generations.jsonl` (live traces).
+- `QA_RUN_CHUNK.stage` cleanly captures both `retrieved_chunks` (pre-rerank) and `top_chunks` (reranked) from the app response.
+
+**4) Evaluation entities (dataset + scoring + judge alignment)**
+
+```mermaid
+erDiagram
+  INDEX_SNAPSHOT {
+    uuid index_snapshot_id PK
+  }
+
+  QA_RUN {
+    uuid qa_run_id PK
+  }
+
+  EVAL_RUN {
+    uuid eval_run_id PK
+    uuid index_snapshot_id FK
+    timestamptz created_at
+    text name
+    jsonb run_config
+  }
+
+  EVAL_QUERY {
+    text eval_query_id PK
+    text kind
+    text question
+    jsonb tags
+    timestamptz created_at
+  }
+
+  EVAL_QUERY_FACTUAL {
+    text eval_query_id PK
+    text metric
+    float expected_value
+    text expected_unit
+    text expected_scale
+    text golden_doc_id
+    text golden_chunk_id
+    text golden_section_path
+    text evidence_snippet
+  }
+
+  EVAL_QUERY_OPEN_ENDED {
+    text eval_query_id PK
+    text rubric_id
+    text target_ticker
+    int target_year
+  }
+
+  EVAL_QUERY_REFUSAL {
+    text eval_query_id PK
+    text reason
+    text rubric_id
+    text target_company
+    text target_ticker
+    jsonb known_tickers_sample
+  }
+
+  EVAL_QUERY_DISTRACTOR {
+    text eval_query_id PK
+    text main_question
+    text distractor_text
+    text distractor_kind
+    text rubric_id
+    jsonb target_tickers
+    int target_year
+  }
+
+  EVAL_QUERY_COMPARISON {
+    text eval_query_id PK
+    jsonb target_tickers
+    jsonb target_companies
+    int target_year
+    text rubric_id
+  }
+
+  EVAL_GENERATION {
+    uuid eval_generation_id PK
+    uuid eval_run_id FK
+    text eval_query_id FK
+    uuid qa_run_id FK
+    timestamptz created_at
+    jsonb settings
+    text error
+  }
+
+  EVAL_SCORE {
+    uuid eval_generation_id PK
+    jsonb retrieval
+    jsonb answer
+    timestamptz created_at
+  }
+
+  JUDGE_RESULT {
+    uuid judge_result_id PK
+    uuid eval_generation_id FK
+    text judge_id
+    int prediction
+    text explanation
+    text raw
+  }
+
+  HUMAN_LABEL {
+    uuid eval_run_id FK
+    text eval_query_id FK
+    int human_label
+    text human_notes
+    timestamptz created_at
+  }
+
+  INDEX_SNAPSHOT ||--o{ EVAL_RUN : evaluated_as
+  EVAL_RUN ||--o{ EVAL_GENERATION : produces
+  EVAL_QUERY ||--o{ EVAL_GENERATION : run_on
+  EVAL_QUERY ||--o| EVAL_QUERY_FACTUAL : factual_spec
+  EVAL_QUERY ||--o| EVAL_QUERY_OPEN_ENDED : open_ended_spec
+  EVAL_QUERY ||--o| EVAL_QUERY_REFUSAL : refusal_spec
+  EVAL_QUERY ||--o| EVAL_QUERY_DISTRACTOR : distractor_spec
+  EVAL_QUERY ||--o| EVAL_QUERY_COMPARISON : comparison_spec
+  EVAL_GENERATION ||--|| EVAL_SCORE : scored_as
+  EVAL_GENERATION ||--o{ JUDGE_RESULT : judged_by
+  EVAL_RUN ||--o{ HUMAN_LABEL : labeled_in
+  EVAL_QUERY ||--o{ HUMAN_LABEL : labeled_for
+  EVAL_GENERATION ||--o| QA_RUN : uses_pipeline_run
+```
+
+Notes:
+- These map directly to `finrag.eval.schema.*` objects and on-disk eval artifacts under `eval/` + `eval/results/`.
+- Exactly one `EVAL_QUERY_*` spec table row should exist per `EVAL_QUERY` based on `kind` (mirrors `EvalQuery` validation).
+- Keeping `EVAL_GENERATION.qa_run_id` makes the eval harness and interactive app share one “run” representation.
+
 ## Quickstart: latest pipeline
 
 Run everything from the repo root.
