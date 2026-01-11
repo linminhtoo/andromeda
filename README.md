@@ -28,13 +28,13 @@ GitHub renders these diagrams automatically (Mermaid).
 ```mermaid
 flowchart LR
   EDGAR["EDGAR (SEC filings)"] --> DL[scripts/download.py] --> HTML[Raw HTML]
-  HTML --> H2M["scripts/process_html_to_markdown.py<br>(Marker + optional OCR)"] --> MD[Processed Markdown]
+  HTML --> H2M["scripts/process_html_to_markdown.py"] --> MD[Processed Markdown]
   MD --> CH[scripts/chunk.py] --> CHOUT[Chunk exports]
-  CHOUT --> IDX["scripts/build_index.py<br>(BM25 + dense embeddings)"] --> DB[(Hybrid index<br>Milvus Lite / Qdrant)]
+  CHOUT --> IDX["scripts/build_index.py"] --> DB[(Hybrid index Milvus/Qdrant)]
 
   subgraph Models["Pluggable model endpoints"]
-    OCR["OpenAI-compatible multimodal OCR<br>(e.g. vLLM)"]
-    EMB["Embeddings<br>(local model or OpenAI-compatible)"]
+    OCR["OCR/vision LLM"]
+    EMB["Embeddings model"]
   end
 
   H2M -.-> OCR
@@ -73,10 +73,10 @@ sequenceDiagram
 ```mermaid
 flowchart TB
   Q[scripts/make_eval_set.py] --> QL[eval_queries.jsonl]
-  QL --> RUN["scripts/run_eval.py<br>(runs the same RAG pipeline)"] --> GEN[generations.jsonl]
-  GEN --> SCORE[scripts/score_eval.py] --> ART[score_summary.json + scores.jsonl + cases.jsonl + review.csv]
-  ART --> REVIEW["/review UI<br>(label failures)"] --> LABELS[human_label + human_notes]
-  LABELS --> ALIGN[scripts/align_judge.py] --> RPT["judge alignment report<br>(precision/recall/F1/kappa)"]
+  QL --> RUN[scripts/run_eval.py] --> GEN[generations.jsonl]
+  GEN --> SCORE[scripts/score_eval.py] --> ART["scores + cases + review.csv"]
+  ART --> REVIEW["/review UI"] --> LABELS[human_label + human_notes]
+  LABELS --> ALIGN[scripts/align_judge.py] --> RPT["judge report (prec/rec/F1/kappa)"]
   RPT --> ITER[iterate on retrieval/prompt/config] --> RUN
 ```
 
@@ -621,23 +621,23 @@ Key inputs/outputs:
 
 ```mermaid
 flowchart TB
-  HTML["Raw filing HTML"] --> WP["WeasyPrint render<br>(custom CSS + page breaks)"] --> PDF["Intermediate PDF"]
-  PDF --> START["PdfConverter.build_document()"]
+  HTML["Raw filing HTML"] --> WP["WeasyPrint render (SEC CSS)"] --> PDF["Intermediate PDF"]
+  PDF --> START["PdfConverter build_document()"]
 
   subgraph Marker["Marker (local fork)"]
-    START --> PROVIDER["PdfProvider<br>(pdftext extraction + page rendering)"]
-    PROVIDER --> DOC["DocumentBuilder<br>(PageGroup low-res + high-res images)"]
-    DOC --> LAYOUT["LayoutBuilder (Surya)<br>detect regions/blocks"]
-    DOC --> LINES["LineBuilder<br>(pdftext vs Surya; decide OCR)"]
-    LINES --> OCR["OcrBuilder (Surya)<br>OCR pages flagged 'surya'"]
-    LAYOUT --> STRUCT["StructureBuilder<br>group captions/lists"]
+    START --> PROVIDER["PdfProvider (pdftext + render)"]
+    PROVIDER --> DOC["DocumentBuilder (low/high-res images)"]
+    DOC --> LAYOUT["LayoutBuilder (Surya)"]
+    DOC --> LINES["LineBuilder (choose OCR)"]
+    LINES --> OCR["OcrBuilder (Surya)"]
+    LAYOUT --> STRUCT["StructureBuilder (group blocks)"]
     OCR --> STRUCT
-    STRUCT --> PROCESSORS["Processor chain<br>(tables, headers, references, ...)"]
-    PROCESSORS --> RENDER["MarkdownRenderer<br>HTML → Markdown + metadata"]
+    STRUCT --> PROCESSORS["Processors (tables/headers/refs)"]
+    PROCESSORS --> RENDER["MarkdownRenderer (HTML to Markdown)"]
   end
 
-  PROCESSORS --> SERVICE["LLM service<br>(CustomOpenAIService + X-Marker-* trace headers)"] --> LLMAPI["OpenAI-compatible endpoint<br>(e.g. vLLM)"]
-  RENDER --> OUT["Outputs<br>processed_markdown/ and debug/"]
+  PROCESSORS --> SERVICE["LLM service (trace headers)"] --> LLMAPI["OpenAI-compatible API (vLLM/OpenAI)"]
+  RENDER --> OUT["Outputs (processed_markdown/ + debug/)"]
 ```
 
 Notable Marker LLM steps for SEC filings:
