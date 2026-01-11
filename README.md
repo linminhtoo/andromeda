@@ -212,6 +212,11 @@ Make sure these match your indexing run:
 - `MILVUS_COLLECTION_NAME`: the same `--collection-name` used in step (4).
 - `MILVUS_PATH` + `BM25_PATH`: where step (4) wrote the Milvus Lite DB and BM25 params (or where you configured them).
 
+Live traces (for quality monitoring):
+- Enabled by default. Disable with `FINRAG_TRACES_ENABLED=false`.
+- Written under `./logs/traces/trace_run.YYYYMMDD/` as `generations.jsonl` + `review.csv`.
+- Browse/label in the review UI at `http://localhost:8236/review` (select the `trace_run.*` directory); use “Export fails” to download labeled failures.
+
 ---
 
 ## Evaluation: product evals (WIP)
@@ -271,31 +276,48 @@ This creates a new run directory under `--out-dir` with:
 ### 3) Score the run (retrieval + answers + LLM judge)
 
 ```bash
-python3 scripts/score_eval.py --run-dir ./results/eval_run.<...>
+python3 -m scripts.score_eval \
+  --run-dir ./results/eval_run.<...> \
+  --judge-workers 8
 ```
+
+See `scripts/score_eval.sh` for a complete example.
 
 This writes `scores.jsonl`, `cases.jsonl` (merged records), `review.csv`, and `score_summary.json` into the run dir.
 
 If you want to skip LLM-as-a-judge and only compute deterministic metrics:
 
 ```bash
-python3 scripts/score_eval.py --run-dir ./results/eval_run.<...> --no-judge
+python3 -m scripts.score_eval --run-dir ./results/eval_run.<...> --no-judge
 ```
 
 ### 4) Human labels + judge alignment (open-ended)
 
-1) Open `review.csv` in the run directory and fill `human_label` with:
-- `0` = pass
-- `1` = fail
+1) Label cases in `review.csv` (writes `human_label` + `human_notes`):
+
+- If you're already running the app via `scripts/launch_app.sh`, open `http://localhost:8236/review` and select your run.
+- Or launch a lightweight review-only server:
+
+```bash
+bash scripts/launch_review.sh
+```
+
+Then open `http://localhost:8237/review`.
+
+Set:
+- `human_label`: `0` = pass, `1` = fail
+- `human_notes`: optional comments
+
+Tip: re-running `scripts/score_eval.py` preserves existing `human_label`/`human_notes` values.
 
 2) Evaluate how well the judge matches your labels on a **dev** split (use this to iteratively tune the judge prompt):
 
 ```bash
-python3 scripts/align_judge.py --run-dir ./results/eval_run.<...> --judge faithfulness_v1
+python3 -m scripts.align_judge --run-dir ./results/eval_run.<...> --judge faithfulness_v1
 ```
 
 When you're done tuning, run one final time with `--eval-test` to score the held-out test split:
 
 ```bash
-python3 scripts/align_judge.py --run-dir ./results/eval_run.<...> --judge faithfulness_v1 --eval-test
+python3 -m scripts.align_judge --run-dir ./results/eval_run.<...> --judge faithfulness_v1 --eval-test
 ```
