@@ -49,6 +49,7 @@ from finrag.streaming import (
     stream_draft_enabled,
 )
 from finrag.telemetry import setup_opentelemetry
+from finrag.traces import trace_chunk_limits, traces_enabled, write_trace
 
 
 # -------------------------------------------------------------------
@@ -77,6 +78,7 @@ class QueryResponse(BaseModel):
     draft_answer: str
     final_answer: str
     top_chunks: list[TopChunk]
+    retrieved_chunks: list[TopChunk] | None = None
 
 
 def _resolve_generation(req: QueryRequest) -> GenerationSettings:
@@ -301,11 +303,13 @@ def build_milvus_retriever() -> MilvusContextualRetriever:
         sparse_embedding_function=sparse_fn,
         context_builder=context_builder,
         context_metadata_key=context_key,
+        # TODO: phase out this hotfix argument
+        legacy_bm25=os.getenv("MILVUS_LEGACY_BM25", "false").strip().lower() == "true",
     )
 
-    if use_sparse and retriever.uses_bm25:
+    if retriever.bm25_requires_fit:
         if bm25_path is None:
-            raise RuntimeError("MILVUS_USE_SPARSE=true requires MILVUS_BM25_PATH (or BM25_PATH).")
+            raise RuntimeError("Legacy Milvus BM25 requires BM25_PATH to load fitted parameters.")
         if not Path(bm25_path).exists():
             raise RuntimeError(f"BM25 parameters not found at: {bm25_path}")
         retriever.load_bm25(bm25_path)
@@ -391,6 +395,7 @@ class RAGService:
         return out or None
 
     def _serialize_top_chunks(self, reranked) -> list[TopChunk]:
+        index_text_key = getattr(self.retriever, "_index_text_key", "index_text")
         return [
             TopChunk(
                 chunk_id=sc.chunk.id,
@@ -398,9 +403,9 @@ class RAGService:
                 page_no=sc.chunk.page_no,
                 headings=sc.chunk.headings,
                 score=sc.score,
-                preview=sc.chunk.text[:300],
+                preview=str(((sc.chunk.metadata or {}).get(index_text_key) or sc.chunk.text) or "")[:300],
                 source=sc.chunk.source,
-                text=sc.chunk.text,
+                text=str(((sc.chunk.metadata or {}).get(index_text_key) or sc.chunk.text) or ""),
                 context=(
                     str((sc.chunk.metadata or {}).get(self._context_key))
                     if (sc.chunk.metadata or {}).get(self._context_key) is not None
@@ -441,7 +446,9 @@ class RAGService:
         self.retriever.index(docling_chunks)
         return doc_id
 
-    def answer_question(self, question: str, settings: GenerationSettings) -> QueryResponse:
+    def answer_question(
+        self, question: str, settings: GenerationSettings, *, include_retrieved_chunks: bool = False
+    ) -> QueryResponse:
         tracer = trace.get_tracer(__name__)
 
         backend = "milvus" if isinstance(self.retriever, MilvusContextualRetriever) else "qdrant"
@@ -513,8 +520,10 @@ class RAGService:
                     final = self.llm.chat(refine_prompt, temperature=0.0)  # type: ignore[arg-type]
                     span.set_attribute("finrag.final.chars", len(final))
 
+            top_chunks = self._serialize_top_chunks(reranked)
+            retrieved_chunks = self._serialize_top_chunks(hybrid) if include_retrieved_chunks else None
             return QueryResponse(
-                draft_answer=draft, final_answer=final, top_chunks=self._serialize_top_chunks(reranked)
+                draft_answer=draft, final_answer=final, top_chunks=top_chunks, retrieved_chunks=retrieved_chunks
             )
         except Exception as exc:  # noqa: BLE001
             span = trace.get_current_span()
@@ -545,7 +554,35 @@ app.add_middleware(
 
 setup_opentelemetry(app)
 
-rag_service = RAGService(storage_path=os.getenv("QDRANT_STORAGE_PATH"))
+# Eval review UI (labels + retrieval inspection).
+try:
+    from finrag.review_ui import router as review_router
+
+    app.include_router(review_router)
+except Exception as exc:  # noqa: BLE001
+    # Avoid taking down the main app if optional review UI files are missing.
+    logger.warning(f"Review UI not available: {exc}")
+
+_RAG_SERVICE_LOCK = threading.Lock()
+_RAG_SERVICE: "RAGService | None" = None
+
+
+def get_rag_service() -> "RAGService":
+    """
+    Lazily construct the global RAG service.
+
+    This keeps module import side-effects light (important for unit tests and
+    for tooling that imports `finrag.main` without intending to boot the full
+    retrieval + LLM stack).
+    """
+
+    global _RAG_SERVICE
+    if _RAG_SERVICE is not None:
+        return _RAG_SERVICE
+    with _RAG_SERVICE_LOCK:
+        if _RAG_SERVICE is None:
+            _RAG_SERVICE = RAGService(storage_path=os.getenv("QDRANT_STORAGE_PATH"))
+        return _RAG_SERVICE
 
 _CANCEL_LOCK = threading.Lock()
 _CANCEL_EVENTS: dict[str, threading.Event] = {}
@@ -601,7 +638,7 @@ async def ingest_pdf(file: UploadFile = File(...), use_mistral_ocr: bool = Form(
         tmp_path = tmp.name
 
     try:
-        doc_id = rag_service.ingest_document(tmp_path, use_mistral_ocr=use_mistral_ocr)
+        doc_id = get_rag_service().ingest_document(tmp_path, use_mistral_ocr=use_mistral_ocr)
     finally:
         # optional: keep PDFs for audit; for now, delete
         try:
@@ -637,7 +674,7 @@ async def query_docs(req: QueryRequest):
             span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
 
     try:
-        result = rag_service.answer_question(question=req.question, settings=settings)
+        result = get_rag_service().answer_question(question=req.question, settings=settings)
         _append_history(req=req_resolved, res=result)
         return result
     except Exception as exc:  # noqa: BLE001
@@ -648,7 +685,9 @@ async def query_docs(req: QueryRequest):
 
 
 def _stream_chunk_dict(sc, *, preview_chars: int, text_chars: int) -> dict:
-    text = (sc.chunk.text or "").strip()
+    meta = sc.chunk.metadata if isinstance(sc.chunk.metadata, dict) else {}
+    base_text = meta.get("index_text") or sc.chunk.text or ""
+    text = str(base_text).strip()
     preview = text[:preview_chars] if preview_chars > 0 else ""
     chunk_text = text[:text_chars] if text_chars > 0 else ""
     return {
@@ -664,6 +703,37 @@ def _stream_chunk_dict(sc, *, preview_chars: int, text_chars: int) -> dict:
     }
 
 
+def _trace_chunk_dict(
+    sc,
+    *,
+    index_text_key: str,
+    context_key: str,
+    preview_chars: int,
+    text_chars: int,
+    context_chars: int,
+) -> dict:
+    meta = sc.chunk.metadata if isinstance(sc.chunk.metadata, dict) else {}
+    base_text = meta.get(index_text_key) or sc.chunk.text or ""
+    text = str(base_text).strip()
+    preview = text[:preview_chars] if preview_chars > 0 else ""
+    chunk_text = text[:text_chars] if text_chars > 0 else ""
+    ctx_val = meta.get(context_key)
+    ctx = str(ctx_val).strip() if ctx_val is not None else ""
+    ctx_out = ctx[:context_chars] if context_chars > 0 else ""
+    return {
+        "chunk_id": sc.chunk.id,
+        "doc_id": sc.chunk.doc_id,
+        "page_no": sc.chunk.page_no,
+        "headings": sc.chunk.headings,
+        "score": sc.score,
+        "source": sc.chunk.source,
+        "preview": preview,
+        "text": chunk_text,
+        "context": (ctx_out or None),
+        "metadata": RAGService._chunk_metadata_for_ui(sc.chunk.metadata),
+    }
+
+
 @app.post("/cancel")
 def cancel(req: CancelRequest):
     ok = _cancel_request((req.request_id or "").strip())
@@ -674,12 +744,14 @@ def cancel(req: CancelRequest):
 # everytime we make a change to the answering logic, we need to update both places, not good
 @app.post("/query_stream")
 async def query_docs_stream(req: QueryStreamRequest, request: Request):
+    rag_service = get_rag_service()
     request_id = (req.request_id or "").strip() or str(uuid.uuid4())
     base_req = QueryRequest(**req.dict(exclude={"request_id"}))
     settings = _resolve_generation(base_req)
     req_resolved = _request_with_resolved_settings(base_req, settings)
     cancel_evt = _register_cancel_event(request_id)
     started_ms = int(time.time() * 1000)
+    started_at = datetime.fromtimestamp(started_ms / 1000, tz=timezone.utc)
     parent_ctx = otel_context.get_current()
     tracer = trace.get_tracer(__name__)
 
@@ -695,6 +767,19 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
         full_draft = ""
         full_final = ""
         cancelled = False
+        error: str | None = None
+
+        trace_on = traces_enabled()
+        trace_retrieved: list[dict] = []
+        trace_reranked: list[dict] = []
+        timing_ms: dict[str, float] = {}
+        retrieve_step_ms: float | None = None
+        rerank_step_ms: float | None = None
+        draft_step_ms: float | None = None
+        final_step_ms: float | None = None
+        trace_max_chunks, trace_preview_chars, trace_text_chars, trace_context_chars = trace_chunk_limits()
+        index_text_key = getattr(getattr(rag_service, "retriever", None), "_index_text_key", "index_text")
+        context_key = getattr(rag_service, "_context_key", "context")
 
         token = otel_context.attach(parent_ctx)
         span = tracer.start_span("finrag.query_stream")
@@ -737,6 +822,7 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 step_span.set_attribute(AISpanAttributes.VECTOR_DB_VENDOR, backend)
                 step_span.set_attribute(AISpanAttributes.VECTOR_DB_OPERATION, "retrieve_hybrid")
                 step_span.set_attribute(AISpanAttributes.VECTOR_DB_QUERY_TOP_K, int(settings.top_k_retrieve))
+                t0 = time.perf_counter()
                 hybrid = await asyncio.to_thread(
                     rag_service.retriever.retrieve_hybrid,
                     req.question,
@@ -744,13 +830,16 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                     top_k_bm25=settings.top_k_retrieve,
                     top_k_final=settings.top_k_retrieve,
                 )
+                retrieve_step_ms = (time.perf_counter() - t0) * 1000.0
                 step_span.set_attribute("finrag.retrieve.count", len(hybrid))
 
             if await request.is_disconnected():
                 set_cancelled()
             if is_cancelled():
                 cancelled = True
-                yield ndjson_bytes({"type": "cancelled", "request_id": request_id, "elapsed_ms": 0})
+                yield ndjson_bytes(
+                    {"type": "cancelled", "request_id": request_id, "elapsed_ms": int(time.time() * 1000) - started_ms}
+                )
                 return
 
             retrieved_payload = [
@@ -758,7 +847,29 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
             ]
             if max_chunks:
                 retrieved_payload = retrieved_payload[:max_chunks]
-            yield ndjson_bytes({"type": "retrieved", "count": len(hybrid), "chunks": retrieved_payload})
+            if trace_on:
+                trace_retrieved = [
+                    _trace_chunk_dict(
+                        sc,
+                        index_text_key=index_text_key,
+                        context_key=context_key,
+                        preview_chars=trace_preview_chars,
+                        text_chars=trace_text_chars,
+                        context_chars=trace_context_chars,
+                    )
+                    for sc in hybrid[:trace_max_chunks]
+                ]
+            if retrieve_step_ms is not None:
+                timing_ms["retrieve_ms"] = retrieve_step_ms
+            yield ndjson_bytes(
+                {
+                    "type": "retrieved",
+                    "count": len(hybrid),
+                    "chunks": retrieved_payload,
+                    "step_ms": int(retrieve_step_ms) if retrieve_step_ms is not None else None,
+                    "elapsed_ms": int(time.time() * 1000) - started_ms,
+                }
+            )
 
             yield ndjson_bytes(
                 {
@@ -770,6 +881,7 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
             with tracer.start_as_current_span("finrag.rerank") as step_span:
                 step_span.set_attribute("finrag.rerank.enabled", bool(settings.enable_rerank))
                 step_span.set_attribute("finrag.rerank.top_k", int(settings.top_k_rerank))
+                t0 = time.perf_counter()
                 if settings.enable_rerank:
                     reranked = await asyncio.to_thread(
                         rag_service.reranker.rerank,
@@ -780,19 +892,44 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                     )
                 else:
                     reranked = hybrid[: settings.top_k_rerank]
+                rerank_step_ms = (time.perf_counter() - t0) * 1000.0
                 step_span.set_attribute("finrag.rerank.count", len(reranked))
 
             if await request.is_disconnected():
                 set_cancelled()
             if is_cancelled():
                 cancelled = True
-                yield ndjson_bytes({"type": "cancelled", "request_id": request_id, "elapsed_ms": 0})
+                yield ndjson_bytes(
+                    {"type": "cancelled", "request_id": request_id, "elapsed_ms": int(time.time() * 1000) - started_ms}
+                )
                 return
 
             reranked_payload = [
                 _stream_chunk_dict(sc, preview_chars=preview_chars, text_chars=text_chars) for sc in reranked
             ]
-            yield ndjson_bytes({"type": "reranked", "count": len(reranked), "chunks": reranked_payload})
+            if trace_on:
+                trace_reranked = [
+                    _trace_chunk_dict(
+                        sc,
+                        index_text_key=index_text_key,
+                        context_key=context_key,
+                        preview_chars=trace_preview_chars,
+                        text_chars=trace_text_chars,
+                        context_chars=trace_context_chars,
+                    )
+                    for sc in reranked[:trace_max_chunks]
+                ]
+            if rerank_step_ms is not None:
+                timing_ms["rerank_ms"] = rerank_step_ms
+            yield ndjson_bytes(
+                {
+                    "type": "reranked",
+                    "count": len(reranked),
+                    "chunks": reranked_payload,
+                    "step_ms": int(rerank_step_ms) if rerank_step_ms is not None else None,
+                    "elapsed_ms": int(time.time() * 1000) - started_ms,
+                }
+            )
 
             if settings.enable_refine:
                 yield ndjson_bytes(
@@ -844,10 +981,20 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                         full_draft = await asyncio.to_thread(
                             rag_service.llm.chat, draft_prompt, settings.draft_temperature
                         )
+                    draft_step_ms = (time.monotonic() - t0) * 1000.0
 
                     step_span.set_attribute("finrag.draft.chars", len(full_draft))
 
-                yield ndjson_bytes({"type": "draft_done", "chars": len(full_draft)})
+                if draft_step_ms is not None:
+                    timing_ms["draft_ms"] = draft_step_ms
+                yield ndjson_bytes(
+                    {
+                        "type": "draft_done",
+                        "chars": len(full_draft),
+                        "step_ms": int(draft_step_ms) if draft_step_ms is not None else None,
+                        "elapsed_ms": int(time.time() * 1000) - started_ms,
+                    }
+                )
 
                 if await request.is_disconnected():
                     set_cancelled()
@@ -907,6 +1054,7 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                     out = batcher.pop_all()
                     if out:
                         yield ndjson_bytes({"type": "final_delta", "delta": out})
+                    final_step_ms = (time.monotonic() - t0) * 1000.0
                     step_span.set_attribute("finrag.final.chars", len(full_final))
             else:
                 yield ndjson_bytes({"type": "status", "step": "final", "message": "Generating answer…"})
@@ -928,6 +1076,7 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                     step_span.set_attribute("finrag.prompt.messages", len(answer_prompt))
 
                     batcher = TextDeltaBatcher.from_env()
+                    t0 = time.monotonic()
                     async for delta in iter_chat_deltas(
                         rag_service.llm,
                         answer_prompt,  # type: ignore[arg-type]
@@ -946,6 +1095,7 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                     out = batcher.pop_all()
                     if out:
                         yield ndjson_bytes({"type": "final_delta", "delta": out})
+                    final_step_ms = (time.monotonic() - t0) * 1000.0
                     step_span.set_attribute("finrag.final.chars", len(full_final))
                 full_draft = full_final
 
@@ -971,16 +1121,24 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
             )
             _append_history(req=req_resolved, res=res)
 
+            if final_step_ms is not None:
+                timing_ms["final_ms"] = final_step_ms
+            total_ms = (time.time() * 1000) - started_ms
+            timing_ms["total_ms"] = float(total_ms)
+
             yield ndjson_bytes(
                 {
                     "type": "done",
                     "request_id": request_id,
-                    "elapsed_ms": int(time.time() * 1000) - started_ms,
+                    "elapsed_ms": int(total_ms),
+                    "final_ms": int(final_step_ms) if final_step_ms is not None else None,
+                    "timing_ms": {k: (float(v) if v is not None else None) for k, v in timing_ms.items()},
                     "response": jsonable_encoder(res),
                 }
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Streaming query failed: %r", exc)
+            error = str(exc)
             if span.is_recording():
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
@@ -993,6 +1151,59 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 }
             )
         finally:
+            if trace_on:
+                try:
+                    if retrieve_step_ms is not None and "retrieve_ms" not in timing_ms:
+                        timing_ms["retrieve_ms"] = retrieve_step_ms
+                    if rerank_step_ms is not None and "rerank_ms" not in timing_ms:
+                        timing_ms["rerank_ms"] = rerank_step_ms
+                    if draft_step_ms is not None and "draft_ms" not in timing_ms:
+                        timing_ms["draft_ms"] = draft_step_ms
+                    if final_step_ms is not None and "final_ms" not in timing_ms:
+                        timing_ms["final_ms"] = final_step_ms
+                    timing_ms.setdefault("total_ms", float((time.time() * 1000) - started_ms))
+
+                    generation = {
+                        "query_id": request_id,
+                        "kind": "trace",
+                        "question": (req.question or "").strip(),
+                        "created_at": started_at.isoformat(),
+                        "settings": {
+                            "mode": settings.mode,
+                            "top_k_retrieve": settings.top_k_retrieve,
+                            "top_k_rerank": settings.top_k_rerank,
+                            "draft_max_tokens": settings.draft_max_tokens,
+                            "final_max_tokens": settings.final_max_tokens,
+                            "enable_rerank": settings.enable_rerank,
+                            "enable_refine": settings.enable_refine,
+                            "answer_style": settings.answer_style,
+                            "draft_temperature": settings.draft_temperature,
+                        },
+                        "draft_answer": full_draft or None,
+                        "final_answer": (full_final if full_final else full_draft) or None,
+                        "top_chunks": trace_reranked,
+                        "retrieved_chunks": trace_retrieved,
+                        "timing_ms": timing_ms,
+                        "error": error,
+                        "cancelled": bool(cancelled),
+                    }
+                    tags = [f"mode={settings.mode}"]
+                    if cancelled:
+                        tags.append("cancelled")
+                    if error:
+                        tags.append("error")
+                    review_row = {
+                        "query_id": request_id,
+                        "kind": "trace",
+                        "question": (req.question or "").strip(),
+                        "tags": " ".join(tags),
+                        "target_tickers": "",
+                        "human_label": "",
+                        "human_notes": "",
+                    }
+                    write_trace(generation=generation, review_row=review_row, now=started_at)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to write trace for %s: %r", request_id, exc)
             if span.is_recording():
                 span.set_attribute("finrag.cancelled", bool(cancelled))
             span.end()
