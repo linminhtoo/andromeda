@@ -80,6 +80,65 @@ flowchart TB
   RPT --> ITER[iterate on retrieval/prompt/config] --> RUN
 ```
 
+### UI screenshots
+
+#### Q&A (streaming + citations + source viewer)
+
+<p align="center">
+  <img src="docs/answer_goog_chunk_citation.png" width="1000" alt="Q&A UI showing the final answer, reranked chunks, and a source viewer with highlighted evidence." />
+</p>
+<p align="center"><em>Ask view with inline citations, the reranked chunks used for the answer, and an evidence-highlighted source viewer.</em></p>
+
+<details>
+<summary>More Q&A screenshots</summary>
+
+<p align="center">
+  <img src="docs/answer_goog_snippet.png" width="1000" alt="Answer snippet showing structured sections and inline citations." />
+</p>
+<p align="center"><em>Answer formatting example with inline citations.</em></p>
+
+<p align="center">
+  <img src="docs/answer_goog_citations.png" width="1000" alt="Data points section with citations." />
+</p>
+<p align="center"><em>Structured data points with citations back to filings.</em></p>
+
+<p align="center">
+  <img src="docs/answer_goog_example.png" width="1000" alt="Full Q&A example showing history, answer, reranked chunks, and source viewer." />
+</p>
+<p align="center"><em>End-to-end Q&A example with history and source browsing.</em></p>
+
+<p align="center">
+  <img src="docs/answer_tesla_example.png" width="1000" alt="Another Q&A example showing an answer with supporting evidence." />
+</p>
+<p align="center"><em>Another end-to-end Q&A example.</em></p>
+</details>
+
+#### Eval Review (label cases, audit retrieval, inspect judge output)
+
+<p align="center">
+  <img src="docs/eval_overview.png" width="1000" alt="Eval Review UI showing a case list, answer, and labeling controls." />
+</p>
+<p align="center"><em>Review UI for labeling cases and inspecting answers, retrieval, and judge outcomes.</em></p>
+
+<details>
+<summary>More Eval Review screenshots</summary>
+
+<p align="center">
+  <img src="docs/eval_reranked_chunks.png" width="1000" alt="Reranked chunks panel in the review UI." />
+</p>
+<p align="center"><em>Audit retrieval: inspect the reranked chunks actually used for the answer.</em></p>
+
+<p align="center">
+  <img src="docs/eval_judge_1.png" width="1000" alt="Judge panel showing an automated grading decision and explanation." />
+</p>
+<p align="center"><em>Judge trace: automated grading decision and explanation.</em></p>
+
+<p align="center">
+  <img src="docs/eval_judge_2.png" width="1000" alt="Judge panel showing an automated grading decision and explanation for a factual question." />
+</p>
+<p align="center"><em>Another judge trace example.</em></p>
+</details>
+
 ### Data model (PostgreSQL revamp)
 
 Today, Andromeda persists most state as **filesystem artifacts** (JSONL/CSV) plus **vector-store payloads** (Milvus/Qdrant).
