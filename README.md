@@ -1,6 +1,84 @@
-# finance-rag-assistant-v2
+# Andromeda
 
-RAG experiments over SEC filings (e.g. 10-K / 10-Q) with an end-to-end evaluation workflow.
+## Key features & design
+
+Andromeda is a financial RAG assistant designed to answer investment questions with **auditable grounding** in SEC
+filings. The repo is intentionally built around an “evaluation-first” loop: iterate on ingestion/retrieval/prompts, then
+measure the impact end-to-end.
+
+**Core capabilities**
+- End-to-end corpus build: EDGAR download → HTML→Markdown (Marker + optional multimodal OCR) → chunking → hybrid indexing.
+- Hybrid retrieval + reranking: BM25 + dense vectors (Milvus Lite or Qdrant), with optional cross-encoder reranking.
+- Two-stage answering: a draft pass followed by an optional refinement pass for structure and citations.
+- Streaming UX: `/query_stream` emits progress events, retrieved/reranked chunks, and token deltas; supports cancellation.
+- Built-in review loop: a lightweight `/review` UI for inspecting chunks/answers, labeling failures, and exporting runs.
+- Observability: OpenTelemetry spans for retrieval/rerank/LLM calls, plus local JSONL/CSV traces for regression tracking.
+
+**Architecture at a glance**
+- **Ingestion (batch)**: `scripts/download.py` → `scripts/process_html_to_markdown.py` → `scripts/chunk.py` → `scripts/build_index.py`
+- **Serving (runtime)**: `src/finrag/main.py` (FastAPI) → `RAGService.answer_question()` (retrieve → rerank → draft → refine)
+- **Evaluation (offline)**: `scripts/make_eval_set.py` → `scripts/run_eval.py` → `scripts/score_eval.py` (+ `/review` + `scripts/align_judge.py`)
+
+### Architecture diagrams (Mermaid)
+
+GitHub renders these diagrams automatically (Mermaid).
+
+**1) Offline ingestion + indexing**
+
+```mermaid
+flowchart LR
+  EDGAR[EDGAR (SEC filings)] --> DL[scripts/download.py] --> HTML[Raw HTML]
+  HTML --> H2M[scripts/process_html_to_markdown.py<br/>(Marker + optional OCR)] --> MD[Processed Markdown]
+  MD --> CH[scripts/chunk.py] --> CHOUT[Chunk exports]
+  CHOUT --> IDX[scripts/build_index.py<br/>(BM25 + dense embeddings)] --> DB[(Hybrid index<br/>Milvus Lite / Qdrant)]
+
+  subgraph Models["Pluggable model endpoints"]
+    OCR[OpenAI-compatible multimodal OCR<br/>(e.g. vLLM)]
+    EMB[Embeddings<br/>(local model or OpenAI-compatible)]
+  end
+
+  H2M -.-> OCR
+  IDX -.-> EMB
+```
+
+**2) Online question answering (streaming)**
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant UI as Web UI (index.html)
+  participant API as FastAPI (/query_stream)
+  participant RET as Hybrid retriever
+  participant RER as Cross-encoder reranker
+  participant LLM as Chat LLM
+
+  UI->>API: POST /query_stream (question + mode/settings)
+  API->>RET: retrieve_hybrid (BM25 + dense)
+  RET-->>API: candidate chunks
+  API->>RER: rerank top-k
+  RER-->>API: reranked chunks (used for answer)
+  API->>LLM: draft prompt (question + chunks)
+  LLM-->>API: token deltas (stream)
+  API-->>UI: NDJSON events (progress + chunks + deltas)
+
+  alt refine enabled
+    API->>LLM: refine prompt (draft + chunks)
+    LLM-->>API: token deltas (stream)
+    API-->>UI: updated final answer
+  end
+```
+
+**3) Evaluation loop (generation → scoring → review → judge alignment)**
+
+```mermaid
+flowchart TB
+  Q[scripts/make_eval_set.py] --> QL[eval_queries.jsonl]
+  QL --> RUN[scripts/run_eval.py<br/>(runs the same RAG pipeline)] --> GEN[generations.jsonl]
+  GEN --> SCORE[scripts/score_eval.py] --> ART[score_summary.json + scores.jsonl + cases.jsonl + review.csv]
+  ART --> REVIEW[/review UI<br/>(label failures)] --> LABELS[human_label + human_notes]
+  LABELS --> ALIGN[scripts/align_judge.py] --> RPT[judge alignment report<br/>(precision/recall/F1/kappa)]
+  RPT --> ITER[iterate on retrieval/prompt/config] --> RUN
+```
 
 ## Quickstart: latest pipeline
 
