@@ -31,6 +31,11 @@ export FINRAG_DOC_INDEX_PATH="/home/mlin/repos/z_scratch/financial-rag/data/sec_
 export FINRAG_OTEL_CONSOLE=false
 export FINRAG_OTEL_ENABLED=true
 
+# Live trace artifacts (enabled by default)
+# FINRAG_TRACES_ENABLED=true|false (default true)
+# FINRAG_TRACES_DIR=./logs/traces (default)
+# FINRAG_TRACES_MAX_CHUNKS=50, FINRAG_TRACES_CHUNK_TEXT_CHARS=2000, FINRAG_TRACES_CHUNK_CONTEXT_CHARS=2000
+
 source /home/mlin/repos/z_scratch/financial-rag/.venv/bin/activate
 PYTHONPATH=src uvicorn finrag.main:app --host 0.0.0.0 --port 8236
 #  --reload
