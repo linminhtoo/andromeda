@@ -89,3 +89,44 @@
 - `experiments/20260212_validate_stronger_typing.sh`
   - Runs `pre-commit run --all` + `pytest tests/`.
   - Executed successfully in this run.
+
+## 2026-02-12 - SEC HTML ingestion migration to `sec-parser`
+
+### Scope completed
+- Replaced the old HTML -> PDF -> OCR ingestion path with direct SEC HTML parsing.
+- Rewrote `scripts/process_html_to_markdown.py` to:
+  - parse filings with `sec-parser`
+  - render section-aware markdown (headings from semantic elements)
+  - normalize markdown tables for stable downstream detection/chunking
+  - emit debug sidecars (`debug/<filing>/metadata.json`, `run_info.json`)
+- Updated `scripts/chunk.py` to add a default `markdown_table_preserving` mode:
+  - preserves whole tables as table chunks
+  - preserves section hierarchy in `headings`
+  - supports sidecar metadata lookup via `--metadata-dir`
+- Kept `docling_hybrid` path available as an explicit chunker option.
+- Updated shell wrappers:
+  - `scripts/process_html_to_markdown.sh`
+  - `scripts/chunk.sh`
+- Added focused tests for converter/chunker behavior:
+  - `tests/test_sec_html_to_markdown.py`
+  - `tests/test_chunking_markdown.py` (including oversized text splitting behavior)
+
+### Key implementation notes
+- `sec-parser` table output is post-processed to guarantee a markdown separator row, so table blocks are detected consistently by `MarkdownTablePreservingChunker`.
+- Added text block splitting in `MarkdownTablePreservingChunker` for oversized prose sections to avoid pathological large chunks while retaining table preservation.
+- Corrected parser assumptions:
+  - `Edgar10KParser` was removed from top-level usage/exports in our working setup because it is not a valid symbol in the installed package interface.
+  - Pipeline now relies on `Edgar10QParser` plus form-aware fallback behavior.
+
+### Validation experiments and results
+- Unit tests:
+  - `source .venv/bin/activate && pytest -q tests/test_sec_html_to_markdown.py tests/test_chunking_markdown.py`
+  - Result: `8 passed`.
+- CLI sanity:
+  - `python -m scripts.process_html_to_markdown --help`
+  - `python -m scripts.chunk --help`
+  - Result: both commands parse expected new flags/options.
+- Smoke run on local AMD 10-K + 10-Q:
+  - Conversion output root: `/home/system/tmp/sec_parser_smoke2/out`
+  - Chunk output root: `/home/system/tmp/sec_parser_smoke2/chunks`
+  - Result: successful markdown generation + table-preserving chunk export for both filings.

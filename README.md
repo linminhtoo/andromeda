@@ -155,6 +155,15 @@ Open:
 
 ## Key scripts
 
+- `scripts/process_html_to_markdown.py`
+  - parses SEC filing HTML directly with `sec-parser` (no PDF/OCR roundtrip)
+  - emits normalized markdown to `processed_markdown/`
+  - writes per-file debug metadata to `debug/<filing>/metadata.json`
+
+- `scripts/chunk.py`
+  - default chunker is `markdown_table_preserving` to keep whole tables and heading sections
+  - optional `docling_hybrid` chunker is still available for tokenizer-aware chunking
+
 - `scripts/build_index.py`
   - reads chunk exports and upserts into PostgreSQL
   - supports context strategies (`none`, `document`, `neighbors`, `metadata`)

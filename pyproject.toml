@@ -28,6 +28,7 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "python-fasthtml",
     "scikit-learn>=1.7.0",
+    "sec-parser>=0.58.1",
     "seaborn>=0.13.2",
     "sentence-transformers",
     "tqdm>=4.67.1",

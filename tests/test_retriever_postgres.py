@@ -42,7 +42,9 @@ def test_index_stores_retrieval_text_and_context_separately() -> None:
         return np.asarray([[float(len(text))] for text in texts], dtype=np.float32)
 
     llm = RecordingLLM(embed_fn=embed_fn)
-    retriever = PostgresHybridRetriever(llm_client=llm, dsn="postgresql://user:pass@localhost/db", auto_init_schema=False)
+    retriever = PostgresHybridRetriever(
+        llm_client=llm, dsn="postgresql://user:pass@localhost/db", auto_init_schema=False
+    )
     fake_db = FakeDB(documents=[], chunks=[], query_rows=[])
     retriever.db = fake_db
 
@@ -77,7 +79,9 @@ def test_index_stores_retrieval_text_and_context_separately() -> None:
 
 def test_retrieve_hybrid_passes_filters_and_maps_rows() -> None:
     llm = RecordingLLM(embed_fn=lambda texts: np.asarray([[1.0, 2.0] for _ in texts], dtype=np.float32))
-    retriever = PostgresHybridRetriever(llm_client=llm, dsn="postgresql://user:pass@localhost/db", auto_init_schema=False)
+    retriever = PostgresHybridRetriever(
+        llm_client=llm, dsn="postgresql://user:pass@localhost/db", auto_init_schema=False
+    )
     fake_db = FakeDB(
         documents=[],
         chunks=[],
@@ -99,16 +103,10 @@ def test_retrieve_hybrid_passes_filters_and_maps_rows() -> None:
     retriever.db = fake_db
 
     filters = retriever.build_filters(
-        tickers=[" nvda ", "AAPL", "nvda"],
-        filing_date_from=date(2024, 1, 1),
-        filing_date_to="2024-12-31",
+        tickers=[" nvda ", "AAPL", "nvda"], filing_date_from=date(2024, 1, 1), filing_date_to="2024-12-31"
     )
     results = retriever.retrieve_hybrid(
-        "How did data center revenue trend?",
-        top_k_semantic=8,
-        top_k_bm25=10,
-        top_k_final=5,
-        filters=filters,
+        "How did data center revenue trend?", top_k_semantic=8, top_k_bm25=10, top_k_final=5, filters=filters
     )
 
     assert len(results) == 1

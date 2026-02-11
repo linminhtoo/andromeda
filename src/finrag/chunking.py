@@ -265,6 +265,61 @@ class MarkdownTablePreservingChunker:
             return ""
         return " ".join(words[-self.overlap_tokens :])
 
+    def _split_long_text_block(self, text: str) -> list[str]:
+        """
+        Split an oversized text block into <= `max_tokens` parts.
+
+        Strategy:
+          1. Try sentence-based packing for readability.
+          2. If a sentence is still too long, fall back to token windows.
+        """
+
+        if self._count_tokens(text) <= self.max_tokens:
+            return [text]
+
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        if not sentences:
+            return [text]
+
+        parts: list[str] = []
+        cur: list[str] = []
+        cur_tokens = 0
+
+        def flush_cur() -> None:
+            nonlocal cur, cur_tokens
+            if cur:
+                parts.append(" ".join(cur).strip())
+                cur = []
+                cur_tokens = 0
+
+        for sentence in sentences:
+            sent_tokens = self._count_tokens(sentence)
+            if sent_tokens <= self.max_tokens:
+                if cur and (cur_tokens + sent_tokens) > self.max_tokens:
+                    flush_cur()
+                cur.append(sentence)
+                cur_tokens += sent_tokens
+                continue
+
+            # The sentence itself is too long. Flush current context first.
+            flush_cur()
+            words = re.findall(r"\S+", sentence)
+            if not words:
+                continue
+            step = max(1, self.max_tokens - max(0, self.overlap_tokens))
+            start = 0
+            while start < len(words):
+                window = words[start : start + self.max_tokens]
+                if not window:
+                    break
+                parts.append(" ".join(window).strip())
+                if start + self.max_tokens >= len(words):
+                    break
+                start += step
+
+        flush_cur()
+        return parts if parts else [text]
+
     @classmethod
     def _is_table_start(cls, lines: list[str], idx: int) -> bool:
         if idx + 1 >= len(lines):
@@ -450,19 +505,23 @@ class MarkdownTablePreservingChunker:
                 text = str(block["text"]).strip()
                 if not text:
                     continue
-                if not buf_parts and carry:
-                    buf_parts.append(carry)
-                    buf_tokens += self._count_tokens(carry)
-                    carry = ""
-                text_tokens = self._count_tokens(text)
-                if buf_parts and (buf_tokens + text_tokens) > self.max_tokens:
-                    flush_buffer()
-                    if carry:
-                        buf_parts.append(carry)
-                        buf_tokens += self._count_tokens(carry)
+                text_parts = self._split_long_text_block(text)
+                for text_part in text_parts:
+                    text_tokens = self._count_tokens(text_part)
+                    if not buf_parts and carry:
+                        # Avoid creating over-limit chunks by prepending overlap.
+                        if text_tokens < self.max_tokens:
+                            buf_parts.append(carry)
+                            buf_tokens += self._count_tokens(carry)
                         carry = ""
-                buf_parts.append(text)
-                buf_tokens += text_tokens
+                    if buf_parts and (buf_tokens + text_tokens) > self.max_tokens:
+                        flush_buffer()
+                        if carry and text_tokens < self.max_tokens:
+                            buf_parts.append(carry)
+                            buf_tokens += self._count_tokens(carry)
+                            carry = ""
+                    buf_parts.append(text_part)
+                    buf_tokens += text_tokens
                 continue
 
         flush_buffer()

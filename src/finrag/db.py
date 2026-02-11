@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, LiteralString, Sequence
 
 import psycopg
 from loguru import logger
 from psycopg.rows import dict_row
+from psycopg.sql import SQL
 from psycopg.types.json import Jsonb
 
 
@@ -162,17 +163,17 @@ class PostgresDB:
 
     def connect(self) -> psycopg.Connection[Any]:
         """
-        Open a PostgreSQL connection using dictionary rows.
+        Open a PostgreSQL connection.
         """
 
-        return psycopg.connect(self.dsn, row_factory=dict_row)
+        return psycopg.connect(self.dsn)
 
     def ensure_schema(self) -> None:
         """
         Create required extensions, tables, and indexes.
         """
 
-        statements = [
+        statements: list[LiteralString] = [
             "CREATE EXTENSION IF NOT EXISTS vector;",
             """
             CREATE TABLE IF NOT EXISTS documents (
@@ -417,7 +418,7 @@ class PostgresDB:
             return set()
 
         with self.connect() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute("SELECT chunk_id FROM chunks WHERE chunk_id = ANY(%s);", (ids,))
                 rows = cur.fetchall()
 
@@ -473,24 +474,25 @@ class PostgresDB:
             "rrf_k": max(1, int(rrf_k)),
         }
 
-        where_clauses: list[str] = []
+        where_clauses: list[SQL] = []
         if filters is not None:
             tickers = list(filters.normalized_tickers())
             if tickers:
-                where_clauses.append("d.ticker = ANY(%(tickers)s)")
+                where_clauses.append(SQL("d.ticker = ANY(%(tickers)s)"))
                 params["tickers"] = tickers
             if filters.filing_date_from is not None:
-                where_clauses.append("d.filing_date >= %(filing_date_from)s")
+                where_clauses.append(SQL("d.filing_date >= %(filing_date_from)s"))
                 params["filing_date_from"] = filters.filing_date_from
             if filters.filing_date_to is not None:
-                where_clauses.append("d.filing_date <= %(filing_date_to)s")
+                where_clauses.append(SQL("d.filing_date <= %(filing_date_to)s"))
                 params["filing_date_to"] = filters.filing_date_to
 
-        where_sql = ""
+        where_sql = SQL("")
         if where_clauses:
-            where_sql = "WHERE " + " AND ".join(where_clauses)
+            where_sql = SQL("WHERE ") + SQL(" AND ").join(where_clauses)
 
-        sql = f"""
+        query_sql = SQL(
+            """
         WITH filtered AS (
             SELECT
                 c.chunk_id,
@@ -550,10 +552,11 @@ class PostgresDB:
         ORDER BY f.score DESC
         LIMIT %(top_k_final)s;
         """
+        ).format(where_sql=where_sql)
 
         with self.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(query_sql, params)
                 rows = cur.fetchall()
 
         out: list[HybridSearchRow] = []
@@ -595,11 +598,17 @@ class PostgresDB:
         """
 
         with self.connect() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute("SELECT COUNT(*) AS n FROM documents;")
-                n_documents = int(cur.fetchone()["n"])
+                documents_row = cur.fetchone()
+                if documents_row is None:
+                    raise RuntimeError("Failed to fetch documents row count.")
+                n_documents = int(documents_row["n"])
                 cur.execute("SELECT COUNT(*) AS n FROM chunks;")
-                n_chunks = int(cur.fetchone()["n"])
+                chunks_row = cur.fetchone()
+                if chunks_row is None:
+                    raise RuntimeError("Failed to fetch chunks row count.")
+                n_chunks = int(chunks_row["n"])
 
         return {"documents": n_documents, "chunks": n_chunks, "dsn": self.redacted_dsn()}
 
