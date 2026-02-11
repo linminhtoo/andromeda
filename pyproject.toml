@@ -55,6 +55,7 @@ dev = [
     "notebook",
     "ruff>=0.11.2",               # Linting and formatting
     "pre-commit>=3.4",            # Pre-commit hooks
+    # "mypy",
     "finrag[test]",
 ]
 test = [
@@ -67,3 +68,15 @@ test = [
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["finrag*"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+
+[tool.mypy]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_any_generics = false
+strict_equality = true
