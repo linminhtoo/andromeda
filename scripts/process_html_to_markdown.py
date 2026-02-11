@@ -123,9 +123,7 @@ def parse_args() -> Args:
         ),
     )
     parser.add_argument(
-        "--continue-on-error",
-        action="store_true",
-        help="Continue processing remaining files when one file fails.",
+        "--continue-on-error", action="store_true", help="Continue processing remaining files when one file fails."
     )
 
     ns = parser.parse_args()
@@ -228,9 +226,7 @@ def _build_generic_10q_parser() -> Any:
     def get_steps() -> list[Any]:
         base_parser = sp.Edgar10QParser()
         all_steps = base_parser.get_default_steps()
-        steps_without_top_manager = [
-            step for step in all_steps if not isinstance(step, TopSectionManagerFor10Q)
-        ]
+        steps_without_top_manager = [step for step in all_steps if not isinstance(step, TopSectionManagerFor10Q)]
 
         def get_checks_without_top_section_title_check() -> list[Any]:
             checks = base_parser.get_default_single_element_checks()
@@ -240,9 +236,7 @@ def _build_generic_10q_parser() -> Any:
         for step in steps_without_top_manager:
             if isinstance(step, IndividualSemanticElementExtractor):
                 updated_steps.append(
-                    IndividualSemanticElementExtractor(
-                        get_checks=get_checks_without_top_section_title_check,
-                    )
+                    IndividualSemanticElementExtractor(get_checks=get_checks_without_top_section_title_check)
                 )
             else:
                 updated_steps.append(step)
@@ -269,9 +263,7 @@ def select_parser(*, form_type: str | None, parser_mode: str) -> ParserSelection
     # parser_mode == "auto"
     if form_type == "10-Q":
         return ParserSelection(
-            parser=sp.Edgar10QParser(),
-            parser_name="Edgar10QParser",
-            suppress_invalid_section_warning=False,
+            parser=sp.Edgar10QParser(), parser_name="Edgar10QParser", suppress_invalid_section_warning=False
         )
 
     if form_type == "10-K":
@@ -380,10 +372,7 @@ def _safe_level(element: Any, default: int = 0) -> int:
 
 def render_elements_to_markdown(elements: list[Any]) -> tuple[str, dict[str, int]]:
     blocks: list[str] = []
-    block_stats = {
-        "heading_count": 0,
-        "table_count": 0,
-    }
+    block_stats = {"heading_count": 0, "table_count": 0}
 
     def append_block(text: str) -> None:
         normalized = text.strip()
@@ -484,10 +473,7 @@ def _process_one_file(
         if parser_selection.suppress_invalid_section_warning:
             warnings.filterwarnings("ignore", message="Invalid section type for")
 
-        elements = parser_selection.parser.parse(
-            html,
-            include_irrelevant_elements=include_irrelevant_elements,
-        )
+        elements = parser_selection.parser.parse(html, include_irrelevant_elements=include_irrelevant_elements)
 
     markdown, block_stats = render_elements_to_markdown(elements)
 
@@ -512,7 +498,9 @@ def _process_one_file(
     }
 
     metadata_path = debug_dir / "metadata.json"
-    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
+    )
 
     run_info = {
         "source_html": str(html_file),
@@ -524,7 +512,9 @@ def _process_one_file(
         "include_irrelevant_elements": include_irrelevant_elements,
     }
     run_info_path = debug_dir / "run_info.json"
-    run_info_path.write_text(json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    run_info_path.write_text(
+        json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
+    )
 
     return ConversionResult(
         relpath=rel,
@@ -623,7 +613,9 @@ def main() -> int:
     }
 
     run_info_path = output_root / "run_info.json"
-    run_info_path.write_text(json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    run_info_path.write_text(
+        json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
+    )
 
     processed_index_path = output_root / "doc_index.jsonl"
     with processed_index_path.open("w", encoding="utf-8") as f:

@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from scripts.process_html_to_markdown import (
-    detect_form_type,
-    normalize_markdown_table,
-    render_elements_to_markdown,
-)
+from scripts.process_html_to_markdown import detect_form_type, normalize_markdown_table, render_elements_to_markdown
 
 
 class TopSectionTitle:
@@ -39,20 +35,8 @@ class IntroductorySectionElement:
 
 
 def test_detect_form_type_prefers_metadata_then_filename() -> None:
-    assert (
-        detect_form_type(
-            filename="AMD_000000248825000012_10-K_2025-02-05.html",
-            metadata={"form": "10-Q"},
-        )
-        == "10-Q"
-    )
-    assert (
-        detect_form_type(
-            filename="AMD_000000248825000012_10-K_2025-02-05.html",
-            metadata=None,
-        )
-        == "10-K"
-    )
+    assert detect_form_type(filename="AMD_000000248825000012_10-K_2025-02-05.html", metadata={"form": "10-Q"}) == "10-Q"
+    assert detect_form_type(filename="AMD_000000248825000012_10-K_2025-02-05.html", metadata=None) == "10-K"
 
 
 def test_normalize_markdown_table_adds_separator_and_drops_empty_columns() -> None:

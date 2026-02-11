@@ -269,15 +269,11 @@ def _build_postprocessors(args: Args) -> list[ChunkPostprocessor]:
 
 
 def _build_chunker(
-    args: Args,
-    *,
-    postprocessors: list[ChunkPostprocessor],
+    args: Args, *, postprocessors: list[ChunkPostprocessor]
 ) -> DoclingHybridChunker | MarkdownTablePreservingChunker:
     if args.chunker == "markdown_table_preserving":
         return MarkdownTablePreservingChunker(
-            max_tokens=args.max_tokens,
-            overlap_tokens=args.overlap_tokens,
-            split_tables=args.split_markdown_tables,
+            max_tokens=args.max_tokens, overlap_tokens=args.overlap_tokens, split_tables=args.split_markdown_tables
         )
 
     tokenizer_kwargs: dict[str, Any] = {}
@@ -311,10 +307,7 @@ def _resolve_metadata_root(markdown_root: Path, metadata_dir_arg: str | None) ->
 
 
 def _resolve_metadata_json_for_markdown(
-    md_path: Path,
-    *,
-    markdown_root: Path,
-    metadata_root: Path | None,
+    md_path: Path, *, markdown_root: Path, metadata_root: Path | None
 ) -> str | None:
     if metadata_root is None:
         return None
@@ -388,9 +381,7 @@ def main() -> int:
             try:
                 if isinstance(chunker, MarkdownTablePreservingChunker):
                     metadata_json_path = _resolve_metadata_json_for_markdown(
-                        md_path,
-                        markdown_root=markdown_root,
-                        metadata_root=metadata_root,
+                        md_path, markdown_root=markdown_root, metadata_root=metadata_root
                     )
                     chunks = chunker.chunk_document(str(md_path), doc_id, metadata_json_path=metadata_json_path)
                     if manual_postprocess is not None:
