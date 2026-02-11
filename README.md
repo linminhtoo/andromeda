@@ -622,22 +622,22 @@ Key inputs/outputs:
 ```mermaid
 flowchart TB
   HTML["Raw filing HTML"] --> WP["WeasyPrint render (SEC CSS)"] --> PDF["Intermediate PDF"]
-  PDF --> START["PdfConverter build_document()"]
+  PDF --> START["PdfConverter\\nbuild_document()"]
 
   subgraph Marker["Marker (local fork)"]
-    START --> PROVIDER["PdfProvider (pdftext + render)"]
-    PROVIDER --> DOC["DocumentBuilder (low/high-res images)"]
+    START --> PROVIDER["PdfProvider\\n(pdftext + render)"]
+    PROVIDER --> DOC["DocumentBuilder\\n(low/high-res images)"]
     DOC --> LAYOUT["LayoutBuilder (Surya)"]
     DOC --> LINES["LineBuilder (choose OCR)"]
     LINES --> OCR["OcrBuilder (Surya)"]
-    LAYOUT --> STRUCT["StructureBuilder (group blocks)"]
+    LAYOUT --> STRUCT["StructureBuilder\\n(group blocks)"]
     OCR --> STRUCT
-    STRUCT --> PROCESSORS["Processors (tables/headers/refs)"]
-    PROCESSORS --> RENDER["MarkdownRenderer (HTML to Markdown)"]
+    STRUCT --> PROCESSORS["Processors\\n(tables/headers/refs)"]
+    PROCESSORS --> RENDER["MarkdownRenderer\\n(HTML to Markdown)"]
   end
 
-  PROCESSORS --> SERVICE["LLM service (trace headers)"] --> LLMAPI["OpenAI-compatible API (vLLM/OpenAI)"]
-  RENDER --> OUT["Outputs (processed_markdown/ + debug/)"]
+  PROCESSORS --> SERVICE["LLM service (trace headers)"] --> LLMAPI["OpenAI-compatible API\\n(vLLM/OpenAI)"]
+  RENDER --> OUT["Outputs\\n(processed_markdown/ + debug/)"]
 ```
 
 Notable Marker LLM steps for SEC filings:
