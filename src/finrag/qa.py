@@ -4,6 +4,7 @@ from typing import Sequence
 from finrag.dataclasses import ScoredChunk
 from finrag.generation_controls import AnswerStyle
 from finrag.llm_clients import ChatMessage, LLMClient
+from finrag.metadata_models import chunk_metadata_from_value
 
 
 IRRELEVANT_CHUNK_IGNORE_PROMPT = (
@@ -62,7 +63,7 @@ def build_context(chunks: Sequence[ScoredChunk], max_tokens: int) -> str:
     budget_chars = max_tokens * 4
     parts: list[str] = []
     used = 0
-    context_key = os.getenv("CONTEXT_METADATA_KEY", "context").strip() or "context"
+    context_key = os.getenv("CONTEXT_METADATA_KEY", "retrieval_context").strip() or "retrieval_context"
     for sc in chunks:
         # headings_s = "; ".join(sc.chunk.headings)
         meta_bits = [f"doc={sc.chunk.doc_id}"]
@@ -70,13 +71,14 @@ def build_context(chunks: Sequence[ScoredChunk], max_tokens: int) -> str:
         # TODO: see if we can get `marker` to populate it (during `process_html_to_markdown.py`)
         # if sc.chunk.page_no not in (None, ""):
         #     meta_bits.append(f"page={sc.chunk.page_no}")
-        # Don't include headings for now, as "index_text" already has similar "section path" info
+        # Don't include headings for now, as "retrieval_text" already includes section context.
         # meta_bits.append(f"headings={headings_s}")
         meta = "[" + " ".join(meta_bits) + "]"
 
-        meta_dict = sc.chunk.metadata or {}
-        text = (meta_dict.get("index_text") or sc.chunk.text or "").strip()
-        context = str(meta_dict.get(context_key) or "").strip()
+        metadata = chunk_metadata_from_value(sc.chunk.metadata)
+        text = (metadata.retrieval_text or sc.chunk.text or "").strip()
+        context_raw = metadata.context_for_key(context_key)
+        context = context_raw.strip() if context_raw else ""
         if context:
             block = f"{meta}\n{text}\n\nContext:\n{context}\n"
         else:

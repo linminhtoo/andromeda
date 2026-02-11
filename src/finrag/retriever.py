@@ -1,1095 +1,352 @@
-import json
-import pickle
-import uuid
-from pathlib import Path
-from collections.abc import Mapping
-from typing import Any, Callable, Iterable, Optional, Protocol, cast
+from __future__ import annotations
 
-import numpy as np
+from datetime import date
+from typing import Callable, Iterable, Protocol
+
 from loguru import logger
-from pymilvus import AnnSearchRequest, DataType, Function, FunctionType, MilvusClient, RRFRanker
-from pymilvus.model.hybrid import BGEM3EmbeddingFunction
-from pymilvus.model.sparse import BM25EmbeddingFunction
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
-from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
 from finrag.dataclasses import DocChunk, ScoredChunk
+from finrag.db import ChunkRecord, DocumentRecord, HybridSearchRow, PostgresDB, RetrievalFilters, normalize_iso_date
 from finrag.llm_clients import LLMClient
+from finrag.metadata_models import ChunkMetadata, chunk_metadata_from_value
 
 
 class EmbeddingError(RuntimeError):
-    pass
+    """
+    Raised when dense embedding generation fails.
+    """
 
 
 class CandidateTextProvider(Protocol):
+    """
+    Interface for supplying reranker candidate text.
+    """
+
     def __call__(self, chunk: DocChunk) -> str: ...
 
 
-# -------------------------------------------------------------------
-# Hybrid retriever: Qdrant + BM25
-# -------------------------------------------------------------------
-
-
-class QdrantHybridRetriever:
+class PostgresHybridRetriever:
     """
-    Qdrant-backed hybrid retriever (dense + BM25).
+    PostgreSQL-backed hybrid retriever (pgvector + FTS).
 
     Parameters
     ----------
     llm_client : LLMClient
-        LLM client used for dense embeddings.
-    storage_path : str
-        Qdrant storage path (local or external).
-    collection_name : str, optional
-        Collection name for vectors and payloads.
-    vector_dim : int | None, optional
-        Optional dense vector dimension override.
-    load_existing : bool, optional
-        Whether to load existing collection metadata and BM25 parameters when available.
-    load_batch_size : int, optional
-        Batch size for loading existing points.
-    bm25_path : str | None, optional
-        Optional path for BM25 snapshot persistence.
+        Client used for dense embedding generation.
+    dsn : str
+        PostgreSQL connection string.
+    alpha : float, optional
+        Dense score weight in weighted RRF fusion.
+    rrf_k : int, optional
+        Reciprocal-rank offset constant.
     context_builder : Callable[[DocChunk], str] | None, optional
-        Optional callback to build contextual text appended to embeddings.
-    index_text_key : str, optional
-        Metadata key containing enriched text for embedding (default: "index_text").
-    context_metadata_key : str, optional
-        Metadata key used to persist contextual text (default: "context").
+        Optional callback for generating contextual text at index time.
+    retrieval_text_key : str, optional
+        Metadata key containing enriched indexing text.
+    retrieval_context_key : str, optional
+        Metadata key used for stored contextual text.
+    auto_init_schema : bool, optional
+        Whether to ensure schema/indexes on initialization.
     """
 
     def __init__(
         self,
         llm_client: LLMClient,
-        storage_path: str,
-        collection_name: str = "rag_chunks",
-        vector_dim: int | None = None,
+        dsn: str,
         *,
-        load_existing: bool = True,
-        load_batch_size: int = 512,
-        bm25_path: str | None = None,
+        alpha: float = 0.6,
+        rrf_k: int = 60,
         context_builder: Callable[[DocChunk], str] | None = None,
-        index_text_key: str = "index_text",
-        context_metadata_key: str = "context",
+        retrieval_text_key: str = "retrieval_text",
+        retrieval_context_key: str = "retrieval_context",
+        auto_init_schema: bool = True,
     ):
         self.llm = llm_client
-        self.collection_name = collection_name
+        self.alpha = float(alpha)
+        self.rrf_k = int(rrf_k)
+        self.context_builder = context_builder
+        self.retrieval_text_key = retrieval_text_key
+        self.retrieval_context_key = retrieval_context_key
+        self.db = PostgresDB(dsn)
 
-        # For a real deployment, point to external Qdrant (e.g. http://qdrant:6333)
-        self.storage_path = storage_path
-        self.qdrant = QdrantClient(path=storage_path)  # ":memory:" also works
-
-        self.vector_dim = vector_dim
-        if self.qdrant.collection_exists(collection_name):
-            info = self.qdrant.get_collection(collection_name)
-            self.vector_dim = int(info.config.params.vectors.size)  # type: ignore[attr-defined]
-        elif vector_dim is not None:
-            self.qdrant.create_collection(
-                collection_name=collection_name, vectors_config=VectorParams(size=vector_dim, distance=Distance.COSINE)
-            )
-
-        self.chunks_by_id: dict[str, DocChunk] = {}
-        self._bm25: Optional[BM25Okapi] = None
-        self._bm25_corpus: list[list[str]] = []
-        self._bm25_chunk_ids: list[str] = []
-        self._qdrant_id_by_chunk_id: dict[str, str] = {}
-        self._bm25_path = bm25_path
-        self._bm25_dirty = False
-        self._context_builder = context_builder
-        self._index_text_key = index_text_key
-        self._context_metadata_key = context_metadata_key
-
-        if load_existing and self.qdrant.collection_exists(collection_name):
-            self._load_existing(batch_size=load_batch_size)
-            self._load_bm25()
+        if auto_init_schema:
+            self.db.ensure_schema()
+            logger.info("Initialized PostgreSQL schema for retrieval (dsn={})", self.db.redacted_dsn())
 
     @staticmethod
-    def _qdrant_id_for_chunk_id(chunk_id: str) -> str:
-        # Local Qdrant expects UUID-like point IDs; make a deterministic UUID from chunk_id.
-        return str(uuid.uuid5(uuid.NAMESPACE_URL, chunk_id))
+    def chunk_index_from_id(chunk_id: str) -> int:
+        """
+        Parse a stable integer chunk index from a chunk ID suffix.
 
-    @staticmethod
-    def _chunk_from_payload(point_id: str, payload: dict[str, Any]) -> DocChunk:
-        return DocChunk(
-            id=str(payload.get("chunk_id") or point_id),
-            doc_id=str(payload.get("doc_id") or ""),
-            text=str(payload.get("text") or ""),
-            page_no=payload.get("page_no"),
-            headings=list(payload.get("headings") or []),
-            source=str(payload.get("source") or ""),
-            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+        Examples
+        --------
+        `abc_12` -> 12
+        `abc` -> 0
+        """
+
+        head, sep, tail = chunk_id.rpartition("_")
+        if sep and head and tail.isdigit():
+            return int(tail)
+        return 0
+
+    def build_filters(
+        self, *, tickers: Iterable[str] | None, filing_date_from: str | date | None, filing_date_to: str | date | None
+    ) -> RetrievalFilters:
+        """
+        Build validated retrieval filters.
+        """
+
+        normalized_tickers = tuple(ticker.strip().upper() for ticker in (tickers or ()) if ticker and ticker.strip())
+        return RetrievalFilters(
+            tickers=normalized_tickers,
+            filing_date_from=normalize_iso_date(filing_date_from),
+            filing_date_to=normalize_iso_date(filing_date_to),
         )
 
-    def _load_existing(self, *, batch_size: int = 512) -> None:
-        offset = None
-        seen = 0
-        while True:
-            records, offset = self.qdrant.scroll(
-                collection_name=self.collection_name,
-                limit=batch_size,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            )
-            if not records:
-                break
-            for rec in records:
-                if rec.payload is None:
-                    continue
-                payload = dict(rec.payload)
-                point_id = str(rec.id)
-                ch = self._chunk_from_payload(point_id, payload)
-                self.chunks_by_id[point_id] = ch
-                self._qdrant_id_by_chunk_id[ch.id] = point_id
-                text, _context = self._text_for_embedding(ch, use_builder=False)
-                self._bm25_corpus.append(str(text).split())
-                self._bm25_chunk_ids.append(point_id)
-                seen += 1
-            if offset is None:
-                break
-        if self._bm25_corpus:
-            self._bm25 = BM25Okapi(self._bm25_corpus)
+    def text_for_embedding(self, chunk: DocChunk, *, use_builder: bool) -> tuple[str, str | None]:
+        """
+        Resolve text passed to the embedding model.
+        """
+
+        _retrieval_text, retrieval_context, embedding_text = self.resolve_retrieval_content(
+            chunk, use_builder=use_builder
+        )
+        return embedding_text, retrieval_context
+
+    def resolve_retrieval_content(self, chunk: DocChunk, *, use_builder: bool) -> tuple[str, str | None, str]:
+        """
+        Resolve retrieval fields for storage and embeddings.
+
+        Returns
+        -------
+        tuple[str, str | None, str]
+            `(retrieval_text, retrieval_context, embedding_text)`.
+        """
+
+        metadata = chunk_metadata_from_value(chunk.metadata)
+        retrieval_text = chunk.text
+        if self.retrieval_text_key == "retrieval_text" and metadata.retrieval_text:
+            retrieval_text = metadata.retrieval_text.strip()
+        elif self.retrieval_text_key in metadata.extra:
+            value = metadata.extra[self.retrieval_text_key]
+            if isinstance(value, str) and value.strip():
+                retrieval_text = value.strip()
+            elif value:
+                retrieval_text = str(value).strip()
+
+        retrieval_context = None
+        if self.retrieval_context_key == "retrieval_context":
+            retrieval_context = metadata.retrieval_context.strip() if metadata.retrieval_context else None
+        elif self.retrieval_context_key in metadata.extra:
+            value = metadata.extra[self.retrieval_context_key]
+            if isinstance(value, str) and value.strip():
+                retrieval_context = value.strip()
+            elif value:
+                retrieval_context = str(value).strip()
+
+        if use_builder and self.context_builder is not None:
+            built = self.context_builder(chunk).strip()
+            if built:
+                retrieval_context = built
+
+        if retrieval_context:
+            return retrieval_text, retrieval_context, f"{retrieval_text}\n\nContext: {retrieval_context}"
+        return retrieval_text, None, retrieval_text
+
+    def text_for_rerank(self, chunk: DocChunk) -> str:
+        """
+        Candidate text used by cross-encoder reranker.
+        """
+
+        _retrieval_text, _retrieval_context, embedding_text = self.resolve_retrieval_content(chunk, use_builder=False)
+        return embedding_text
+
+    def document_record_from_chunk(self, chunk: DocChunk) -> DocumentRecord:
+        """
+        Build a `DocumentRecord` from chunk metadata.
+        """
+
+        metadata = chunk_metadata_from_value(chunk.metadata)
+        doc_meta = metadata.doc
+
+        return DocumentRecord(
+            doc_id=chunk.doc_id,
+            source=chunk.source,
+            source_relpath=None,
+            ticker=(doc_meta.ticker.strip().upper() if doc_meta and doc_meta.ticker else None),
+            company=(doc_meta.company.strip() if doc_meta and doc_meta.company else None),
+            cik=(doc_meta.cik.strip() if doc_meta and doc_meta.cik else None),
+            accession=(doc_meta.accession.strip() if doc_meta and doc_meta.accession else None),
+            filing_type=(doc_meta.filing_type.strip() if doc_meta and doc_meta.filing_type else None),
+            filing_date=normalize_iso_date(doc_meta.filing_date if doc_meta else None),
+            period_end_date=normalize_iso_date(doc_meta.period_end_date if doc_meta else None),
+            filing_quarter=(doc_meta.filing_quarter.strip() if doc_meta and doc_meta.filing_quarter else None),
+            metadata=(doc_meta.to_dict() if doc_meta else {}),
+        )
+
+    def chunk_record_from_embedding(
+        self, chunk: DocChunk, *, embedding: list[float], retrieval_text: str, retrieval_context: str | None
+    ) -> ChunkRecord:
+        """
+        Build a `ChunkRecord` from a chunk and computed embedding state.
+        """
+
+        metadata_model = ChunkMetadata.from_value(chunk.metadata)
+        metadata = metadata_model.to_dict()
+        metadata[self.retrieval_text_key] = retrieval_text
+        if retrieval_context:
+            metadata[self.retrieval_context_key] = retrieval_context
+
+        return ChunkRecord(
+            chunk_id=chunk.id,
+            doc_id=chunk.doc_id,
+            chunk_index=self.chunk_index_from_id(chunk.id),
+            page_no=chunk.page_no,
+            headings=list(chunk.headings or []),
+            source=chunk.source,
+            text=chunk.text,
+            retrieval_text=retrieval_text,
+            retrieval_context=retrieval_context,
+            metadata=metadata,
+            embedding=embedding,
+        )
+
+    def upsert_documents(self, documents: list[DocumentRecord]) -> None:
+        """
+        Upsert document rows to PostgreSQL.
+        """
+
+        self.db.upsert_documents(documents)
 
     def existing_chunk_ids(self, chunk_ids: Iterable[str]) -> set[str]:
         """
-        Return the subset of `chunk_ids` that already exist in the collection.
-
-        Notes
-        -----
-        This relies on the in-memory mapping populated when load_existing=True.
+        Return the subset of chunk IDs already stored.
         """
 
-        return {chunk_id for chunk_id in chunk_ids if chunk_id in self._qdrant_id_by_chunk_id}
-
-    def text_for_rerank(self, chunk: DocChunk) -> str:
-        """
-        Text used when reranking retrieved chunks.
-
-        Notes
-        -----
-        For Qdrant, prefer the already-persisted contextual metadata (if present)
-        rather than recomputing context via a builder.
-        """
-
-        text, _context = self._text_for_embedding(chunk, use_builder=False)
-        return text
-
-    def _load_bm25(self) -> None:
-        if not self._bm25_path:
-            return
-        path = Path(self._bm25_path)
-        if not path.exists():
-            return
-        with path.open("rb") as f:
-            payload = pickle.load(f)
-        corpus = payload.get("corpus")
-        chunk_ids = payload.get("chunk_ids")
-        if isinstance(corpus, list) and isinstance(chunk_ids, list) and len(corpus) == len(chunk_ids):
-            self._bm25_corpus = corpus
-            self._bm25_chunk_ids = chunk_ids
-            self._bm25 = BM25Okapi(self._bm25_corpus)
-            self._bm25_dirty = False
-
-    def save_bm25(self, path: str | None = None) -> None:
-        out_path = Path(path or self._bm25_path or "")
-        if not out_path:
-            raise ValueError("BM25 path is not set")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"corpus": self._bm25_corpus, "chunk_ids": self._bm25_chunk_ids}
-        with out_path.open("wb") as f:
-            pickle.dump(payload, f)
-        self._bm25_dirty = False
-
-    def rebuild_bm25(self) -> None:
-        if not self._bm25_corpus:
-            self._bm25 = None
-            self._bm25_dirty = False
-            return
-        # TODO and FIXME: deprecate this and migrate to proper built-in BM25.
-        # BM25Okapi requires full corpus rebuild on ingesting new documents (same issue as legacy Milvus BM25).
-        self._bm25 = BM25Okapi(self._bm25_corpus)
-        self._bm25_dirty = False
+        return self.db.existing_chunk_ids(chunk_ids)
 
     def index(self, chunks: list[DocChunk], *, rebuild_bm25: bool = True) -> None:
         """
-        Index document chunks into Qdrant.
+        Index chunk rows into PostgreSQL.
 
         Parameters
         ----------
         chunks : list[DocChunk]
-            Chunks to embed and insert.
+            Chunks to upsert.
         rebuild_bm25 : bool, optional
-            Whether to rebuild the BM25 corpus after indexing.
+            Kept for API compatibility; PostgreSQL FTS does not require rebuild.
         """
 
+        _ = rebuild_bm25
         if not chunks:
             return
 
-        texts_with_context: list[str] = []
-        contexts: list[str | None] = []
+        documents_by_id: dict[str, DocumentRecord] = {}
+        retrieval_texts: list[str] = []
+        retrieval_contexts: list[str | None] = []
+        embedding_texts: list[str] = []
+
         for chunk in chunks:
-            text, context = self._text_for_embedding(chunk, use_builder=True)
-            texts_with_context.append(text)
-            contexts.append(context)
+            documents_by_id.setdefault(chunk.doc_id, self.document_record_from_chunk(chunk))
+            retrieval_text, retrieval_context, embedding_text = self.resolve_retrieval_content(chunk, use_builder=True)
+            retrieval_texts.append(retrieval_text)
+            retrieval_contexts.append(retrieval_context)
+            embedding_texts.append(embedding_text)
 
         try:
-            embeddings = self.llm.embed_texts(texts_with_context)
-        except Exception as exc:
-            raise EmbeddingError(
-                f"Failed to embed {len(texts_with_context)} texts for Qdrant indexing into {self.collection_name!r}"
-            ) from exc
-        dim = int(embeddings.shape[1])
-        if not self.qdrant.collection_exists(self.collection_name):
-            self.qdrant.create_collection(
-                collection_name=self.collection_name, vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
-            )
-            self.vector_dim = dim
-        elif self.vector_dim is not None and dim != self.vector_dim:
-            raise ValueError(f"Embedding dim {dim} != collection dim {self.vector_dim} for {self.collection_name}")
+            embeddings = self.llm.embed_texts(embedding_texts)
+        except Exception as exc:  # noqa: BLE001
+            raise EmbeddingError(f"Failed to embed {len(embedding_texts)} chunk texts") from exc
 
-        points = []
-        for emb, chunk, context in zip(embeddings, chunks, contexts):
-            point_id = self._qdrant_id_for_chunk_id(chunk.id)
-            self.chunks_by_id[point_id] = chunk
-            self._qdrant_id_by_chunk_id[chunk.id] = point_id
-            payload = self._payload_from_chunk(chunk, context)
-            points.append(PointStruct(id=point_id, vector=emb.tolist(), payload=payload))
+        self.upsert_documents(list(documents_by_id.values()))
 
-        self.qdrant.upsert(collection_name=self.collection_name, points=points, wait=True)
-
-        # BM25
-        # TODO: should we add some preprocessing like lowercasing, removing stopwords, etc.?
-        # rmbr to add these preprocessing when querying as well
-        for text, chunk in zip(texts_with_context, chunks):
-            tokens = str(text).split()
-            self._bm25_corpus.append(tokens)
-            self._bm25_chunk_ids.append(self._qdrant_id_by_chunk_id[chunk.id])
-        self._bm25_dirty = True
-        if rebuild_bm25:
-            self.rebuild_bm25()
-
-    def _semantic_search(self, query: str, top_k: int = 20) -> list[tuple]:
-        try:
-            q_emb = self.llm.embed_texts([query])[0]
-        except Exception as exc:
-            logger.warning("Dense query embedding failed (Qdrant); falling back to BM25-only: %r", exc)
-            return []
-        hits = self.qdrant.query_points(
-            collection_name=self.collection_name, query=q_emb.tolist(), limit=top_k, with_payload=False
-        )
-        return [(str(pt.id), float(pt.score)) for pt in hits.points]
-
-    def _bm25_search(self, query: str, top_k: int = 20) -> list[tuple]:
-        if self._bm25 is None:
-            return []
-        tokens = query.split()
-        scores = self._bm25.get_scores(tokens)
-        idxs = np.argsort(scores)[::-1][:top_k]
-        return [(self._bm25_chunk_ids[i], float(scores[i])) for i in idxs if scores[i] > 0]
-
-    def retrieve_hybrid(
-        self, query: str, top_k_semantic: int = 20, top_k_bm25: int = 20, top_k_final: int = 20, alpha: float = 0.6
-    ) -> list[ScoredChunk]:
-        """
-        Retrieve chunks using dense + BM25 hybrid scoring.
-
-        Parameters
-        ----------
-        query : str
-            Query text to search.
-        top_k_semantic : int, optional
-            Candidate count from dense retrieval.
-        top_k_bm25 : int, optional
-            Candidate count from BM25 retrieval.
-        top_k_final : int, optional
-            Final result count.
-        alpha : float, optional
-            Mixing parameter between dense and BM25 scores.
-
-        Returns
-        -------
-        list[ScoredChunk]
-            Retrieved chunks with relevance scores.
-        """
-
-        sem_results = self._semantic_search(query, top_k_semantic)
-        bm25_results = self._bm25_search(query, top_k_bm25)
-
-        def normalize(results):
-            if not results:
-                return {}
-            vals = np.array([s for _, s in results], dtype=np.float32)
-            min_v, max_v = float(vals.min()), float(vals.max())
-            if max_v - min_v < 1e-9:
-                return {cid: 1.0 for cid, _ in results}
-            return {cid: (float(s) - min_v) / (max_v - min_v) for cid, s in results}
-
-        sem_norm = normalize(sem_results)
-        bm25_norm = normalize(bm25_results)
-
-        combined: dict[str, float] = {}
-        for cid, s in sem_norm.items():
-            combined[cid] = combined.get(cid, 0.0) + alpha * s
-        for cid, s in bm25_norm.items():
-            combined[cid] = combined.get(cid, 0.0) + (1 - alpha) * s
-
-        sorted_ids = sorted(combined.items(), key=lambda kv: kv[1], reverse=True)[:top_k_final]
-
-        out: list[ScoredChunk] = []
-        for cid, score in sorted_ids:
-            chunk = self.chunks_by_id[cid]
-            out.append(ScoredChunk(chunk=chunk, score=score, source="hybrid"))
-        return out
-
-    def _text_for_embedding(self, chunk: DocChunk, *, use_builder: bool) -> tuple[str, str | None]:
-        # TODO: duplicate code with MilvusContextualRetriever._text_for_embedding(),
-        # consider refactoring into a shared utility function / base class / MixIn.
-        base_text = (chunk.metadata or {}).get(self._index_text_key) or chunk.text
-        context = None
-        meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
-        existing = meta.get(self._context_metadata_key) if meta else None
-        if existing:
-            context = str(existing)
-        if use_builder and self._context_builder is not None:
-            built = self._context_builder(chunk).strip()
-            if built:
-                context = built
-        if context:
-            return f"{base_text}\n\n{context}", context
-        return base_text, None
-
-    def _payload_from_chunk(self, chunk: DocChunk, context: str | None) -> dict[str, Any]:
-        payload = chunk.as_payload()
-        if context:
-            meta = payload.get("metadata")
-            if isinstance(meta, dict):
-                meta = dict(meta)
-            else:
-                meta = {}
-            meta[self._context_metadata_key] = context
-            payload["metadata"] = meta
-        return payload
-
-
-# -------------------------------------------------------------------
-# Milvus retriever: dense + optional sparse (BM25/BGE)
-# -------------------------------------------------------------------
-
-
-class DenseEmbedder(Protocol):
-    @property
-    def dim(self) -> Any: ...
-
-    def __call__(self, texts: list[str]) -> Any: ...
-
-
-class SparseEmbedder(Protocol):
-    def encode_documents(self, documents: list[str]) -> Any: ...
-
-    def encode_queries(self, queries: list[str]) -> Any: ...
-
-
-class LLMDenseEmbedder:
-    def __init__(self, llm_client: LLMClient):
-        self._llm = llm_client
-        self._dim: int | None = None
-
-    @property
-    def dim(self) -> int | None:
-        return self._dim
-
-    def __call__(self, texts: list[str]) -> Any:
-        try:
-            embeddings = self._llm.embed_texts(texts)
-        except Exception as exc:
-            raise EmbeddingError(f"Failed to embed {len(texts)} texts with LLMClient") from exc
-        if self._dim is None:
-            self._dim = int(embeddings.shape[1])
-        return embeddings
-
-
-def build_milvus_embedding_functions(
-    *, llm_client_for_dense: LLMClient, dense_kind: str, sparse_kind: str, use_sparse: bool
-) -> tuple[DenseEmbedder, SparseEmbedder | BGEM3EmbeddingFunction | None]:
-    """
-    Build Milvus dense/sparse embedding functions.
-
-    Parameters
-    ----------
-    llm_client_for_dense : LLMClient
-        LLM client used for dense embeddings when dense_kind="llm".
-    dense_kind : str
-        Dense embedding backend ("llm" or "bge-m3").
-    sparse_kind : str
-        Sparse embedding backend ("bm25", "bge-m3", or "none").
-    use_sparse : bool
-        Whether sparse embeddings are enabled.
-
-    Returns
-    -------
-    tuple
-        (dense_embedding_function, sparse_embedding_function_or_None)
-    """
-    dense_kind = dense_kind.strip().lower()
-    sparse_kind = sparse_kind.strip().lower()
-
-    dense: DenseEmbedder
-    sparse: SparseEmbedder | BGEM3EmbeddingFunction | None = None
-
-    if dense_kind == "llm":
-        dense = LLMDenseEmbedder(llm_client_for_dense)
-    elif dense_kind == "bge-m3":
-        if use_sparse and sparse_kind == "bge-m3":
-            dense = BGEM3EmbeddingFunction(return_dense=True, return_sparse=True)
-            sparse = dense
-        else:
-            dense = BGEM3EmbeddingFunction(return_dense=True, return_sparse=False)
-    else:
-        raise ValueError(f"Unknown dense embedding backend: {dense_kind}")
-
-    if use_sparse and sparse is None:
-        if sparse_kind == "bm25":
-            sparse = BM25EmbeddingFunction()
-        elif sparse_kind == "bge-m3":
-            sparse = BGEM3EmbeddingFunction(return_dense=False, return_sparse=True)
-        elif sparse_kind == "none":
-            sparse = None
-        else:
-            raise ValueError(f"Unknown sparse embedding backend: {sparse_kind}")
-
-    return dense, sparse
-
-
-class MilvusContextualRetriever:
-    """
-    Milvus-backed retriever with optional sparse vectors and contextual embeddings.
-
-    Notes
-    -----
-    - When using Milvus built-in BM25 (recommended), new chunks can be inserted
-        without refitting a local BM25 model: Milvus maintains the BM25 index and
-        corpus statistics internally.
-    - When using vector-based sparse embeddings (e.g. BGE-M3 sparse vectors),
-        sparse vectors are computed client-side and stored in Milvus.
-
-    Parameters
-    ----------
-    llm_client : LLMClient | None
-        LLM client used for dense embeddings when `dense_embedding_function` is not provided.
-    uri : str
-        Milvus URI or local path (Milvus Lite).
-    collection_name : str, optional
-        Collection name for vectors and payloads.
-    vector_dim : int | None, optional
-        Optional dense vector dimension override.
-    load_existing : bool, optional
-        Whether to load existing collection metadata and BM25 parameters when available.
-    use_sparse : bool, optional
-        Whether to store/search sparse vectors.
-    sparse_embedding_function : SparseEmbedder | BGEM3EmbeddingFunction | None, optional
-        Sparse embedding function (BM25EmbeddingFunction or compatible). If None and
-        `use_sparse` is True, BM25EmbeddingFunction is used.
-    bm25_path : str | None, optional
-        Optional path for BM25 parameters (load/save).
-    context_builder : Callable[[DocChunk], str] | None, optional
-        Optional callback to build contextual text appended to embeddings.
-    index_text_key : str, optional
-        Metadata key containing enriched text for embedding (default: "index_text").
-    context_metadata_key : str, optional
-        Metadata key used to persist contextual text (default: "context").
-    dense_embedding_function : DenseEmbedder | None, optional
-        Dense embedding function. If None, LLMClient embeddings are used.
-    """
-
-    def __init__(
-        self,
-        llm_client: LLMClient | None = None,
-        *,
-        uri: str,
-        collection_name: str = "rag_chunks",
-        vector_dim: int | None = None,
-        load_existing: bool = True,
-        use_sparse: bool = False,
-        sparse_embedding_function: SparseEmbedder | BGEM3EmbeddingFunction | None = None,
-        bm25_path: str | None = None,
-        context_builder: Callable[[DocChunk], str] | None = None,
-        index_text_key: str = "index_text",
-        context_metadata_key: str = "context",
-        dense_embedding_function: DenseEmbedder | None = None,
-        # TODO: phase out this hotfix argument
-        legacy_bm25: bool = False,
-    ):
-        if dense_embedding_function is None:
-            if llm_client is None:
-                raise ValueError("llm_client is required when dense_embedding_function is not provided.")
-            dense_embedding_function = LLMDenseEmbedder(llm_client)
-
-        self.collection_name = collection_name
-        self.client = MilvusClient(uri)
-
-        self.dense_embedding_function = dense_embedding_function
-        self.vector_dim = vector_dim
-        self.use_sparse = bool(use_sparse)
-        self.sparse_embedding_function = sparse_embedding_function
-        self._bm25_path = bm25_path
-        self._bm25_ready = False
-        self._bm25_builtin = not legacy_bm25  # For backward compatibility
-        self._bm25_text_field = "text"
-        self._bm25_output_field = "sparse_vector"
-
-        if self.use_sparse and self.sparse_embedding_function is None:
-            if isinstance(dense_embedding_function, BGEM3EmbeddingFunction):
-                self.sparse_embedding_function = dense_embedding_function
-            else:
-                self.sparse_embedding_function = BM25EmbeddingFunction()
-                self._bm25_builtin = True
-        logger.info(f"Using built-in BM25: {self._bm25_builtin}, legacy_bm25={legacy_bm25}")
-
-        self._context_builder = context_builder
-        self._index_text_key = index_text_key
-        self._context_metadata_key = context_metadata_key
-
-        if load_existing:
-            self._load_existing_collection()
-            self._load_bm25()
-
-    @property
-    def uses_bm25(self) -> bool:
-        return isinstance(self.sparse_embedding_function, BM25EmbeddingFunction)
-
-    @property
-    def bm25_requires_fit(self) -> bool:
-        """
-        Whether BM25 requires local fitting/loading.
-
-        If the collection uses Milvus built-in BM25 (function-based), this is False.
-        """
-
-        return bool(self.use_sparse and self.uses_bm25 and not self._bm25_builtin)
-
-    @staticmethod
-    def _truthy(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-        return False
-
-    def _detect_builtin_bm25(self, info: dict[str, Any]) -> bool:
-        fields = info.get("fields") or info.get("schema", {}).get("fields")
-        if not isinstance(fields, list):
-            return False
-
-        text_field: dict[str, Any] | None = None
-        sparse_field: dict[str, Any] | None = None
-        for field in fields:
-            if not isinstance(field, dict):
-                continue
-            name = field.get("name")
-            if name == self._bm25_text_field:
-                text_field = field
-            elif name == self._bm25_output_field:
-                sparse_field = field
-
-        if not text_field or not sparse_field:
-            return False
-
-        # Best-effort checks for Milvus built-in BM25 schema.
-        # Some Milvus deployments don't expose function metadata in describe_collection(),
-        # so we treat the presence of a dedicated analyzed text field as the primary signal.
-        text_params = text_field.get("params") or {}
-        if "enable_analyzer" in text_params and not self._truthy(text_params.get("enable_analyzer")):
-            return False
-        return True
-
-    def _load_existing_collection(self) -> None:
-        if not self.client.has_collection(self.collection_name):
-            return
-        try:
-            info = cast(dict[str, Any], self.client.describe_collection(self.collection_name))
-        except Exception:
-            return
-        if self.vector_dim is None:
-            fields = info.get("fields") or info.get("schema", {}).get("fields")
-            if not isinstance(fields, list):
-                return
-            for field in fields:
-                if not isinstance(field, dict):
-                    continue
-                if field.get("name") == "dense_vector":
-                    params = field.get("params") or {}
-                    dim = params.get("dim")
-                    if isinstance(dim, int):
-                        self.vector_dim = dim
-                    break
-
-        # Detect whether this collection is configured for Milvus built-in BM25.
-        if self.use_sparse and self.uses_bm25:
-            self._bm25_builtin = self._detect_builtin_bm25(info)
-
-    def _load_bm25(self) -> None:
-        if not (self.bm25_requires_fit and self._bm25_path):
-            return
-        path = Path(self._bm25_path)
-        if not path.exists():
-            return
-        self.load_bm25(str(path))
-
-    def existing_chunk_ids(self, chunk_ids: Iterable[str], *, batch_size: int = 256) -> set[str]:
-        """
-        Return the subset of `chunk_ids` that already exist in the collection.
-        """
-
-        if not self.client.has_collection(self.collection_name):
-            return set()
-
-        ids = [str(cid) for cid in chunk_ids if cid]
-        if not ids:
-            return set()
-
-        found: set[str] = set()
-        bs = max(1, int(batch_size))
-        for i in range(0, len(ids), bs):
-            batch = ids[i : i + bs]
-            try:
-                records = self.client.get(collection_name=self.collection_name, ids=batch, output_fields=["chunk_id"])
-            except TypeError:
-                records = self.client.get(self.collection_name, batch, output_fields=["chunk_id"])
-            if not records:
-                continue
-            for rec in records:
-                if not isinstance(rec, dict):
-                    continue
-                value = rec.get("chunk_id") or rec.get("id")
-                if value:
-                    found.add(str(value))
-
-        return found
-
-    def _dense_dim(self) -> int:
-        dim = getattr(self.dense_embedding_function, "dim", None)
-        if isinstance(dim, int):
-            return dim
-        if isinstance(dim, dict) and isinstance(dim.get("dense"), int):
-            return int(dim["dense"])
-        raise ValueError("Dense embedding dimension is not available. Provide vector_dim or embed once first.")
-
-    def build_collection(self, *, vector_dim: int | None = None) -> None:
-        """
-        Create the Milvus collection for dense/sparse vectors and payloads.
-
-        Parameters
-        ----------
-        vector_dim : int | None, optional
-            Dense vector dimension. Defaults to the embedding function's dimension.
-        """
-
-        dense_dim = int(vector_dim or self.vector_dim or self._dense_dim())
-
-        schema = self.client.create_schema(auto_id=False, enable_dynamic_field=True)
-        schema.add_field(field_name="chunk_id", datatype=DataType.VARCHAR, is_primary=True, max_length=256)
-        schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=dense_dim)
-        if self.use_sparse:
-            if self.uses_bm25 and self._bm25_builtin:
-                schema.add_field(
-                    field_name=self._bm25_text_field, datatype=DataType.VARCHAR, max_length=16384, enable_analyzer=True
-                )
-                schema.add_field(
-                    field_name=self._bm25_output_field,
-                    datatype=DataType.SPARSE_FLOAT_VECTOR,
-                    description="BM25 sparse embedding auto-generated by Milvus built-in BM25 function",
-                )
-                bm25_function = Function(
-                    name="text_bm25_emb",
-                    input_field_names=[self._bm25_text_field],
-                    output_field_names=[self._bm25_output_field],
-                    function_type=FunctionType.BM25,
-                )
-                schema.add_function(bm25_function)
-            else:
-                schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
-        schema.add_field(field_name="payload", datatype=DataType.JSON)
-
-        index_params = self.client.prepare_index_params()
-        index_params.add_index(field_name="dense_vector", index_type="FLAT", metric_type="IP")
-        if self.use_sparse:
-            if self.uses_bm25 and self._bm25_builtin:
-                index_params.add_index(
-                    field_name=self._bm25_output_field,
-                    index_type="SPARSE_INVERTED_INDEX",
-                    metric_type="BM25",
-                    params={"bm25_k1": 1.2, "bm25_b": 0.75, "inverted_index_algo": "DAAT_MAXSCORE"},
-                )
-            else:
-                index_params.add_index(field_name="sparse_vector", index_type="SPARSE_INVERTED_INDEX", metric_type="IP")
-
-        self.client.create_collection(
-            collection_name=self.collection_name, schema=schema, index_params=index_params, enable_dynamic_field=True
-        )
-        self.vector_dim = dense_dim
-
-    def fit_bm25(self, corpus: list[str]) -> None:
-        """
-        Fit BM25 parameters for sparse embeddings.
-
-        Parameters
-        ----------
-        corpus : list[str]
-            Corpus used to fit BM25 statistics.
-
-        Raises
-        ------
-        RuntimeError
-            If sparse embeddings are not configured for BM25.
-        """
-
-        if not self.uses_bm25:
-            raise RuntimeError("BM25 fitting is only available when using BM25EmbeddingFunction.")
-        if self._bm25_builtin:
-            raise RuntimeError("Milvus built-in BM25 does not require fitting; rebuild the collection if needed.")
-        if self.sparse_embedding_function is None:
-            raise RuntimeError("Sparse embedding function is not configured.")
-        self.sparse_embedding_function.fit(corpus)  # type: ignore[call-arg]
-        self._bm25_ready = True
-
-    def load_bm25(self, path: str) -> None:
-        """
-        Load BM25 parameters from disk.
-
-        Parameters
-        ----------
-        path : str
-            Path to BM25 parameters saved by `save_bm25`.
-        """
-
-        if not self.uses_bm25:
-            raise RuntimeError("BM25 loading is only available when using BM25EmbeddingFunction.")
-        if self._bm25_builtin:
-            raise RuntimeError("Milvus built-in BM25 does not use on-disk BM25 parameters.")
-        if self.sparse_embedding_function is None:
-            raise RuntimeError("Sparse embedding function is not configured.")
-        self.sparse_embedding_function.load(path)  # type: ignore[call-arg]
-        self._bm25_ready = True
-
-    def save_bm25(self, path: str | None = None) -> None:
-        """
-        Persist BM25 parameters to disk.
-
-        Parameters
-        ----------
-        path : str | None, optional
-            Output path. Defaults to the configured bm25_path.
-        """
-
-        if not self.uses_bm25:
-            raise RuntimeError("BM25 saving is only available when using BM25EmbeddingFunction.")
-        if self._bm25_builtin:
-            raise RuntimeError("Milvus built-in BM25 does not use on-disk BM25 parameters.")
-        out_path = Path(path or self._bm25_path or "")
-        if not out_path:
-            raise ValueError("BM25 path is not set")
-        if self.sparse_embedding_function is None:
-            raise RuntimeError("Sparse embedding function is not configured.")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        self.sparse_embedding_function.save(str(out_path))  # type: ignore[call-arg]
-
-    def _sparse_from_documents(self, texts: list[str]) -> Any | None:
-        if not self.use_sparse:
-            return None
-        if self.sparse_embedding_function is None:
-            raise RuntimeError("use_sparse=True but sparse_embedding_function is None")
-        try:
-            if isinstance(self.sparse_embedding_function, BGEM3EmbeddingFunction):
-                return self.sparse_embedding_function(texts)["sparse"]
-            return self.sparse_embedding_function.encode_documents(texts)
-        except Exception as exc:
-            raise EmbeddingError(f"Failed to compute sparse document embeddings for {len(texts)} texts") from exc
-
-    def _sparse_from_queries(self, texts: list[str]) -> Any | None:
-        if not self.use_sparse:
-            return None
-        if self.sparse_embedding_function is None:
-            raise RuntimeError("use_sparse=True but sparse_embedding_function is None")
-        try:
-            if isinstance(self.sparse_embedding_function, BGEM3EmbeddingFunction):
-                return self.sparse_embedding_function(texts)["sparse"]
-            return self.sparse_embedding_function.encode_queries(texts)
-        except Exception as exc:
-            raise EmbeddingError(f"Failed to compute sparse query embeddings for {len(texts)} texts") from exc
-
-    @staticmethod
-    def _sparse_row(matrix: Any, idx: int) -> Any:
-        try:
-            return matrix[[idx]]
-        except Exception:
-            return matrix[idx]
-
-    def _embed_dense(self, texts: list[str]) -> np.ndarray:
-        try:
-            embeddings = self.dense_embedding_function(texts)
-        except Exception as exc:
-            raise EmbeddingError(f"Failed to compute dense embeddings for {len(texts)} texts") from exc
-        if isinstance(self.dense_embedding_function, BGEM3EmbeddingFunction):
-            dense = embeddings.get("dense") if isinstance(embeddings, dict) else None
-            if dense is None:
-                raise RuntimeError("BGEM3EmbeddingFunction did not return dense embeddings.")
-            return np.asarray(dense, dtype=np.float32)
-        if isinstance(embeddings, np.ndarray):
-            return embeddings
-        return np.asarray(embeddings, dtype=np.float32)
-
-    def _text_for_embedding(self, chunk: DocChunk) -> tuple[str, str | None]:
-        base_text = (chunk.metadata or {}).get(self._index_text_key) or chunk.text
-        context = None
-        meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
-        existing = meta.get(self._context_metadata_key) if meta else None
-        if existing:
-            context = str(existing)
-        if self._context_builder is not None:
-            built = self._context_builder(chunk).strip()
-            if built:
-                context = built
-        if context:
-            return f"{base_text}\n\nContext: {context}", context
-        return base_text, None
-
-    def text_for_rerank(self, chunk: DocChunk) -> str:
-        """
-        Text used when reranking retrieved chunks.
-
-        This intentionally reuses the same logic as `_text_for_embedding()` so
-        reranking sees the full enriched chunk representation (e.g. index text
-        and contextual metadata).
-        """
-
-        text, _context = self._text_for_embedding(chunk)
-        return text
-
-    def _payload_from_chunk(self, chunk: DocChunk, context: str | None) -> dict[str, Any]:
-        payload = chunk.as_payload()
-        if context:
-            meta = payload.get("metadata")
-            if isinstance(meta, dict):
-                meta = dict(meta)
-            else:
-                meta = {}
-            meta[self._context_metadata_key] = context
-            payload["metadata"] = meta
-        return payload
-
-    def index(self, chunks: list[DocChunk], *, rebuild_bm25: bool = True) -> None:
-        """
-        Index document chunks into Milvus.
-
-        Parameters
-        ----------
-        chunks : list[DocChunk]
-            Chunks to embed and insert.
-        rebuild_bm25 : bool, optional
-            Reserved for API parity. For Milvus built-in BM25 (recommended),
-            no local BM25 fitting/loading is required. For legacy BM25 sparse
-            vectors (client-side BM25EmbeddingFunction), call `fit_bm25` or
-            `load_bm25` before indexing.
-
-        Raises
-        ------
-        RuntimeError
-            If legacy BM25 sparse embeddings are enabled but not fitted/loaded.
-        """
-
-        if not chunks:
-            return
-        if self.bm25_requires_fit and not self._bm25_ready:
-            raise RuntimeError("BM25 sparse embeddings are not ready. Call fit_bm25() or load_bm25() first.")
-
-        texts_with_context: list[str] = []
-        contexts: list[str | None] = []
-        for chunk in chunks:
-            text, context = self._text_for_embedding(chunk)
-            texts_with_context.append(text)
-            contexts.append(context)
-
-        dense_vectors = self._embed_dense(texts_with_context)
-        if dense_vectors.shape[0] != len(chunks):
-            raise RuntimeError("Dense embedding count does not match chunk count.")
-
-        if self.vector_dim is not None and int(dense_vectors.shape[1]) != int(self.vector_dim):
-            raise ValueError(
-                f"Embedding dim {dense_vectors.shape[1]} != collection dim {self.vector_dim} for {self.collection_name}"
-            )
-        if not self.client.has_collection(self.collection_name):
-            self.build_collection(vector_dim=int(self.vector_dim or dense_vectors.shape[1]))
-
-        sparse_vectors = None
-        if self.use_sparse and not (self.uses_bm25 and self._bm25_builtin):
-            sparse_vectors = self._sparse_from_documents(texts_with_context)
-
-        data: list[dict[str, Any]] = []
+        rows: list[ChunkRecord] = []
         for idx, chunk in enumerate(chunks):
-            payload = self._payload_from_chunk(chunk, contexts[idx])
-            row = {"chunk_id": chunk.id, "dense_vector": dense_vectors[idx].tolist(), "payload": payload}
-            if self.use_sparse:
-                if self.uses_bm25 and self._bm25_builtin:
-                    row[self._bm25_text_field] = texts_with_context[idx]
-                else:
-                    if sparse_vectors is None:
-                        raise RuntimeError("use_sparse=True but sparse_vectors is None")
-                    row["sparse_vector"] = self._sparse_row(sparse_vectors, idx)
-            data.append(row)
+            rows.append(
+                self.chunk_record_from_embedding(
+                    chunk,
+                    embedding=[float(v) for v in embeddings[idx].tolist()],
+                    retrieval_text=retrieval_texts[idx],
+                    retrieval_context=retrieval_contexts[idx],
+                )
+            )
 
-        if hasattr(self.client, "upsert"):
-            self.client.upsert(collection_name=self.collection_name, data=data)
-        else:
-            self.client.insert(collection_name=self.collection_name, data=data)
+        self.db.upsert_chunks(rows)
+
+    def scored_chunk_from_row(self, row: HybridSearchRow) -> ScoredChunk:
+        """
+        Convert a retrieved SQL row to `ScoredChunk`.
+        """
+
+        metadata = dict(row.metadata)
+        if self.retrieval_text_key not in metadata:
+            metadata[self.retrieval_text_key] = row.retrieval_text
+        if row.retrieval_context and self.retrieval_context_key not in metadata:
+            metadata[self.retrieval_context_key] = row.retrieval_context
+
+        chunk = DocChunk(
+            id=row.chunk_id,
+            doc_id=row.doc_id,
+            text=row.text,
+            page_no=row.page_no,
+            headings=list(row.headings),
+            source=row.source,
+            metadata=metadata,
+        )
+        return ScoredChunk(chunk=chunk, score=row.score, source="hybrid")
 
     def retrieve_hybrid(
-        self, query: str, top_k_semantic: int = 20, top_k_bm25: int = 20, top_k_final: int = 20, alpha: float = 0.6
+        self,
+        query: str,
+        top_k_semantic: int = 20,
+        top_k_bm25: int = 20,
+        top_k_final: int = 20,
+        alpha: float | None = None,
+        *,
+        filters: RetrievalFilters | None = None,
     ) -> list[ScoredChunk]:
         """
-        Retrieve chunks using dense-only or hybrid (dense+sparse) search.
+        Retrieve chunks using PostgreSQL dense + sparse hybrid ranking.
 
         Parameters
         ----------
         query : str
-            Query text to search.
+            Input query text.
         top_k_semantic : int, optional
-            Candidate count from dense retrieval (hybrid mode).
+            Dense candidate count.
         top_k_bm25 : int, optional
-            Candidate count from sparse retrieval (hybrid mode).
+            Sparse candidate count.
         top_k_final : int, optional
-            Final result count.
-        alpha : float, optional
-            Mixing parameter (unused when Milvus hybrid search uses RRFRanker).
+            Final fused result count.
+        alpha : float | None, optional
+            Dense score weight override.
+        filters : RetrievalFilters | None, optional
+            Optional pre-retrieval constraints.
 
         Returns
         -------
         list[ScoredChunk]
-            Retrieved chunks with relevance scores.
+            Retrieved scored chunks.
         """
 
-        dense_vec: np.ndarray | None
         try:
-            dense_vec = self._embed_dense([query])[0]
-        except Exception as exc:
-            dense_vec = None
-            logger.warning("Dense query embedding failed (Milvus); attempting sparse-only fallback: %r", exc)
-        output_fields = ["payload"]
+            query_vector = self.llm.embed_texts([query])[0].tolist()
+        except Exception as exc:  # noqa: BLE001
+            raise EmbeddingError("Failed to embed query text for retrieval") from exc
 
-        hits: list[dict[str, Any]]
-        if not self.client.has_collection(self.collection_name):
-            return []
+        rows = self.db.hybrid_search(
+            query_text=query,
+            query_vector=query_vector,
+            top_k_semantic=top_k_semantic,
+            top_k_sparse=top_k_bm25,
+            top_k_final=top_k_final,
+            alpha=float(alpha if alpha is not None else self.alpha),
+            rrf_k=self.rrf_k,
+            filters=filters,
+        )
 
-        sparse_vecs = None
-        bm25_query: str | None = None
-        if self.use_sparse:
-            if self.uses_bm25 and self._bm25_builtin:
-                bm25_query = query
-            else:
-                try:
-                    sparse_vecs = self._sparse_from_queries([query])
-                except Exception as exc:
-                    logger.warning("Sparse query embedding failed (Milvus); falling back to dense-only: %r", exc)
-                    sparse_vecs = None
-        if sparse_vecs is None and bm25_query is None and dense_vec is None:
-            raise RuntimeError("Both dense and sparse query embeddings failed; cannot search.")
-
-        if self.use_sparse and dense_vec is not None and (sparse_vecs is not None or bm25_query is not None):
-            dense_req = AnnSearchRequest(
-                data=[dense_vec.tolist()],
-                anns_field="dense_vector",
-                param={"metric_type": "IP"},
-                limit=max(top_k_semantic, top_k_final),
-            )
-            if bm25_query is not None:
-                sparse_req = AnnSearchRequest(
-                    data=[bm25_query],
-                    anns_field=self._bm25_output_field,
-                    param={"metric_type": "BM25"},
-                    limit=max(top_k_bm25, top_k_final),
-                )
-            else:
-                sparse_req = AnnSearchRequest(
-                    data=[self._sparse_row(sparse_vecs, 0)],
-                    anns_field="sparse_vector",
-                    param={"metric_type": "IP"},
-                    limit=max(top_k_bm25, top_k_final),
-                )
-            results = self.client.hybrid_search(
-                self.collection_name, [dense_req, sparse_req], RRFRanker(), top_k_final, output_fields=output_fields
-            )
-            hits = results[0] if results else []
-        elif self.use_sparse and dense_vec is None and (sparse_vecs is not None or bm25_query is not None):
-            if bm25_query is not None:
-                results = self.client.search(
-                    self.collection_name,
-                    data=[bm25_query],
-                    anns_field=self._bm25_output_field,
-                    limit=top_k_final,
-                    output_fields=output_fields,
-                )
-                hits = results[0] if results else []
-            else:
-                results = self.client.search(
-                    self.collection_name,
-                    data=[self._sparse_row(sparse_vecs, 0)],
-                    anns_field="sparse_vector",
-                    limit=top_k_final,
-                    output_fields=output_fields,
-                )
-                hits = results[0] if results else []
-        elif dense_vec is not None:
-            results = self.client.search(
-                self.collection_name,
-                data=[dense_vec.tolist()],
-                anns_field="dense_vector",
-                limit=top_k_final,
-                output_fields=output_fields,
-            )
-            hits = results[0] if results else []
-        else:
-            return []
-
-        out: list[ScoredChunk] = []
-        for hit in hits:
-            entity = hit.get("entity") if isinstance(hit, Mapping) else None
-            payload = None
-            if isinstance(entity, dict):
-                payload = entity.get("payload")
-            if payload is None and isinstance(hit, Mapping):
-                payload = hit.get("payload")
-            if isinstance(payload, str):
-                try:
-                    payload = json.loads(payload)
-                except json.JSONDecodeError:
-                    payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
-
-            hit_id = hit.get("id") if isinstance(hit, Mapping) else getattr(hit, "id", "")
-            chunk = DocChunk(
-                id=str(payload.get("chunk_id") or hit_id or ""),
-                doc_id=str(payload.get("doc_id") or ""),
-                text=str(payload.get("text") or ""),
-                page_no=payload.get("page_no"),
-                headings=list(payload.get("headings") or []),
-                source=str(payload.get("source") or ""),
-                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
-            )
-            score = hit.get("score") if isinstance(hit, Mapping) else getattr(hit, "score", None)
-            if score is None:
-                score = hit.get("distance") if isinstance(hit, Mapping) else getattr(hit, "distance", None)
-            out.append(ScoredChunk(chunk=chunk, score=float(score or 0.0), source="hybrid"))
-
-        return out
-
-
-# -------------------------------------------------------------------
-# Cross-encoder reranker
-# -------------------------------------------------------------------
+        return [self.scored_chunk_from_row(row) for row in rows]
 
 
 class CrossEncoderReranker:
@@ -1101,12 +358,6 @@ class CrossEncoderReranker:
     model_name : str, optional
         Pretrained cross-encoder model name.
         Defaults to "cross-encoder/ms-marco-MiniLM-L-6-v2".
-        Users can also experiment with "BAAI/bge-reranker-v2-gemma".
-
-    TODO:
-    Implement OpenAI API based reranker as an alternative.
-    This will enable more robust concurrency patterns as we will be making API calls
-    rather than pytorch model inferences on local GPUs.
     """
 
     def __init__(
@@ -1116,7 +367,7 @@ class CrossEncoderReranker:
         candidate_text_provider: CandidateTextProvider | None = None,
     ):
         self.model = CrossEncoder(model_name, trust_remote_code=True)
-        self._candidate_text_provider = candidate_text_provider
+        self.candidate_text_provider = candidate_text_provider
 
     def rerank(
         self,
@@ -1126,22 +377,33 @@ class CrossEncoderReranker:
         *,
         candidate_text_provider: CandidateTextProvider | None = None,
     ) -> list[ScoredChunk]:
+        """
+        Rerank chunk candidates by cross-encoder relevance.
+        """
+
         if not candidates:
             return []
-        provider = candidate_text_provider or self._candidate_text_provider
+
+        provider = candidate_text_provider or self.candidate_text_provider
         if provider is None:
-            pairs = [(query, c.chunk.text) for c in candidates]
+            pairs = [(query, candidate.chunk.text) for candidate in candidates]
         else:
-            pairs = [(query, provider(c.chunk)) for c in candidates]
+            pairs = [(query, provider(candidate.chunk)) for candidate in candidates]
+
         scores = self.model.predict(pairs).tolist()
-        rescored = []
-        for cand, score in zip(candidates, scores):
-            rescored.append(ScoredChunk(chunk=cand.chunk, score=float(score), source="reranker"))
-        rescored.sort(key=lambda c: c.score, reverse=True)
+        rescored: list[ScoredChunk] = []
+        for candidate, score in zip(candidates, scores):
+            rescored.append(ScoredChunk(chunk=candidate.chunk, score=float(score), source="reranker"))
+
+        rescored.sort(key=lambda item: item.score, reverse=True)
         return rescored[:top_k]
 
 
 class NoopReranker:
+    """
+    Reranker that preserves retrieval ordering by score.
+    """
+
     def rerank(
         self,
         query: str,
@@ -1150,6 +412,12 @@ class NoopReranker:
         *,
         candidate_text_provider: CandidateTextProvider | None = None,
     ) -> list[ScoredChunk]:
-        candidates = list(candidates)
-        candidates.sort(key=lambda c: c.score, reverse=True)
-        return candidates[:top_k]
+        """
+        Return top-k candidates sorted by existing score.
+        """
+
+        _ = query
+        _ = candidate_text_provider
+        ordered = list(candidates)
+        ordered.sort(key=lambda item: item.score, reverse=True)
+        return ordered[:top_k]

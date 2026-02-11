@@ -3,6 +3,7 @@ import math
 import random
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Hashable, Iterable, TypeVar, cast
 
@@ -20,6 +21,7 @@ from finrag.eval.schema import (
     RefusalSpec,
     ScaleUnits,
 )
+from finrag.metadata_models import DocumentMetadata, chunk_metadata_from_value
 
 _SCALE_HINTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)\b(in\s+millions)\b"), "millions"),
@@ -57,6 +59,17 @@ _MONTH_TO_NUM = {
     "november": 11,
     "december": 12,
 }
+
+
+@dataclass(frozen=True)
+class CompanyYearTarget:
+    """
+    Minimal typed company-year target used by open-ended/refusal/distractor/comparison generation.
+    """
+
+    ticker: str
+    year: int
+    company: str
 
 
 def _detect_scale(text: str) -> ScaleUnits | None:
@@ -145,10 +158,8 @@ def extract_metric_number_pairs(text: str, *, max_pairs: int = 3) -> list[tuple[
     return out
 
 
-def _doc_meta(chunk: DocChunk) -> dict[str, Any]:
-    meta = chunk.metadata or {}
-    doc = meta.get("doc")
-    return doc if isinstance(doc, dict) else {}
+def _doc_meta(chunk: DocChunk) -> DocumentMetadata | None:
+    return chunk_metadata_from_value(chunk.metadata).doc
 
 
 def _quarter_pretty(q: str | None) -> str | None:
@@ -174,22 +185,22 @@ def _quarter_from_iso_date(date_s: str | None) -> str | None:
     return f"Q{q} {year}"
 
 
-def _company_label(doc: dict[str, Any]) -> str:
-    company = doc.get("company")
-    ticker = doc.get("ticker")
-    if isinstance(company, str) and company.strip():
-        if isinstance(ticker, str) and ticker.strip():
-            return f"{company.strip()} ({ticker.strip().upper()})"
-        return company.strip()
-    if isinstance(ticker, str) and ticker.strip():
-        return ticker.strip().upper()
+def _company_label(doc: DocumentMetadata | None) -> str:
+    company = doc.company.strip() if doc and doc.company else ""
+    ticker = doc.ticker.strip().upper() if doc and doc.ticker else ""
+    if company:
+        if ticker:
+            return f"{company} ({ticker})"
+        return company
+    if ticker:
+        return ticker
     return "the company"
 
 
 def _evidence_from_chunk(chunk: DocChunk, *, snippet_chars: int = 1200) -> EvidenceChunk:
-    meta = chunk.metadata or {}
-    section_path = meta.get("section_path") if isinstance(meta.get("section_path"), str) else None
-    base_text = (meta.get("index_text") or chunk.text or "").strip()
+    parsed = chunk_metadata_from_value(chunk.metadata)
+    section_path = parsed.section_path
+    base_text = (parsed.retrieval_text or chunk.text or "").strip()
     snippet = base_text
     if len(snippet) > snippet_chars:
         snippet = snippet[: max(0, snippet_chars - 1)].rstrip() + "…"
@@ -205,22 +216,22 @@ def _evidence_from_chunk(chunk: DocChunk, *, snippet_chars: int = 1200) -> Evide
     )
 
 
-def _targets_from_docs(docs: Iterable[dict[str, Any]]) -> dict[tuple[str, int], str]:
+def _targets_from_docs(docs: Iterable[CompanyYearTarget]) -> dict[tuple[str, int], str]:
     """
     Build (ticker, year) -> company label.
     """
     targets: dict[tuple[str, int], str] = {}
     for d in docs:
-        ticker = d.get("ticker")
-        year = d.get("year")
-        company = d.get("company")
-        if not isinstance(ticker, str) or not ticker.strip():
+        ticker = d.ticker.strip().upper()
+        year = d.year
+        company = d.company.strip()
+        if not ticker:
             continue
-        if not isinstance(year, int):
+        if year <= 0:
             continue
-        if not isinstance(company, str) or not company.strip():
-            company = ticker.strip().upper()
-        targets[(ticker.strip().upper(), year)] = company.strip()
+        if not company:
+            company = ticker
+        targets[(ticker, year)] = company
     return targets
 
 
@@ -298,8 +309,8 @@ def generate_factual_queries(
 
     period_end_by_doc: dict[str, str | None] = {}
     for doc_id, doc_chunks in by_doc_id.items():
-        doc0 = _doc_meta(doc_chunks[0]) if doc_chunks else {}
-        period_end = doc0.get("period_end_date") if isinstance(doc0.get("period_end_date"), str) else None
+        doc0 = _doc_meta(doc_chunks[0]) if doc_chunks else None
+        period_end = doc0.period_end_date if doc0 and doc0.period_end_date else None
         if not period_end:
             period_end = _infer_period_end_date(doc_chunks)
         period_end_by_doc[doc_id] = period_end
@@ -308,12 +319,10 @@ def generate_factual_queries(
     seen: set[tuple[str, str, str]] = set()
     for chunk in chunk_list:
         doc = _doc_meta(chunk)
-        ticker = str(doc.get("ticker") or "").upper()
-        filing_type = str(doc.get("filing_type") or "")
-        filing_quarter = _quarter_pretty(
-            doc.get("filing_quarter") if isinstance(doc.get("filing_quarter"), str) else None
-        )
-        filing_date = doc.get("filing_date") if isinstance(doc.get("filing_date"), str) else None
+        ticker = doc.ticker.upper() if doc and doc.ticker else ""
+        filing_type = doc.filing_type if doc and doc.filing_type else ""
+        filing_quarter = _quarter_pretty(doc.filing_quarter if doc else None)
+        filing_date = doc.filing_date if doc else None
         period_end_date = period_end_by_doc.get(chunk.doc_id) or None
         period_quarter = _quarter_from_iso_date(period_end_date) if period_end_date else None
 
@@ -378,7 +387,7 @@ _OPEN_ENDED_TEMPLATES: list[str] = [
 ]
 
 
-def generate_open_ended_queries(docs: Iterable[dict[str, Any]], *, n: int, seed: int = 0) -> list[EvalQuery]:
+def generate_open_ended_queries(docs: Iterable[CompanyYearTarget], *, n: int, seed: int = 0) -> list[EvalQuery]:
     """
     Generate open-ended questions (no ground truth).
     """
@@ -456,7 +465,7 @@ _UNKNOWN_COMPANY_CANDIDATES: list[tuple[str, str]] = [
 
 
 def generate_refusal_queries(
-    docs: Iterable[dict[str, Any]], *, n: int, seed: int = 0, max_known_tickers_sample: int = 12
+    docs: Iterable[CompanyYearTarget], *, n: int, seed: int = 0, max_known_tickers_sample: int = 12
 ) -> list[EvalQuery]:
     """
     Generate out-of-scope / refusal queries.
@@ -555,7 +564,7 @@ _DISTRACTOR_POOL: list[tuple[str, str]] = [
 ]
 
 
-def generate_distractor_queries(docs: Iterable[dict[str, Any]], *, n: int, seed: int = 0) -> list[EvalQuery]:
+def generate_distractor_queries(docs: Iterable[CompanyYearTarget], *, n: int, seed: int = 0) -> list[EvalQuery]:
     """
     Generate valid questions that contain distracting user-provided information.
     """
@@ -616,7 +625,7 @@ _COMPARISON_TEMPLATES: list[str] = [
 
 
 def generate_comparison_queries(
-    docs: Iterable[dict[str, Any]], *, n: int, seed: int = 0, min_companies: int = 2, max_companies: int = 2
+    docs: Iterable[CompanyYearTarget], *, n: int, seed: int = 0, min_companies: int = 2, max_companies: int = 2
 ) -> list[EvalQuery]:
     """
     Generate questions that compare 2+ specific companies.

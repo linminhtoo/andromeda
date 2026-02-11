@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from finrag.dataclasses import DocChunk
+from finrag.metadata_models import chunk_metadata_from_value
 
 _FILENAME_RE = re.compile(
     r"^(?P<ticker>[A-Za-z0-9.]+)_(?P<accession>\d{18})_(?P<form>[^_]+)_(?P<date>\d{4}-\d{2}-\d{2})$"
@@ -26,14 +27,93 @@ class ChunkExportDoc:
     company: str | None = None
 
 
-def _parse_doc_from_source(source: str | None, relpath: str | None) -> dict[str, Any]:
+@dataclass(frozen=True)
+class ParsedDocFromSource:
+    ticker: str
+    filing_type: str
+    filing_date: str
+    year: int | None
+
+
+@dataclass(frozen=True)
+class DocIndexRow:
+    doc_id: str
+    source: str
+    relpath: str | None
+    chunks_path: str
+
+    @classmethod
+    def from_json_obj(cls, value: object) -> DocIndexRow | None:
+        if not isinstance(value, dict):
+            return None
+
+        doc_id_raw = value["doc_id"] if "doc_id" in value else ""
+        chunks_path_raw = value["chunks_path"] if "chunks_path" in value else ""
+        source_raw = value["source"] if "source" in value else ""
+        relpath_raw = value["relpath"] if "relpath" in value else ""
+
+        doc_id = doc_id_raw if isinstance(doc_id_raw, str) else str(doc_id_raw)
+        chunks_path = chunks_path_raw if isinstance(chunks_path_raw, str) else str(chunks_path_raw)
+        source = source_raw if isinstance(source_raw, str) else str(source_raw)
+        relpath = relpath_raw if isinstance(relpath_raw, str) else str(relpath_raw)
+        relpath = relpath or None
+
+        if not doc_id or not chunks_path:
+            return None
+        return cls(doc_id=doc_id, source=source, relpath=relpath, chunks_path=chunks_path)
+
+
+@dataclass(frozen=True)
+class ChunkExportRow:
+    id: str
+    doc_id: str
+    text: str
+    page_no: int | None
+    headings: list[str]
+    source: str
+    metadata: dict[str, Any] | None
+
+    @classmethod
+    def from_json_obj(cls, value: object) -> ChunkExportRow | None:
+        if not isinstance(value, dict):
+            return None
+        if "id" not in value or "doc_id" not in value:
+            return None
+
+        row_id = value["id"]
+        row_doc_id = value["doc_id"]
+        row_text = value["text"] if "text" in value else ""
+        row_source = value["source"] if "source" in value else ""
+        row_page_no = value["page_no"] if "page_no" in value else None
+        row_headings = value["headings"] if "headings" in value else None
+        row_metadata = value["metadata"] if "metadata" in value else None
+
+        if not isinstance(row_id, str) or not isinstance(row_doc_id, str):
+            return None
+
+        headings: list[str] = []
+        if isinstance(row_headings, list):
+            headings = [str(item) for item in row_headings]
+
+        return cls(
+            id=row_id,
+            doc_id=row_doc_id,
+            text=row_text if isinstance(row_text, str) else str(row_text),
+            page_no=row_page_no if isinstance(row_page_no, int) else None,
+            headings=headings,
+            source=row_source if isinstance(row_source, str) else str(row_source),
+            metadata=dict(row_metadata) if isinstance(row_metadata, dict) else None,
+        )
+
+
+def _parse_doc_from_source(source: str | None, relpath: str | None) -> ParsedDocFromSource | None:
     path_s = (relpath or source or "").strip()
     if not path_s:
-        return {}
+        return None
     stem = Path(path_s).stem
     m = _FILENAME_RE.match(stem)
     if not m:
-        return {}
+        return None
     ticker = m.group("ticker").upper()
     filing_type = m.group("form").upper()
     filing_date = m.group("date")
@@ -41,7 +121,7 @@ def _parse_doc_from_source(source: str | None, relpath: str | None) -> dict[str,
         year = int(filing_date.split("-", 1)[0])
     except Exception:
         year = None
-    return {"ticker": ticker, "filing_type": filing_type, "filing_date": filing_date, "year": year}
+    return ParsedDocFromSource(ticker=ticker, filing_type=filing_type, filing_date=filing_date, year=year)
 
 
 def _resolve_chunks_path(ingest_output_dir: Path, chunks_path: str) -> Path:
@@ -60,16 +140,12 @@ def _peek_company_from_chunks(chunks_path: Path, *, max_lines: int = 30) -> str 
                 line = line.strip()
                 if not line:
                     continue
-                d = json.loads(line)
-                meta = d.get("metadata")
-                if not isinstance(meta, dict):
+                row = ChunkExportRow.from_json_obj(json.loads(line))
+                if row is None:
                     continue
-                doc = meta.get("doc")
-                if not isinstance(doc, dict):
-                    continue
-                company = doc.get("company")
-                if isinstance(company, str) and company.strip():
-                    return company.strip()
+                parsed = chunk_metadata_from_value(row.metadata)
+                if parsed.doc and parsed.doc.company and parsed.doc.company.strip():
+                    return parsed.doc.company.strip()
     except Exception:
         return None
     return None
@@ -103,35 +179,31 @@ def iter_chunk_export_docs(
             line = line.strip()
             if not line:
                 continue
-            d = json.loads(line)
-            doc_id = str(d.get("doc_id") or "")
-            source = str(d.get("source") or "")
-            relpath = str(d.get("relpath") or "") or None
-            chunks_path_raw = str(d.get("chunks_path") or "")
-            if not doc_id or not chunks_path_raw:
+            row = DocIndexRow.from_json_obj(json.loads(line))
+            if row is None:
                 continue
 
-            parsed = _parse_doc_from_source(source, relpath)
-            ticker = parsed.get("ticker")
-            filing_type = parsed.get("filing_type")
+            parsed = _parse_doc_from_source(row.source, row.relpath)
+            ticker = parsed.ticker if parsed is not None else None
+            filing_type = parsed.filing_type if parsed is not None else None
 
             if ticker_set and isinstance(ticker, str) and ticker not in ticker_set:
                 continue
             if form_set and isinstance(filing_type, str) and filing_type not in form_set:
                 continue
 
-            chunks_path = _resolve_chunks_path(root, chunks_path_raw)
+            chunks_path = _resolve_chunks_path(root, row.chunks_path)
             company = _peek_company_from_chunks(chunks_path)
 
             yield ChunkExportDoc(
-                doc_id=doc_id,
-                source=source,
-                relpath=relpath,
+                doc_id=row.doc_id,
+                source=row.source,
+                relpath=row.relpath,
                 chunks_path=str(chunks_path),
                 ticker=ticker if isinstance(ticker, str) else None,
                 filing_type=filing_type if isinstance(filing_type, str) else None,
-                filing_date=parsed.get("filing_date") if isinstance(parsed.get("filing_date"), str) else None,
-                year=parsed.get("year") if isinstance(parsed.get("year"), int) else None,
+                filing_date=parsed.filing_date if parsed is not None else None,
+                year=parsed.year if parsed is not None else None,
                 company=company,
             )
 
@@ -151,15 +223,17 @@ def iter_doc_chunks(chunks_path: str | Path, *, max_chunks: int | None = None) -
             line = line.strip()
             if not line:
                 continue
-            d = json.loads(line)
+            row = ChunkExportRow.from_json_obj(json.loads(line))
+            if row is None:
+                continue
             yield DocChunk(
-                id=str(d["id"]),
-                doc_id=str(d["doc_id"]),
-                text=str(d.get("text") or ""),
-                page_no=d.get("page_no"),
-                headings=list(d.get("headings") or []),
-                source=str(d.get("source") or ""),
-                metadata=d.get("metadata") if isinstance(d.get("metadata"), dict) else None,
+                id=row.id,
+                doc_id=row.doc_id,
+                text=row.text,
+                page_no=row.page_no,
+                headings=list(row.headings),
+                source=row.source,
+                metadata=row.metadata,
             )
             n += 1
             if max_chunks is not None and n >= max_chunks:

@@ -87,7 +87,7 @@ def test_document_context_postprocessor_extracts_from_filename_and_text() -> Non
         assert doc["filing_quarter_basis"] == "period_end_date"
 
 
-def test_heuristic_summary_postprocessor_builds_index_text_for_tables() -> None:
+def test_heuristic_summary_postprocessor_builds_retrieval_text_for_tables() -> None:
     pp = HeuristicSummaryPostprocessor()
     chunks = [
         DocChunk(
@@ -116,12 +116,12 @@ def test_heuristic_summary_postprocessor_builds_index_text_for_tables() -> None:
     assert isinstance(meta.get("summary"), str) and meta["summary"]
     assert "Columns:" in meta["summary"]
 
-    index_text = meta.get("index_text")
-    assert isinstance(index_text, str)
-    assert index_text.startswith("Company: Apple Inc")
-    assert "\nTicker: AAPL" in index_text
-    assert "Filing: 10-Q, filed 2024-08-01, period ended 2024-06-30" in index_text
-    assert "\nFiling quarter: 2024Q2" in index_text
-    assert "\nSection: Some Section" in index_text
-    assert "\nPage: 3" in index_text
-    assert "\n\n| A | B |" in index_text
+    retrieval_text = meta.get("retrieval_text")
+    assert isinstance(retrieval_text, str)
+    assert retrieval_text.startswith("Company: Apple Inc")
+    assert "\nTicker: AAPL" in retrieval_text
+    assert "Filing: 10-Q, filed 2024-08-01, period ended 2024-06-30" in retrieval_text
+    assert "\nFiling quarter: 2024Q2" in retrieval_text
+    assert "\nSection: Some Section" in retrieval_text
+    assert "\nPage: 3" in retrieval_text
+    assert "\n\n| A | B |" in retrieval_text

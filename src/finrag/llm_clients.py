@@ -196,37 +196,6 @@ class OpenAIClientWrapper:
                 yield str(delta)
 
 
-class FastEmbedClientWrapper:
-    """
-    Local embedding-only client using `fastembed`.
-
-    This is useful for running retrieval-only evals without networked embedding APIs.
-    """
-
-    def __init__(self, embed_model: str = "BAAI/bge-m3"):
-        try:
-            from fastembed import TextEmbedding  # type: ignore
-        except Exception as e:  # pragma: no cover
-            raise RuntimeError("fastembed is not available; install qdrant-client[fastembed-gpu]") from e
-        self.chat_model = ""
-        self.embed_model = embed_model
-        self._model = TextEmbedding(model_name=embed_model)
-
-    def embed_texts(self, texts: list[str]) -> np.ndarray:
-        vectors = [np.array(v, dtype=np.float32) for v in self._model.embed(texts)]
-        return np.vstack(vectors)
-
-    def chat(
-        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
-    ) -> str:  # pragma: no cover
-        raise RuntimeError("FastEmbedClientWrapper does not support chat()")
-
-    def chat_stream(
-        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
-    ) -> Iterator[str]:  # pragma: no cover
-        raise RuntimeError("FastEmbedClientWrapper does not support chat_stream()")
-
-
 def get_llm_client(provider: str | None = None, langsmith_trace: bool = False, **kwargs) -> LLMClient:
     name = (provider or os.getenv("LLM_PROVIDER") or "mistral").strip().lower()
     if langsmith_trace and name != "openai":
@@ -236,6 +205,4 @@ def get_llm_client(provider: str | None = None, langsmith_trace: bool = False, *
         return MistralClientWrapper(**kwargs)
     if name == "openai":
         return OpenAIClientWrapper(langsmith_trace=langsmith_trace, **kwargs)
-    if name == "fastembed":
-        return FastEmbedClientWrapper(**kwargs)
     raise ValueError(f"Unsupported LLM provider: {provider}")

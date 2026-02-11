@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,10 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
-from finrag.traces import run_dir_lock
+try:  # pragma: no cover
+    import fcntl  # type: ignore
+except Exception:  # noqa: BLE001
+    fcntl = None  # type: ignore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +27,26 @@ FAVICON_PATH = STATIC_DIR / "favicon.ico"
 
 _CACHE_LOCK = threading.Lock()
 _WRITE_LOCK = threading.Lock()
+
+
+@contextmanager
+def run_dir_lock(run_dir: Path):
+    """
+    Cross-process lock for reading/writing review artifacts in a run dir.
+    """
+
+    lock_path = (run_dir / ".lock").resolve()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if fcntl is None:  # pragma: no cover
+        yield
+        return
+
+    with lock_path.open("a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _env_paths(name: str) -> list[Path]:
@@ -36,15 +60,8 @@ def _env_paths(name: str) -> list[Path]:
 def _review_roots() -> list[Path]:
     roots = _env_paths("FINRAG_REVIEW_ROOTS")
     if roots:
-        base = roots
-    else:
-        base = [(PROJECT_ROOT / "eval" / "results").resolve()]
-
-    # Also discover live-query traces by default (written by the main app).
-    traces_root = (PROJECT_ROOT / "logs" / "traces").resolve()
-    if traces_root not in base:
-        base.append(traces_root)
-    return base
+        return roots
+    return [(PROJECT_ROOT / "eval" / "results").resolve()]
 
 
 def _is_allowed_path(path: Path) -> bool:
@@ -57,7 +74,7 @@ def _discover_run_dirs() -> list[Path]:
     for root in _review_roots():
         if not root.exists():
             continue
-        for pat in ("eval_run.*", "*/eval_run.*", "trace_run.*", "*/trace_run.*"):
+        for pat in ("eval_run.*", "*/eval_run.*"):
             for p in root.glob(pat):
                 if p.is_dir():
                     runs.add(p.resolve())

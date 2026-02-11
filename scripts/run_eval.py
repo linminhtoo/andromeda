@@ -33,16 +33,14 @@ def main() -> None:
         "--gpu-ids", nargs="*", type=int, default=None, help="Optional list of GPU IDs to assign to workers."
     )
 
-    # Convenience: point the runner at an existing Milvus Lite + BM25 snapshot dir
-    # (the same dir you pass as `--ingest-output-dir` to scripts/build_index.py).
+    # Convenience: point the runner at an existing ingest output dir.
     ap.add_argument(
         "--index-dir",
         default=None,
-        help="Directory containing `milvus.db`, `bm25.pkl`, and `doc_index.jsonl` (sets env vars for this run).",
+        help="Directory containing `doc_index.jsonl` (sets FINRAG_DOC_INDEX_PATH for this run).",
     )
-    ap.add_argument("--milvus-path", default=None, help="Overrides env MILVUS_PATH for this run.")
-    ap.add_argument("--bm25-path", default=None, help="Overrides env BM25_PATH for this run.")
     ap.add_argument("--doc-index-path", default=None, help="Overrides env FINRAG_DOC_INDEX_PATH for this run.")
+    ap.add_argument("--postgres-dsn", default=None, help="Overrides env POSTGRES_DSN for this run.")
 
     # Optional overrides.
     ap.add_argument("--top-k-retrieve", type=int, default=None)
@@ -74,18 +72,12 @@ def main() -> None:
         idx = Path(args.index_dir).expanduser().resolve()
         if not idx.exists():
             raise SystemExit(f"--index-dir does not exist: {idx}")
-        if args.milvus_path is None:
-            os.environ["MILVUS_PATH"] = str((idx / "milvus.db").resolve())
-        if args.bm25_path is None:
-            os.environ["BM25_PATH"] = str((idx / "bm25.pkl").resolve())
         if args.doc_index_path is None:
             os.environ["FINRAG_DOC_INDEX_PATH"] = str((idx / "doc_index.jsonl").resolve())
-    if args.milvus_path:
-        os.environ["MILVUS_PATH"] = str(Path(args.milvus_path).expanduser().resolve())
-    if args.bm25_path:
-        os.environ["BM25_PATH"] = str(Path(args.bm25_path).expanduser().resolve())
     if args.doc_index_path:
         os.environ["FINRAG_DOC_INDEX_PATH"] = str(Path(args.doc_index_path).expanduser().resolve())
+    if args.postgres_dsn:
+        os.environ["POSTGRES_DSN"] = args.postgres_dsn
 
     queries = load_jsonl(args.eval_queries, EvalQuery)
     if args.kinds:

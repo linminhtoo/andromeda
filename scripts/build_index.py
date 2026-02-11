@@ -1,21 +1,15 @@
 """
-Build a hybrid index using Qdrant or Milvus from exported chunks.
+Build a PostgreSQL hybrid index from exported chunks.
 
-Expected input is the output directory produced by `scripts/ingest.py`, which
-contains:
+Expected input is a chunk export directory containing:
   - doc_index.jsonl
-  - chunks/ (per-document JSONL chunk files)
+  - chunks/ (per-document JSONL files)
 
-This script embeds and upserts the chunks into a local Qdrant store or Milvus collection.
-BM25 is rebuilt at runtime from stored payloads in `QdrantHybridRetriever`, or fitted once
-before indexing when using legacy Milvus + BM25 sparse vectors (client-side BM25EmbeddingFunction).
-
-    To add new documents to an existing collection without re-embedding existing chunks,
-    use `--expand-collection` (requires stable chunk IDs across runs). For Milvus built-in BM25,
-    expansion does not require refitting because Milvus maintains BM25 statistics internally.
-    For legacy Milvus+BM25 sparse vectors, expansion will refit BM25 and re-embed sparse vectors
-    for existing chunks (dense vectors are reused from the existing collection).
+This script embeds chunk text and upserts corpus rows into PostgreSQL.
+Retrieval is later done with pgvector (dense) + PostgreSQL FTS (sparse).
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -25,16 +19,16 @@ import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, cast
+from typing import Any, Iterable
 
 from dotenv import load_dotenv
 from loguru import logger
 from tqdm import tqdm
 
+from finrag.context_support import apply_context_strategy, context_builder_from_metadata
 from finrag.dataclasses import DocChunk
 from finrag.llm_clients import get_llm_client
-from finrag.context_support import apply_context_strategy, context_builder_from_metadata
-from finrag.retriever import QdrantHybridRetriever, MilvusContextualRetriever, build_milvus_embedding_functions
+from finrag.retriever import PostgresHybridRetriever
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -42,616 +36,349 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 @dataclass
 class Args:
     ingest_output_dir: str
-    qdrant_storage_path: str
-    collection_name: str
+    postgres_dsn: str | None
     llm_provider: str | None
     contextual_llm_provider: str | None
     dense_model: str
     contextual_model: str | None
     dense_base_url: str | None
     contextual_base_url: str | None
-    cache_dir: str | None
-    bm25_path: str | None
     max_docs: int | None
-    overwrite_collection: bool
-    expand_collection: bool
     batch_size: int
-    retriever_backend: str
-    milvus_uri: str | None
-    milvus_sparse: str
-    milvus_dense_embedding: str
     context: str
     context_window: int
     context_metadata_key: str
     context_max_concurrency: int
+    truncate: bool
+    skip_existing_chunks: bool
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class DocIndexEntry:
+    """
+    Typed `doc_index.jsonl` row used by indexing.
+    """
+
+    chunks_path: str
+
+    @classmethod
+    def from_mapping(cls, value: dict[str, Any]) -> DocIndexEntry:
+        if "chunks_path" not in value:
+            raise ValueError("doc_index row is missing required key: chunks_path")
+        chunks_path_raw = value["chunks_path"]
+        if not isinstance(chunks_path_raw, str) or not chunks_path_raw.strip():
+            raise ValueError(f"Invalid chunks_path in doc_index row: {chunks_path_raw!r}")
+        return cls(chunks_path=chunks_path_raw.strip())
+
+
+@dataclass(frozen=True)
+class ChunkJsonRow:
+    """
+    Typed chunk JSONL row used to build `DocChunk`.
+    """
+
+    id: str
+    doc_id: str
+    text: str
+    page_no: int | None
+    headings: list[str]
+    source: str
+    metadata: dict[str, Any] | None
+
+    @classmethod
+    def from_mapping(cls, value: dict[str, Any]) -> ChunkJsonRow:
+        if "id" not in value:
+            raise ValueError("chunk row is missing required key: id")
+        if "doc_id" not in value:
+            raise ValueError("chunk row is missing required key: doc_id")
+        if "text" not in value:
+            raise ValueError("chunk row is missing required key: text")
+
+        row_id = value["id"]
+        doc_id = value["doc_id"]
+        text = value["text"]
+        if not isinstance(row_id, str):
+            raise ValueError(f"chunk id must be a string, got {type(row_id).__name__}")
+        if not isinstance(doc_id, str):
+            raise ValueError(f"chunk doc_id must be a string, got {type(doc_id).__name__}")
+        if not isinstance(text, str):
+            raise ValueError(f"chunk text must be a string, got {type(text).__name__}")
+
+        page_no_raw = value["page_no"] if "page_no" in value else None
+        page_no = page_no_raw if isinstance(page_no_raw, int) else None
+
+        headings_raw = value["headings"] if "headings" in value else None
+        headings: list[str] = []
+        if isinstance(headings_raw, list):
+            headings = [str(item) for item in headings_raw]
+
+        source_raw = value["source"] if "source" in value else ""
+        source = source_raw if isinstance(source_raw, str) else str(source_raw)
+
+        metadata_raw = value["metadata"] if "metadata" in value else None
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else None
+
+        return cls(
+            id=row_id, doc_id=doc_id, text=text, page_no=page_no, headings=headings, source=source, metadata=metadata
+        )
+
+
 def parse_args() -> Args:
-    parser = argparse.ArgumentParser(description="Build a hybrid index from chunk exports (Qdrant or Milvus).")
+    parser = argparse.ArgumentParser(description="Build PostgreSQL retrieval index from chunk exports.")
     parser.add_argument(
         "--ingest-output-dir",
         required=True,
-        help="Directory produced by `scripts/ingest.py` (must contain doc_index.jsonl and chunks/).",
+        help="Directory produced by scripts/chunk.py (must contain doc_index.jsonl and chunks/).",
     )
     parser.add_argument(
-        "--qdrant-storage-path",
-        default=None,
-        help="Qdrant storage path (defaults to env QDRANT_STORAGE_PATH if set; ignored for Milvus).",
+        "--postgres-dsn", default=None, help="PostgreSQL DSN (defaults to POSTGRES_DSN or DATABASE_URL env vars)."
     )
-    parser.add_argument("--collection-name", default="rag_chunks", help="Collection name.")
-    parser.add_argument(
-        "--retriever-backend",
-        default="milvus",
-        choices=["qdrant", "milvus"],
-        help="Backend to store vectors (default: milvus).",
-    )
-    parser.add_argument(
-        "--milvus-uri",
-        default=None,
-        help=(
-            "Milvus URI/path (defaults to env MILVUS_URI or MILVUS_PATH or <ingest_output_dir>/milvus.db). "
-            "Please note that MILVUS_URI only accepts http[s]:// URLs. "
-            "For local file paths, use MILVUS_PATH instead."
-        ),
-    )
-    parser.add_argument(
-        "--milvus-sparse",
-        default="bm25",
-        choices=["bm25", "bge-m3", "none"],
-        help="Sparse embedding strategy for Milvus (default: bm25).",
-    )
-    parser.add_argument(
-        "--milvus-dense-embedding",
-        default="llm",
-        choices=["llm", "bge-m3"],
-        help=(
-            "Dense embedding backend for Milvus (default: llm). "
-            "For 'llm', embeddings are generated by making calls to the LLM client. "
-            "For 'bge-m3', embeddings are generated locally using the BAAI/bge-m3 model."
-        ),
-    )
-    parser.add_argument(
-        "--context",
-        default="none",
-        choices=["none", "document", "neighbors", "metadata"],
-        help="Context strategy for embeddings (default: none).",
-    )
-    parser.add_argument(
-        "--context-window", type=int, default=2, help="Neighbor window size when using --context=neighbors."
-    )
-    parser.add_argument(
-        "--context-max-concurrency",
-        type=int,
-        default=32,
-        help="Max parallel LLM calls when generating situated context (default: 32).",
-    )
-    parser.add_argument(
-        "--context-metadata-key", default="context", help="Metadata key to store context text when building embeddings."
-    )
-    parser.add_argument(
-        "--llm-provider",
-        default=None,
-        help=("Embedding provider (defaults to env LLM_PROVIDER). Choices are: 'openai', 'mistral', 'fastembed'. "),
-    )
+    parser.add_argument("--llm-provider", default=None, help="Embedding provider (defaults to env LLM_PROVIDER).")
     parser.add_argument(
         "--contextual-llm-provider",
         default=None,
-        help=(
-            "LLM provider for contextualization (defaults to --llm-provider). "
-            "Choices are: 'openai', 'mistral' (fastembed does not support chat)."
-        ),
+        help="Provider for contextualization calls (defaults to --llm-provider).",
+    )
+    parser.add_argument("--dense-model", default="text-embedding-3-large", help="Embedding model name.")
+    parser.add_argument(
+        "--contextual-model", default=None, help="Chat model for context generation (defaults to provider default)."
     )
     parser.add_argument(
-        "--dense-model", default="BAAI/bge-m3", help="Name of embedding model. Used by all llm providers."
-    )
-    parser.add_argument(
-        "--contextual-model",
-        default=None,
-        help="Chat model used for situated context generation (provider-specific; defaults to the provider default).",
-    )
-    parser.add_argument(
-        "--dense-base-url",
-        default=None,
-        help="OpenAI-compatible base URL for dense embedding calls (e.g. a vLLM server).",
+        "--dense-base-url", default=None, help="OpenAI-compatible embedding base URL override (when provider=openai)."
     )
     parser.add_argument(
         "--contextual-base-url",
         default=None,
-        help="OpenAI-compatible base URL for contextualization chat calls (e.g. a separate vLLM server).",
+        help="OpenAI-compatible chat base URL override for contextualization (provider=openai).",
+    )
+    parser.add_argument("--max-docs", type=int, default=None, help="Optional cap on documents to index.")
+    parser.add_argument("--batch-size", type=int, default=128, help="Batch size for embedding/upsert.")
+    parser.add_argument(
+        "--context",
+        default="none",
+        choices=["none", "document", "neighbors", "metadata"],
+        help="Context strategy for embedding text (default: none).",
+    )
+    parser.add_argument("--context-window", type=int, default=2, help="Neighbor window size when --context=neighbors.")
+    parser.add_argument(
+        "--context-max-concurrency", type=int, default=32, help="Max concurrent context-generation calls."
     )
     parser.add_argument(
-        "--cache-dir", default=None, help="Directory to use for model caches/temp files (keeps writes inside the repo)."
+        "--context-metadata-key", default="retrieval_context", help="Metadata key used to store contextual text."
     )
+    parser.add_argument("--truncate", action="store_true", help="Delete all existing corpus rows before indexing.")
     parser.add_argument(
-        "--bm25-path", default=None, help="Where to persist BM25 data (defaults to <ingest_output_dir>/bm25.pkl)."
+        "--skip-existing-chunks", action="store_true", help="Skip chunk IDs that already exist in PostgreSQL."
     )
-    parser.add_argument("--max-docs", type=int, default=None, help="Optional cap on number of documents to index.")
-    parser.add_argument(
-        "--overwrite-collection",
-        action="store_true",
-        help="Delete and recreate the collection before indexing (destructive).",
-    )
-    parser.add_argument(
-        "--expand-collection",
-        action="store_true",
-        help=(
-            "Expand an existing collection by only indexing chunks that are not already present "
-            "(skips re-contextualization/embeddings for existing chunks)."
-        ),
-    )
-    parser.add_argument("--batch-size", type=int, default=128, help="Embed/upsert batch size (within a document).")
 
-    args = parser.parse_args()
-
-    qdrant_storage_path = args.qdrant_storage_path or os.environ.get("QDRANT_STORAGE_PATH", "")
-    if args.retriever_backend == "qdrant" and (qdrant_storage_path is None or qdrant_storage_path.strip() == ""):
-        raise SystemExit("Missing --qdrant-storage-path and QDRANT_STORAGE_PATH is not set.")
-
-    milvus_uri = args.milvus_uri or os.environ.get("MILVUS_URI") or os.environ.get("MILVUS_PATH")
-    if args.retriever_backend == "milvus" and not milvus_uri:
-        ingest_out = Path(args.ingest_output_dir).expanduser().resolve()
-        milvus_uri = str((ingest_out / "milvus.db").resolve())
-    if milvus_uri and "://" not in milvus_uri:
-        milvus_uri = str(Path(milvus_uri).expanduser())
-    logger.info(f"Using Milvus URI: {milvus_uri}")
-
+    ns = parser.parse_args()
     return Args(
-        ingest_output_dir=args.ingest_output_dir,
-        qdrant_storage_path=qdrant_storage_path,
-        collection_name=args.collection_name,
-        llm_provider=args.llm_provider,
-        contextual_llm_provider=args.contextual_llm_provider,
-        dense_model=args.dense_model,
-        contextual_model=args.contextual_model,
-        dense_base_url=args.dense_base_url,
-        contextual_base_url=args.contextual_base_url,
-        cache_dir=args.cache_dir,
-        bm25_path=args.bm25_path,
-        max_docs=args.max_docs,
-        overwrite_collection=bool(args.overwrite_collection),
-        expand_collection=bool(args.expand_collection),
-        batch_size=args.batch_size,
-        retriever_backend=args.retriever_backend,
-        milvus_uri=milvus_uri,
-        milvus_sparse=args.milvus_sparse,
-        milvus_dense_embedding=args.milvus_dense_embedding,
-        context=args.context,
-        context_window=args.context_window,
-        context_metadata_key=args.context_metadata_key,
-        context_max_concurrency=args.context_max_concurrency,
+        ingest_output_dir=ns.ingest_output_dir,
+        postgres_dsn=ns.postgres_dsn,
+        llm_provider=ns.llm_provider,
+        contextual_llm_provider=ns.contextual_llm_provider,
+        dense_model=ns.dense_model,
+        contextual_model=ns.contextual_model,
+        dense_base_url=ns.dense_base_url,
+        contextual_base_url=ns.contextual_base_url,
+        max_docs=ns.max_docs,
+        batch_size=ns.batch_size,
+        context=ns.context,
+        context_window=ns.context_window,
+        context_metadata_key=ns.context_metadata_key,
+        context_max_concurrency=ns.context_max_concurrency,
+        truncate=bool(ns.truncate),
+        skip_existing_chunks=bool(ns.skip_existing_chunks),
     )
 
 
-def _json_default(obj: Any) -> Any:
-    if isinstance(obj, Path):
-        return str(obj)
-    if isinstance(obj, set):
-        return list(obj)
-    if hasattr(obj, "isoformat"):
+def json_default(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, set):
+        return list(value)
+    if hasattr(value, "isoformat"):
         try:
-            return obj.isoformat()  # type: ignore[no-any-return]
-        except Exception:
+            return value.isoformat()  # type: ignore[no-any-return]
+        except Exception:  # noqa: BLE001
             pass
-    return str(obj)
+    return str(value)
 
 
-def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
+def iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
             if not line:
                 continue
             yield json.loads(line)
 
 
-def _resolve_chunks_path(doc: dict[str, Any], ingest_root: Path) -> Path:
-    chunks_path = Path(str(doc.get("chunks_path") or "")).expanduser()
+def resolve_chunks_path(doc: DocIndexEntry, ingest_root: Path) -> Path:
+    chunks_path = Path(doc.chunks_path).expanduser()
     if not chunks_path.is_absolute():
         chunks_path = (ingest_root / chunks_path).resolve()
     return chunks_path
 
 
-def _chunk_from_dict(d: dict[str, Any]) -> DocChunk:
+def chunk_from_dict(data: ChunkJsonRow) -> DocChunk:
     return DocChunk(
-        id=str(d["id"]),
-        doc_id=str(d["doc_id"]),
-        text=str(d["text"]),
-        page_no=d.get("page_no"),
-        headings=list(d.get("headings") or []),
-        source=str(d.get("source") or ""),
-        metadata=d.get("metadata") if isinstance(d.get("metadata"), dict) else None,
+        id=data.id,
+        doc_id=data.doc_id,
+        text=data.text,
+        page_no=data.page_no,
+        headings=list(data.headings),
+        source=data.source,
+        metadata=data.metadata,
     )
 
 
-def _batched(items: list[DocChunk], batch_size: int) -> Iterable[list[DocChunk]]:
-    if batch_size <= 0:
-        yield items
-        return
-    for i in range(0, len(items), batch_size):
-        yield items[i : i + batch_size]
+def batched(items: list[DocChunk], batch_size: int) -> Iterable[list[DocChunk]]:
+    size = max(1, int(batch_size))
+    for idx in range(0, len(items), size):
+        yield items[idx : idx + size]
 
 
-def _build_bm25_corpus(docs: list[dict[str, Any]], ingest_root: Path) -> list[str]:
-    corpus: list[str] = []
-    for doc in docs:
-        chunks_path = _resolve_chunks_path(doc, ingest_root)
-        if not chunks_path.exists():
-            continue
-        for record in _iter_jsonl(chunks_path):
-            chunk = _chunk_from_dict(record)
-            text = (chunk.metadata or {}).get("index_text") or chunk.text
-            corpus.append(str(text))
-    return corpus
+def setup_logging(project_root: Path) -> Path:
+    logs_dir = project_root / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    log_path = logs_dir / f"build_index_{timestamp}.log"
+
+    logger.remove()
+    logger.add(sys.stderr, level="INFO")
+    logger.add(str(log_path), level="DEBUG")
+    return log_path
 
 
-def _milvus_sparse_row(matrix: Any, idx: int) -> Any:
-    try:
-        return matrix[[idx]]
-    except Exception:
-        return matrix[idx]
-
-
-def _milvus_extract_payload(rec: Any) -> dict[str, Any]:
-    if isinstance(rec, dict):
-        payload = rec.get("payload")
-        if isinstance(payload, dict):
-            return payload
-        entity = rec.get("entity")
-        if isinstance(entity, dict):
-            payload = entity.get("payload")
-            if isinstance(payload, dict):
-                return payload
-    return {}
-
-
-def _milvus_extract_field(rec: Any, name: str) -> Any:
-    if not isinstance(rec, dict):
-        return None
-    value = rec.get(name)
-    if value is not None:
-        return value
-    entity = rec.get("entity")
-    if isinstance(entity, dict):
-        return entity.get(name)
-    return None
-
-
-def _milvus_text_with_context(payload: dict[str, Any], *, context_metadata_key: str) -> str:
-    metadata = payload.get("metadata")
-    meta = metadata if isinstance(metadata, dict) else {}
-    base_text = meta.get("index_text") or payload.get("text") or ""
-    base_text = str(base_text)
-    ctx = meta.get(context_metadata_key)
-    if ctx:
-        return f"{base_text}\n\nContext: {str(ctx)}"
-    return base_text
+def postgres_dsn_from_env(args_dsn: str | None) -> str:
+    dsn = (args_dsn or os.getenv("POSTGRES_DSN") or os.getenv("DATABASE_URL") or "").strip()
+    if not dsn:
+        raise SystemExit("Missing PostgreSQL DSN: set --postgres-dsn or POSTGRES_DSN/DATABASE_URL.")
+    return dsn
 
 
 def main() -> int:
     args = parse_args()
-    if args.expand_collection and args.overwrite_collection:
-        raise SystemExit("--expand-collection cannot be used with --overwrite-collection.")
 
     ingest_out = Path(args.ingest_output_dir).expanduser().resolve()
     doc_index_path = ingest_out / "doc_index.jsonl"
-    bm25_path = Path(args.bm25_path).expanduser().resolve() if args.bm25_path else (ingest_out / "bm25.pkl").resolve()
-
     if not doc_index_path.exists():
         raise SystemExit(f"Missing required file: {doc_index_path}")
 
     project_root = Path(__file__).resolve().parents[1]
-    cache_dir = Path(args.cache_dir).expanduser().resolve() if args.cache_dir else (ingest_out / ".cache").resolve()
-    tmp_dir = (ingest_out / ".tmp").resolve()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    # Keep model downloads/cache/temp writes inside the project tree.
-    os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir))
-    os.environ.setdefault("HF_HOME", str(cache_dir / "huggingface"))
-    os.environ.setdefault("TRANSFORMERS_CACHE", str(cache_dir / "huggingface" / "transformers"))
-    os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", str(cache_dir / "sentence_transformers"))
-    os.environ.setdefault("TMPDIR", str(tmp_dir))
-    os.environ.setdefault("TEMP", str(tmp_dir))
-    os.environ.setdefault("TMP", str(tmp_dir))
-
-    logs_dir = project_root / "logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    log_path = logs_dir / f"build_index_{ts}.log"
-    logger.remove()
-    logger.add(sys.stderr, level="DEBUG")
-    logger.add(str(log_path), level="DEBUG")
+    log_path = setup_logging(project_root)
     logger.info(f"Logging to: {log_path}")
 
-    llm_kwargs: dict[str, Any] = {}
-    llm_kwargs["embed_model"] = args.dense_model
+    dsn = postgres_dsn_from_env(args.postgres_dsn)
 
-    # if os.environ.get("LANGSMITH_TRACING", "false").lower() == "true":
-    #     llm_kwargs["langsmith_trace"] = True
     dense_provider = (args.llm_provider or os.getenv("LLM_PROVIDER") or "openai").strip().lower()
-    dense_kwargs = dict(llm_kwargs)
+    dense_kwargs: dict[str, Any] = {"embed_model": args.dense_model}
     if args.dense_base_url and dense_provider == "openai":
         dense_kwargs["base_url"] = args.dense_base_url
     llm_for_dense = get_llm_client(provider=args.llm_provider, **dense_kwargs)
 
     llm_for_context = None
     if args.context in {"document", "neighbors"}:
-        resolved_provider = (
+        context_provider = (
             (args.contextual_llm_provider or args.llm_provider or os.getenv("LLM_PROVIDER") or "openai").strip().lower()
         )
-        if resolved_provider == "fastembed":
-            raise SystemExit(
-                "--contextual-llm-provider fastembed is not supported (fastembed does not implement chat)."
-            )
-        ctx_kwargs = dict(llm_kwargs)
+
+        context_kwargs: dict[str, Any] = {"embed_model": args.dense_model}
         if args.contextual_model:
-            ctx_kwargs["chat_model"] = args.contextual_model
-        if args.contextual_base_url and resolved_provider == "openai":
-            ctx_kwargs["base_url"] = args.contextual_base_url
-        llm_for_context = get_llm_client(provider=(args.contextual_llm_provider or args.llm_provider), **ctx_kwargs)
+            context_kwargs["chat_model"] = args.contextual_model
+        if args.contextual_base_url and context_provider == "openai":
+            context_kwargs["base_url"] = args.contextual_base_url
+        llm_for_context = get_llm_client(provider=(args.contextual_llm_provider or args.llm_provider), **context_kwargs)
 
-    docs = list(_iter_jsonl(doc_index_path))
+    retriever = PostgresHybridRetriever(
+        llm_client=llm_for_dense,
+        dsn=dsn,
+        context_builder=context_builder_from_metadata(key=args.context_metadata_key),
+        retrieval_context_key=args.context_metadata_key,
+    )
+
+    if args.truncate:
+        logger.warning("Truncating existing PostgreSQL corpus rows")
+        retriever.db.clear_all()
+
+    docs = [DocIndexEntry.from_mapping(item) for item in iter_jsonl(doc_index_path)]
     if args.max_docs is not None:
-        docs = docs[: max(0, args.max_docs)]
+        docs = docs[: max(0, int(args.max_docs))]
     logger.info(f"Documents to index: {len(docs)}")
-
-    context_builder = context_builder_from_metadata(key=args.context_metadata_key)
-
-    if args.retriever_backend == "qdrant":
-        retriever = QdrantHybridRetriever(
-            llm_for_dense,
-            storage_path=args.qdrant_storage_path,
-            collection_name=args.collection_name,
-            load_existing=not args.overwrite_collection,
-            bm25_path=str(bm25_path),
-            context_builder=context_builder,
-            context_metadata_key=args.context_metadata_key,
-        )
-
-        if args.overwrite_collection and retriever.qdrant.collection_exists(args.collection_name):
-            logger.warning(f"Deleting collection: {args.collection_name}")
-            retriever.qdrant.delete_collection(args.collection_name)
-    else:
-        use_sparse = args.milvus_sparse != "none"
-        dense_fn, sparse_fn = build_milvus_embedding_functions(
-            llm_client_for_dense=llm_for_dense,
-            dense_kind=args.milvus_dense_embedding,
-            sparse_kind=args.milvus_sparse,
-            use_sparse=use_sparse,
-        )
-        retriever = MilvusContextualRetriever(
-            uri=str(args.milvus_uri or ""),
-            collection_name=args.collection_name,
-            load_existing=not args.overwrite_collection,
-            use_sparse=use_sparse,
-            bm25_path=str(bm25_path),
-            dense_embedding_function=dense_fn,
-            sparse_embedding_function=sparse_fn,
-            context_builder=context_builder,
-            context_metadata_key=args.context_metadata_key,
-            # TODO: phase out this hotfix argument
-            legacy_bm25=os.getenv("MILVUS_LEGACY_BM25", "false").strip().lower() == "true",
-        )
-
-        if args.overwrite_collection and retriever.client.has_collection(args.collection_name):
-            logger.warning(f"Dropping collection: {args.collection_name}")
-            retriever.client.drop_collection(args.collection_name)
-
-        if use_sparse and retriever.bm25_requires_fit:
-            # NOTE: BM25 parameters depend on corpus statistics, so we always refit when expanding.
-            if args.expand_collection:
-                logger.warning(
-                    "Milvus+BM25 expansion assumes --ingest-output-dir contains the full corpus "
-                    "(existing + new chunks)."
-                )
-                if args.max_docs is not None:
-                    logger.warning("--expand-collection + --max-docs will produce an inconsistent BM25 corpus.")
-                logger.info("Fitting BM25 sparse embeddings on chunk corpus (expand mode)...")
-                corpus = _build_bm25_corpus(docs, ingest_out)
-                retriever.fit_bm25(corpus)
-                retriever.save_bm25(str(bm25_path))
-                logger.success(f"Fitted BM25 with corpus size: {len(corpus)} and saved to: {bm25_path}")
-            elif bm25_path.exists():
-                logger.info(f"Loading BM25 parameters from: {bm25_path}")
-                retriever.load_bm25(str(bm25_path))
-            else:
-                logger.info("Fitting BM25 sparse embeddings on chunk corpus...")
-                corpus = _build_bm25_corpus(docs, ingest_out)
-                # ~30 secs on 119 markdown files
-                retriever.fit_bm25(corpus)
-                retriever.save_bm25(str(bm25_path))
-                logger.success(f"Fitted BM25 with corpus size: {len(corpus)} and saved to: {bm25_path}")
 
     started_at = time.time()
     total_docs = 0
     total_chunks = 0
     skipped_docs = 0
     skipped_chunks = 0
-    updated_existing_chunks = 0
     had_error = False
 
-    def _handle_signal(signum, _frame):
+    def handle_signal(signum, _frame):
         raise KeyboardInterrupt(f"Received signal {signum}")
 
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
 
-    # NOTE: when adding new documents to an existing collection,
-    # we should avoid re-contextualising chunks (expensive), and re-creating dense embeddings.
-    # For Milvus built-in BM25, sparse statistics are handled internally. For legacy client-side
-    # BM25 sparse vectors, sparse embeddings must be re-created when the corpus changes.
-    # Via --expand-collection, we try to provide an API to efficiently "expand" an existing
-    # collection with new documents.
     try:
-        milvus_retriever: MilvusContextualRetriever | None = None
-        if args.retriever_backend == "milvus":
-            milvus_retriever = cast(MilvusContextualRetriever, retriever)
-
         for doc in tqdm(docs, desc="indexing docs"):
-            chunks_path = _resolve_chunks_path(doc, ingest_out)
+            chunks_path = resolve_chunks_path(doc, ingest_out)
             if not chunks_path.exists():
                 logger.warning(f"Missing chunk file, skipping: {chunks_path}")
                 continue
 
-            doc_chunks = [_chunk_from_dict(d) for d in _iter_jsonl(chunks_path)]
+            doc_chunks = [chunk_from_dict(ChunkJsonRow.from_mapping(item)) for item in iter_jsonl(chunks_path)]
             if not doc_chunks:
                 continue
 
-            existing_chunk_ids: set[str] = set()
-            if args.expand_collection:
-                existing_chunk_ids = retriever.existing_chunk_ids([ch.id for ch in doc_chunks])
-
-                # Legacy Milvus+BM25: update sparse vectors for existing chunks using stored dense vectors/payloads.
-                if (
-                    milvus_retriever is not None
-                    and existing_chunk_ids
-                    and milvus_retriever.use_sparse
-                    and milvus_retriever.bm25_requires_fit
-                ):
-                    if milvus_retriever.sparse_embedding_function is None:
-                        raise RuntimeError("Milvus sparse_embedding_function is not configured.")
-                    records = milvus_retriever.client.get(
-                        collection_name=args.collection_name,
-                        ids=sorted(existing_chunk_ids),
-                        output_fields=["chunk_id", "dense_vector", "payload"],
-                    )
-                    if records:
-                        existing_texts: list[str] = []
-                        existing_dense: list[Any] = []
-                        existing_payloads: list[dict[str, Any]] = []
-                        existing_ids: list[str] = []
-                        existing_context_by_id: dict[str, str] = {}
-
-                        for rec in records:
-                            payload = _milvus_extract_payload(rec)
-                            if not payload:
-                                continue
-                            cid = (
-                                str(
-                                    _milvus_extract_field(rec, "chunk_id")
-                                    or payload.get("chunk_id")
-                                    or _milvus_extract_field(rec, "id")
-                                    or ""
-                                )
-                            ).strip()
-                            if not cid:
-                                continue
-                            dense_vec = _milvus_extract_field(rec, "dense_vector")
-                            if dense_vec is None:
-                                continue
-
-                            existing_ids.append(cid)
-                            existing_dense.append(dense_vec)
-                            existing_payloads.append(payload)
-                            existing_texts.append(
-                                _milvus_text_with_context(payload, context_metadata_key=args.context_metadata_key)
-                            )
-
-                            meta = payload.get("metadata")
-                            if isinstance(meta, dict) and meta.get(args.context_metadata_key):
-                                existing_context_by_id[cid] = str(meta.get(args.context_metadata_key))
-
-                        # Reassign stored context strings (so apply_context_strategy can skip).
-                        if args.context in {"document", "neighbors"} and existing_ids:
-                            for ch in doc_chunks:
-                                if ch.id not in existing_chunk_ids:
-                                    continue
-                                meta = ch.metadata or {}
-                                ctx = existing_context_by_id.get(ch.id)
-                                if ctx:
-                                    meta[args.context_metadata_key] = ctx
-                                elif not meta.get(args.context_metadata_key):
-                                    # this prevents re-contextualization
-                                    meta[args.context_metadata_key] = "__SKIP_EXISTING__"
-                                ch.metadata = meta
-
-                        sparse_vecs = milvus_retriever.sparse_embedding_function.encode_documents(existing_texts)  # type: ignore[call-arg]
-
-                        upsert_rows: list[dict[str, Any]] = []
-                        for idx, cid in enumerate(existing_ids):
-                            upsert_rows.append(
-                                {
-                                    "chunk_id": cid,
-                                    "dense_vector": existing_dense[idx],
-                                    "sparse_vector": _milvus_sparse_row(sparse_vecs, idx),
-                                    "payload": existing_payloads[idx],
-                                }
-                            )
-                        if upsert_rows:
-                            milvus_retriever.client.upsert(collection_name=args.collection_name, data=upsert_rows)
-                            updated_existing_chunks += len(upsert_rows)
-
-                if existing_chunk_ids and len(existing_chunk_ids) == len(doc_chunks):
-                    skipped_docs += 1
-                    skipped_chunks += len(doc_chunks)
-                    continue
-
-                # If we didn't fetch contexts, prevent accidental re-contextualization of existing chunks.
-                if existing_chunk_ids and args.context in {"document", "neighbors"}:
-                    for ch in doc_chunks:
-                        if ch.id not in existing_chunk_ids:
-                            continue
-                        meta = ch.metadata or {}
-                        if not meta.get(args.context_metadata_key):
-                            meta[args.context_metadata_key] = "__SKIP_EXISTING__"
-                            ch.metadata = meta
-
-            apply_context_strategy(
-                doc_chunks,
-                strategy=args.context,
-                neighbor_window=args.context_window,
-                metadata_key=args.context_metadata_key,
-                max_concurrency=args.context_max_concurrency,
-                llm_for_context=llm_for_context,
-            )
+            if args.context in {"document", "neighbors", "metadata"}:
+                apply_context_strategy(
+                    doc_chunks,
+                    strategy=args.context,
+                    neighbor_window=args.context_window,
+                    metadata_key=args.context_metadata_key,
+                    max_concurrency=args.context_max_concurrency,
+                    llm_for_context=llm_for_context,
+                )
 
             chunks_to_index = doc_chunks
-            if existing_chunk_ids:
-                chunks_to_index = [ch for ch in doc_chunks if ch.id not in existing_chunk_ids]
-                skipped_chunks += len(existing_chunk_ids)
+            if args.skip_existing_chunks:
+                existing = retriever.existing_chunk_ids(chunk.id for chunk in doc_chunks)
+                if existing:
+                    chunks_to_index = [chunk for chunk in doc_chunks if chunk.id not in existing]
+                    skipped_chunks += len(existing)
+                if not chunks_to_index:
+                    skipped_docs += 1
+                    continue
 
-            for batch in _batched(chunks_to_index, batch_size=args.batch_size):
-                # NOTE: avoid repeatedly rebuilding BM25 until all docs are indexed
-                # TODO: look into alternative sparse retrieval indices like OpenSearch
-                retriever.index(batch, rebuild_bm25=False)
+            for batch in batched(chunks_to_index, batch_size=args.batch_size):
+                retriever.index(batch)
 
             total_docs += 1
             total_chunks += len(chunks_to_index)
-    except BaseException as e:  # noqa: BLE001 - want to catch signals/interrupts too
+    except BaseException as exc:  # noqa: BLE001
         had_error = True
-        logger.exception(f"Indexing interrupted: {e}")
-    finally:
-        if total_chunks > 0:
-            try:
-                if args.retriever_backend == "qdrant":
-                    retriever = cast(QdrantHybridRetriever, retriever)
-                    retriever.rebuild_bm25()
-                    retriever.save_bm25(str(bm25_path))
-                    logger.info(f"Saved BM25 snapshot to: {bm25_path}")
-            except Exception as e:  # noqa: BLE001 - best-effort snapshot
-                logger.exception(f"Failed to save BM25 snapshot: {e}")
+        logger.exception(f"Indexing interrupted: {exc}")
 
-        out = {
-            "args": args.to_dict(),
-            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(started_at)),
-            "elapsed_s": round(time.time() - started_at, 3),
-            "ingest_output_dir": str(ingest_out),
-            "retriever_backend": args.retriever_backend,
-            "qdrant_storage_path": args.qdrant_storage_path,
-            "milvus_uri": args.milvus_uri,
-            "collection_name": args.collection_name,
-            "indexed_docs": total_docs,
-            "indexed_chunks": total_chunks,
-            "skipped_docs": skipped_docs,
-            "skipped_chunks": skipped_chunks,
-            "updated_existing_chunks": updated_existing_chunks,
-            "had_error": had_error,
-        }
-        run_info_path = ingest_out / "build_index_run_info.json"
-        run_info_path.write_text(json.dumps(out, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    snapshot = retriever.db.export_schema_snapshot()
+    run_info = {
+        "args": args.to_dict(),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(started_at)),
+        "elapsed_s": round(time.time() - started_at, 3),
+        "ingest_output_dir": str(ingest_out),
+        "indexed_docs": total_docs,
+        "indexed_chunks": total_chunks,
+        "skipped_docs": skipped_docs,
+        "skipped_chunks": skipped_chunks,
+        "had_error": had_error,
+        "database": snapshot,
+    }
+
+    run_info_path = ingest_out / "build_index_run_info.json"
+    run_info_path.write_text(json.dumps(run_info, ensure_ascii=False, indent=2, default=json_default), encoding="utf-8")
 
     if had_error:
         logger.warning(f"Indexing stopped early. indexed_docs={total_docs} indexed_chunks={total_chunks}")

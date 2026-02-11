@@ -9,6 +9,7 @@ from finrag.eval.judges import FACTUAL_CORRECTNESS_V1, JudgeSpec, get_judge_spec
 from finrag.eval.metrics import best_numeric_match, cited_doc_ids
 from finrag.eval.schema import EvalGeneration, EvalQuery, EvalScore, JudgeResult, RetrievedChunk
 from finrag.llm_clients import LLMClient
+from finrag.metadata_models import chunk_metadata_from_value
 
 
 def _utcnow() -> datetime:
@@ -71,11 +72,9 @@ def _looks_like_refusal(answer: str) -> bool:
 def _chunk_tickers(chunks: list[RetrievedChunk]) -> list[str]:
     out: list[str] = []
     for ch in chunks or []:
-        meta = ch.metadata if isinstance(ch.metadata, dict) else None
-        doc = meta.get("doc") if meta and isinstance(meta.get("doc"), dict) else None
-        t = doc.get("ticker") if doc and isinstance(doc.get("ticker"), str) else None
-        if t and t.strip():
-            out.append(t.strip().upper())
+        parsed = chunk_metadata_from_value(ch.metadata)
+        if parsed.doc and parsed.doc.ticker and parsed.doc.ticker.strip():
+            out.append(parsed.doc.ticker.strip().upper())
     return out
 
 
@@ -261,7 +260,7 @@ def summarize(scores: list[EvalScore]) -> dict[str, Any]:
         return (sum(vals) / len(vals)) if vals else math.nan
 
     def _is_ok(s: EvalScore) -> bool:
-        return not bool(s.answer.get("status"))
+        return "status" not in s.answer or not bool(s.answer["status"])
 
     factual = [s for s in scores if s.kind == "factual"]
     open_ended = [s for s in scores if s.kind == "open_ended"]
@@ -278,9 +277,11 @@ def summarize(scores: list[EvalScore]) -> dict[str, Any]:
         out["factual_n"] = len(factual)
         out["factual_n_ok"] = len(factual_ok)
         out["factual_gold_chunk_hit_rate"] = _mean(
-            [1.0 if s.retrieval.get("gold_chunk_rank") else 0.0 for s in factual_ok]
+            [1.0 if ("gold_chunk_rank" in s.retrieval and s.retrieval["gold_chunk_rank"]) else 0.0 for s in factual_ok]
         )
-        out["factual_numeric_accuracy"] = _mean([1.0 if s.answer.get("numeric_matched") else 0.0 for s in factual_ok])
+        out["factual_numeric_accuracy"] = _mean(
+            [1.0 if ("numeric_matched" in s.answer and bool(s.answer["numeric_matched"])) else 0.0 for s in factual_ok]
+        )
 
         # Primary judge fail-rate (prediction=1).
         judge_preds = []

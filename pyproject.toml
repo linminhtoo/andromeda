@@ -21,21 +21,12 @@ dependencies = [
     "numpy<=2.2.0",
     "nltk",
     "openai",
-    "opentelemetry-api",
-    "opentelemetry-instrumentation-fastapi",
-    "opentelemetry-exporter-otlp",
-    "opentelemetry-sdk",
-    "opentelemetry-semantic-conventions-ai",
     "pandas>=2.3.0",
     "peft",
+    "psycopg[binary]>=3.2.0",
     "pydantic>=2.11.7",
-    "pymilvus[model]",
-    "pymilvus[milvus_lite]",
     "python-dotenv>=1.1.1",
     "python-fasthtml",
-    # "qdrant-client",
-    "qdrant-client[fastembed-gpu]",
-    "rank-bm25>=0.2.2",
     "scikit-learn>=1.7.0",
     "seaborn>=0.13.2",
     "sentence-transformers",
@@ -72,6 +63,7 @@ include = ["finrag*"]
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
+include = ["src"]
 
 [tool.mypy]
 warn_unused_configs = true
