@@ -305,6 +305,8 @@ class RAGService:
 
     def ingest_document(self, path: str, use_mistral_ocr: bool) -> str:
         """
+        FIXME: docstring is outdated.
+
         Ingest a single PDF at `path` using either:
         - Mistral OCR -> Markdown -> Docling -> HybridChunker
         - Direct Docling PDF parsing -> HybridChunker
@@ -337,6 +339,20 @@ class RAGService:
         filing_date_to: str | None = None,
         include_retrieved_chunks: bool = False,
     ) -> QueryResponse:
+        """
+        
+        TODO's
+        ------
+        - should we infer filters from question?
+            i.e. build_filters() could be a tool called by the LLM if it deems necessary
+        - system should ask clarifying questions if question is underspecified
+            * AND/OR add logic to infer those details
+                e.g. "latest earnings report" -> map to most recent filing date filter
+        - system should refuse to answer if:
+            * retriever / reranker scores are too low - even before LLM gets to see them
+            * question is out of scope / harmful (DONE)
+            * final chunks do not contain required context (DONE)
+        """
         filters: RetrievalFilters = self.retriever.build_filters(
             tickers=tickers, filing_date_from=filing_date_from, filing_date_to=filing_date_to
         )
