@@ -151,7 +151,7 @@ class PostgresHybridRetriever:
                 retrieval_context = built
 
         if retrieval_context:
-            return retrieval_text, retrieval_context, f"{retrieval_text}\n\nContext: {retrieval_context}"
+            return retrieval_text, retrieval_context, f"Context:\n{retrieval_context}\n\nChunk:\n{retrieval_text}"
         return retrieval_text, None, retrieval_text
 
     def text_for_rerank(self, chunk: DocChunk) -> str:

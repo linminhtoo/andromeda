@@ -38,9 +38,10 @@ def situate_context(
 
     prompt = (
         "You are helping improve vector search retrieval.\n"
-        "Given some context and a chunk, write a short, specific context that situates "
+        "Given some context and a chunk, write a CONCISE summary that situates "
         "the chunk within the larger context.\n"
-        "Return ONLY the context. Do not include quotes, headings, or preamble.\n\n"
+        "Return ONLY the summary. Ensure it is CONCISE. \n"
+        "Do not include quotes, headings, or preamble.\n\n"
         "<context>\n"
         f"{context}\n"
         "</context>\n\n"
