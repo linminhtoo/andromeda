@@ -18,8 +18,19 @@ project_root="$(
 )"
 cd "$project_root"
 
+now=$(date +"%Y%m%d_%H%M%S")
+ann_args=()
+if [[ -n "${ANN_HNSW_M:-}" ]]; then
+  ann_args+=(--ann-hnsw-m "$ANN_HNSW_M")
+fi
+if [[ -n "${ANN_HNSW_EF_CONSTRUCTION:-}" ]]; then
+  ann_args+=(--ann-hnsw-ef-construction "$ANN_HNSW_EF_CONSTRUCTION")
+fi
+
+# REMEMBER TO CHANGE --ingest-output-dir
+# NOTE: interrupted at 20/93 docs, will index the rest later (2.5 hours needed)
 python3 -m scripts.build_index \
-  --ingest-output-dir ./data/sec_filings_md_v5/chunked_1024_128 \
+  --ingest-output-dir ./data/sec_filings_md_secparser/chunked_1024_128 \
   --postgres-dsn "${POSTGRES_DSN:-${DATABASE_URL:-}}" \
   --llm-provider openai \
   --dense-model BAAI/bge-m3 \
@@ -31,4 +42,8 @@ python3 -m scripts.build_index \
   --context-window 8 \
   --context-max-concurrency 64 \
   --batch-size 128 \
-  --skip-existing-chunks
+  --skip-existing-chunks \
+  --truncate \
+  "${ann_args[@]}" \
+  2>&1 | tee "logs/build_index_${now}.log"
+# NOTE: set --truncate to remove existing postgresql rows

@@ -49,6 +49,8 @@ class Args:
     context_window: int
     context_metadata_key: str
     context_max_concurrency: int
+    ann_hnsw_m: int | None
+    ann_hnsw_ef_construction: int | None
     truncate: bool
     skip_existing_chunks: bool
 
@@ -127,6 +129,12 @@ class ChunkJsonRow:
 
 
 def parse_args() -> Args:
+    def positive_int(value: str) -> int:
+        parsed = int(value)
+        if parsed <= 0:
+            raise argparse.ArgumentTypeError("must be > 0")
+        return parsed
+
     parser = argparse.ArgumentParser(description="Build PostgreSQL retrieval index from chunk exports.")
     parser.add_argument(
         "--ingest-output-dir",
@@ -169,6 +177,18 @@ def parse_args() -> Args:
     parser.add_argument(
         "--context-metadata-key", default="retrieval_context", help="Metadata key used to store contextual text."
     )
+    parser.add_argument(
+        "--ann-hnsw-m",
+        type=positive_int,
+        default=None,
+        help="Optional HNSW index parameter m (higher can improve recall at higher memory/build cost).",
+    )
+    parser.add_argument(
+        "--ann-hnsw-ef-construction",
+        type=positive_int,
+        default=None,
+        help="Optional HNSW index parameter ef_construction (higher can improve recall at higher build cost).",
+    )
     parser.add_argument("--truncate", action="store_true", help="Delete all existing corpus rows before indexing.")
     parser.add_argument(
         "--skip-existing-chunks", action="store_true", help="Skip chunk IDs that already exist in PostgreSQL."
@@ -190,6 +210,8 @@ def parse_args() -> Args:
         context_window=ns.context_window,
         context_metadata_key=ns.context_metadata_key,
         context_max_concurrency=ns.context_max_concurrency,
+        ann_hnsw_m=ns.ann_hnsw_m,
+        ann_hnsw_ef_construction=ns.ann_hnsw_ef_construction,
         truncate=bool(ns.truncate),
         skip_existing_chunks=bool(ns.skip_existing_chunks),
     )
@@ -299,6 +321,8 @@ def main() -> int:
         dsn=dsn,
         context_builder=context_builder_from_metadata(key=args.context_metadata_key),
         retrieval_context_key=args.context_metadata_key,
+        ann_hnsw_m=args.ann_hnsw_m,
+        ann_hnsw_ef_construction=args.ann_hnsw_ef_construction,
     )
 
     if args.truncate:
@@ -353,7 +377,8 @@ def main() -> int:
                 if not chunks_to_index:
                     skipped_docs += 1
                     continue
-
+            
+            logger.debug(f"Indexing doc_id={doc_chunks[0].doc_id} chunks={len(chunks_to_index)}")
             for batch in batched(chunks_to_index, batch_size=args.batch_size):
                 retriever.index(batch)
 
