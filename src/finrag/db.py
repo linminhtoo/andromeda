@@ -8,7 +8,7 @@ from typing import Any, Iterable, LiteralString, Sequence
 import psycopg
 from loguru import logger
 from psycopg.rows import dict_row
-from psycopg.sql import SQL
+from psycopg.sql import SQL, Literal
 from psycopg.types.json import Jsonb
 
 
@@ -158,8 +158,22 @@ class PostgresDB:
         PostgreSQL connection string.
     """
 
-    def __init__(self, dsn: str):
+    def __init__(
+        self,
+        dsn: str,
+        embedding_dim: int | None = None,
+        ann_hnsw_m: int | None = None,
+        ann_hnsw_ef_construction: int | None = None,
+        ann_ivfflat_lists: int = 100,
+    ):
         self.dsn = dsn
+        self.embedding_dim = self.normalize_embedding_dim(embedding_dim)
+        self.ann_hnsw_m = self.normalize_positive_int(ann_hnsw_m)
+        self.ann_hnsw_ef_construction = self.normalize_positive_int(ann_hnsw_ef_construction)
+        self.ann_ivfflat_lists = self.normalize_positive_int(ann_ivfflat_lists)
+        if self.ann_ivfflat_lists is None:
+            self.ann_ivfflat_lists = 100
+        self._ann_index_ready = False
 
     def connect(self) -> psycopg.Connection[Any]:
         """
@@ -167,6 +181,113 @@ class PostgresDB:
         """
 
         return psycopg.connect(self.dsn)
+
+    @staticmethod
+    def normalize_embedding_dim(value: int | None) -> int | None:
+        """
+        Return a positive embedding dimension, else `None`.
+        """
+
+        if value is None:
+            return None
+        dim = int(value)
+        if dim <= 0:
+            return None
+        return dim
+
+    @staticmethod
+    def normalize_positive_int(value: int | None) -> int | None:
+        """
+        Return a positive integer, else `None`.
+        """
+
+        if value is None:
+            return None
+        out = int(value)
+        if out <= 0:
+            return None
+        return out
+
+    def resolve_embedding_dim(self) -> int | None:
+        """
+        Resolve the embedding dimension from config or existing rows.
+        """
+
+        if self.embedding_dim is not None:
+            return self.embedding_dim
+
+        with self.connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT vector_dims(embedding) AS dim FROM chunks LIMIT 1;")
+                row = cur.fetchone()
+
+        if row is None:
+            return None
+        dim_raw = row["dim"]
+        if not isinstance(dim_raw, int) or dim_raw <= 0:
+            return None
+        self.embedding_dim = dim_raw
+        return self.embedding_dim
+
+    def ensure_ann_index(self, embedding_dim: int | None = None) -> None:
+        """
+        Ensure an ANN index exists for cosine similarity search.
+
+        Prefers HNSW and falls back to ivfflat when needed.
+        """
+
+        if embedding_dim is not None:
+            normalized_dim = self.normalize_embedding_dim(embedding_dim)
+            if normalized_dim is None:
+                raise ValueError(f"Invalid embedding dimension: {embedding_dim}")
+            self.embedding_dim = normalized_dim
+
+        dim = self.resolve_embedding_dim()
+        if dim is None:
+            return
+        if self._ann_index_ready:
+            return
+
+        vector_type = SQL(f"vector({dim})")
+
+        hnsw_with_clauses: list[SQL] = []
+        if self.ann_hnsw_m is not None:
+            hnsw_with_clauses.append(SQL("m = {}").format(Literal(self.ann_hnsw_m)))
+        if self.ann_hnsw_ef_construction is not None:
+            hnsw_with_clauses.append(SQL("ef_construction = {}").format(Literal(self.ann_hnsw_ef_construction)))
+        hnsw_with_sql = SQL("")
+        if hnsw_with_clauses:
+            hnsw_with_sql = SQL(" WITH (") + SQL(", ").join(hnsw_with_clauses) + SQL(")")
+
+        hnsw_sql = SQL(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
+            ON chunks USING hnsw ((embedding::{vector_type}) vector_cosine_ops){hnsw_with_sql};
+            """
+        ).format(vector_type=vector_type, hnsw_with_sql=hnsw_with_sql)
+        ivfflat_sql = SQL(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chunks_embedding_ivfflat
+            ON chunks USING ivfflat ((embedding::{vector_type}) vector_cosine_ops) WITH (lists = {lists});
+            """
+        ).format(vector_type=vector_type, lists=Literal(self.ann_ivfflat_lists))
+
+        try:
+            with self.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(hnsw_sql)
+            self._ann_index_ready = True
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Skipping hnsw index creation: {!r}", exc)
+
+        try:
+            with self.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(ivfflat_sql)
+            self._ann_index_ready = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Skipping ivfflat index creation: {!r}", exc)
 
     def ensure_schema(self) -> None:
         """
@@ -253,15 +374,9 @@ class PostgresDB:
             with conn.cursor() as cur:
                 for statement in statements:
                     cur.execute(statement)
-                try:
-                    cur.execute(
-                        """
-                        CREATE INDEX IF NOT EXISTS idx_chunks_embedding_ivfflat
-                        ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-                        """
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Skipping ivfflat index creation: %r", exc)
+
+        # Optional ANN index creation is isolated from schema DDL.
+        self.ensure_ann_index(self.embedding_dim)
 
     def upsert_documents(self, documents: Sequence[DocumentRecord]) -> None:
         """
@@ -344,6 +459,15 @@ class PostgresDB:
 
         if not chunks:
             return
+
+        embedding_dim = len(chunks[0].embedding)
+        if embedding_dim <= 0:
+            raise ValueError("Embedding dimension must be positive.")
+        for row in chunks[1:]:
+            if len(row.embedding) != embedding_dim:
+                raise ValueError("Mixed embedding dimensions in chunk batch.")
+
+        self.ensure_ann_index(embedding_dim)
 
         sql = """
         INSERT INTO chunks (
@@ -491,6 +615,14 @@ class PostgresDB:
         if where_clauses:
             where_sql = SQL("WHERE ") + SQL(" AND ").join(where_clauses)
 
+        vector_dim = self.resolve_embedding_dim()
+        embedding_expr = SQL("embedding")
+        query_vector_expr = SQL("%(query_vector)s::vector")
+        if vector_dim is not None:
+            vector_type = SQL(f"vector({vector_dim})")
+            embedding_expr = SQL("embedding::{}").format(vector_type)
+            query_vector_expr = SQL("%(query_vector)s::{}").format(vector_type)
+
         query_sql = SQL(
             """
         WITH filtered AS (
@@ -505,9 +637,9 @@ class PostgresDB:
         dense AS (
             SELECT
                 chunk_id,
-                ROW_NUMBER() OVER (ORDER BY embedding <=> %(query_vector)s::vector) AS rank_dense
+                ROW_NUMBER() OVER (ORDER BY {embedding_expr} <=> {query_vector_expr}) AS rank_dense
             FROM filtered
-            ORDER BY embedding <=> %(query_vector)s::vector
+            ORDER BY {embedding_expr} <=> {query_vector_expr}
             LIMIT %(top_k_semantic)s
         ),
         sparse AS (
@@ -552,7 +684,7 @@ class PostgresDB:
         ORDER BY f.score DESC
         LIMIT %(top_k_final)s;
         """
-        ).format(where_sql=where_sql)
+        ).format(where_sql=where_sql, embedding_expr=embedding_expr, query_vector_expr=query_vector_expr)
 
         with self.connect() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
