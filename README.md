@@ -103,7 +103,7 @@ The rewrite makes fields explicit:
 - `retrieval_context`: optional LLM-situated context
 - embedding input is derived as:
   - `retrieval_text`
-  - or `retrieval_text + "\n\nContext: " + retrieval_context`
+  - or `f"Context:\n{retrieval_context}\n\nChunk:\n{retrieval_text}"`
 
 Database bootstrap includes a safety migration:
 - `chunks.index_text -> chunks.retrieval_text`
