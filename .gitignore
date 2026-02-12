@@ -1,3 +1,4 @@
+data_before_refactor/
 data/**/*.html
 data/**/*.pdf
 data/**/*.json
