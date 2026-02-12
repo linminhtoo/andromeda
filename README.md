@@ -89,6 +89,7 @@ erDiagram
 - dense ranking: cosine distance on `embedding`
 - sparse ranking: PostgreSQL FTS on `retrieval_text`
 - fusion: weighted reciprocal-rank fusion (RRF)
+- ANN index strategy: HNSW (pgvector)
 
 Optional retrieval filters are applied before ranking:
 - `tickers`
@@ -153,6 +154,17 @@ Open:
 - Q&A: `http://localhost:8236/`
 - Eval review UI: `http://localhost:8236/review`
 
+## UI notes
+
+### Q&A UI (`/`)
+- Refreshed, cleaner non-purple visual theme with improved spacing/contrast.
+- Progress panel now shows a per-step pipeline (`retrieve`, `rerank`, `draft`, `final`) plus a live event feed.
+- History entries persist and display timing data (`timing_ms`) so step durations survive reloads.
+
+### Review UI (`/review`)
+- Refreshed visual theme aligned with the main Q&A UI.
+- Case details include a dedicated "Generation timings" block when `generation.timing_ms` is available.
+
 ## Key scripts
 
 - `scripts/process_html_to_markdown.py`
@@ -167,7 +179,8 @@ Open:
 - `scripts/build_index.py`
   - reads chunk exports and upserts into PostgreSQL
   - supports context strategies (`none`, `document`, `neighbors`, `metadata`)
-  - supports `--truncate` and `--skip-existing-chunks`
+  - ANN is HNSW-only with optional tuning via `--ann-hnsw-m` and `--ann-hnsw-ef-construction`
+  - supports `--reset-corpus` (`--truncate` alias), `--recreate-ann-index`, and `--skip-existing-chunks`
 
 - `scripts/run_eval.py`
   - runs eval queries through `RAGService.answer_question()`
