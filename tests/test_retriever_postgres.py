@@ -70,8 +70,9 @@ def test_index_stores_retrieval_text_and_context_separately() -> None:
     stored = fake_db.chunks[0]
     assert stored.retrieval_text == "Company: Apple\nSection: Risk Factors\n\nraw text"
     assert stored.retrieval_context == "Previous chunk discusses gross margin trends."
+    # FIXME: updated format, this check breaks now
     assert embedded_inputs == [
-        "Company: Apple\nSection: Risk Factors\n\nraw text\n\nContext: Previous chunk discusses gross margin trends."
+        "Context:\nPrevious chunk discusses gross margin trends.\n\nChunk:\nCompany: Apple\nSection: Risk Factors\n\nraw text"
     ]
     assert stored.metadata["retrieval_text"] == stored.retrieval_text
     assert stored.metadata["retrieval_context"] == stored.retrieval_context
