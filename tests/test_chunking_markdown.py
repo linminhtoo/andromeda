@@ -73,3 +73,19 @@ def test_markdown_table_preserving_chunker_can_split_large_tables(tmp_path) -> N
         lines = ch.text.splitlines()
         assert lines[0].strip().startswith("|")
         assert "---" in lines[1]
+
+
+def test_markdown_table_preserving_chunker_splits_oversized_text_blocks(tmp_path) -> None:
+    long_sentence = " ".join(f"w{i}" for i in range(40))
+    md = f"# H\n\n{long_sentence}\n\n{long_sentence}\n"
+    md_path = tmp_path / "doc.md"
+    md_path.write_text(md, encoding="utf-8")
+
+    c = MarkdownTablePreservingChunker(max_tokens=20, overlap_tokens=4, split_tables=False)
+    chunks = c.chunk_document(str(md_path), doc_id="d1")
+
+    assert chunks
+    text_chunks = [ch for ch in chunks if (ch.metadata or {}).get("block_type") == "text"]
+    assert len(text_chunks) >= 3
+    for ch in text_chunks:
+        assert len(ch.text.split()) <= 24  # allows small overlap carry-in

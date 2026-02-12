@@ -7,6 +7,8 @@ import sys
 import asyncio
 import threading
 import time
+import math
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,16 +17,11 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from loguru import logger
-from pydantic import BaseModel
-
-from opentelemetry import context as otel_context
-from opentelemetry import trace
-from opentelemetry.semconv_ai import GenAISystem
-from opentelemetry.semconv_ai import SpanAttributes as AISpanAttributes
-from opentelemetry.trace import Status, StatusCode
+from pydantic import BaseModel, Field
 
 # from finrag.chunking import DoclingHybridChunker
 from finrag.dataclasses import TopChunk
+from finrag.db import RetrievalFilters
 from finrag.generation_controls import (
     GenerationSettings,
     default_mode,
@@ -32,14 +29,10 @@ from finrag.generation_controls import (
     resolve_generation_settings,
 )
 from finrag.llm_clients import get_llm_client
+from finrag.metadata_models import chunk_metadata_from_value
 from finrag.context_support import apply_context_strategy, context_builder_from_metadata
 from finrag.qa import build_draft_prompt, build_refine_prompt
-from finrag.retriever import (
-    CrossEncoderReranker,
-    QdrantHybridRetriever,
-    MilvusContextualRetriever,
-    build_milvus_embedding_functions,
-)
+from finrag.retriever import CrossEncoderReranker, PostgresHybridRetriever
 from finrag.streaming import (
     TextDeltaBatcher,
     iter_chat_deltas,
@@ -48,8 +41,6 @@ from finrag.streaming import (
     stream_chunks_preview_chars,
     stream_draft_enabled,
 )
-from finrag.telemetry import setup_opentelemetry
-from finrag.traces import trace_chunk_limits, traces_enabled, write_trace
 
 
 # -------------------------------------------------------------------
@@ -60,6 +51,11 @@ from finrag.traces import trace_chunk_limits, traces_enabled, write_trace
 class QueryRequest(BaseModel):
     question: str
     mode: str | None = None
+
+    # Optional retrieval filters.
+    tickers: list[str] | None = None
+    filing_date_from: str | None = None
+    filing_date_to: str | None = None
 
     # Optional overrides (use mode preset when omitted).
     top_k_retrieve: int | None = None
@@ -97,6 +93,9 @@ def _request_with_resolved_settings(req: QueryRequest, settings: GenerationSetti
     return QueryRequest(
         question=req.question,
         mode=settings.mode,
+        tickers=req.tickers,
+        filing_date_from=req.filing_date_from,
+        filing_date_to=req.filing_date_to,
         top_k_retrieve=settings.top_k_retrieve,
         top_k_rerank=settings.top_k_rerank,
         draft_max_tokens=settings.draft_max_tokens,
@@ -144,38 +143,7 @@ def _llm_embed_model() -> str | None:
         return (os.getenv("OPENAI_EMBED_MODEL") or os.getenv("EMBED_MODEL") or "").strip() or None
     if provider == "mistral":
         return (os.getenv("MISTRAL_EMBED_MODEL") or os.getenv("EMBED_MODEL") or "").strip() or None
-    if provider == "fastembed":
-        return (os.getenv("FASTEMBED_EMBED_MODEL") or os.getenv("EMBED_MODEL") or "").strip() or None
     return (os.getenv("EMBED_MODEL") or "").strip() or None
-
-
-def _genai_system() -> str | None:
-    provider = _llm_provider_name()
-    if provider == "openai":
-        return GenAISystem.OPENAI.value
-    if provider == "mistral":
-        # semconv-ai uses `MISTRALAI` (not `MISTRAL`) in current releases.
-        return GenAISystem.MISTRALAI.value
-    return None
-
-
-def _question_fingerprint(question: str) -> str:
-    # Keep cardinality low and avoid shipping user text by default.
-    question = (question or "").strip()
-    if not question:
-        return ""
-    return uuid.uuid5(uuid.NAMESPACE_URL, question).hex
-
-
-def _maybe_set_otel_question(span, question: str) -> None:
-    if not span.is_recording():
-        return
-    if not _env_bool("FINRAG_OTEL_INCLUDE_QUESTION", default=True):
-        return
-    question = (question or "").strip()
-    if not question:
-        return
-    span.set_attribute("finrag.request.question", question[:4096])
 
 
 def _llm_for_embeddings():
@@ -219,126 +187,45 @@ def _context_config() -> tuple[str, int, str]:
         window = int(window_raw)
     except ValueError as exc:
         raise RuntimeError("CONTEXT_WINDOW must be an integer") from exc
-    metadata_key = os.getenv("CONTEXT_METADATA_KEY", "context").strip() or "context"
+    metadata_key = os.getenv("CONTEXT_METADATA_KEY", "retrieval_context").strip() or "retrieval_context"
     return strategy, window, metadata_key
 
 
-def build_hybrid_retriever(storage_path: str) -> QdrantHybridRetriever:
+def postgres_dsn() -> str:
     """
-    Build the default Qdrant-backed hybrid retriever.
-
-    Parameters
-    ----------
-    storage_path : str
-        Filesystem path for Qdrant storage.
+    Resolve PostgreSQL connection string from environment.
 
     Returns
     -------
-    HybridRetriever
+    str
+        Database connection string.
+    """
+
+    dsn = (os.getenv("POSTGRES_DSN") or os.getenv("DATABASE_URL") or "").strip()
+    if not dsn:
+        raise RuntimeError("Missing POSTGRES_DSN (or DATABASE_URL).")
+    return dsn
+
+
+def build_retriever() -> PostgresHybridRetriever:
+    """
+    Build PostgreSQL retriever from environment configuration.
+
+    Returns
+    -------
+    PostgresHybridRetriever
         Configured retriever instance.
     """
 
-    bm25_path = os.getenv("BM25_PATH")
-    if bm25_path:
-        bm25_path = os.path.expanduser(bm25_path)
     _, _, context_key = _context_config()
-    context_builder = context_builder_from_metadata(key=context_key)
-    retriever = QdrantHybridRetriever(
+    retriever = PostgresHybridRetriever(
         llm_client=_llm_for_embeddings(),
-        storage_path=storage_path,
-        bm25_path=bm25_path,
-        context_builder=context_builder,
-        context_metadata_key=context_key,
+        dsn=postgres_dsn(),
+        context_builder=context_builder_from_metadata(key=context_key),
+        retrieval_context_key=context_key,
     )
-    logger.info(f"Using Qdrant retriever with storage path: {storage_path}, bm25_path: {bm25_path}")
+    logger.info("Using PostgreSQL retriever")
     return retriever
-
-
-def build_milvus_retriever() -> MilvusContextualRetriever:
-    """
-    Build the Milvus-backed retriever using environment configuration.
-
-    Returns
-    -------
-    MilvusContextualRetriever
-        Configured retriever instance.
-    """
-
-    project_root = Path(__file__).resolve().parents[2]
-
-    # NOTE: MILVUS_URI only accepts http[s]://
-    # filepaths should be provided via MILVUS_PATH for local storage
-    milvus_uri = os.getenv("MILVUS_URI") or os.getenv("MILVUS_PATH") or str(project_root / "data" / "milvus.db")
-    if "://" not in milvus_uri:
-        milvus_uri = os.path.expanduser(milvus_uri)
-    logger.info(f"Using {milvus_uri=}")
-
-    collection_name = os.getenv("MILVUS_COLLECTION_NAME") or "finrag_milvus_collection"
-
-    use_sparse = _env_bool("MILVUS_USE_SPARSE", default=True)
-    sparse_kind = os.getenv("MILVUS_SPARSE_EMBEDDING", "bm25").strip().lower()
-    if sparse_kind == "none":
-        use_sparse = False
-
-    bm25_path = os.getenv("BM25_PATH")
-    if bm25_path:
-        bm25_path = os.path.expanduser(bm25_path)
-
-    dense_kind = os.getenv("MILVUS_DENSE_EMBEDDING", "llm").strip().lower()
-
-    _, _, context_key = _context_config()
-    dense_fn, sparse_fn = build_milvus_embedding_functions(
-        llm_client_for_dense=_llm_for_embeddings(),
-        dense_kind=dense_kind,
-        sparse_kind=sparse_kind,
-        use_sparse=use_sparse,
-    )
-    context_builder = context_builder_from_metadata(key=context_key)
-    retriever = MilvusContextualRetriever(
-        uri=milvus_uri,
-        collection_name=collection_name,
-        use_sparse=use_sparse,
-        bm25_path=bm25_path,
-        dense_embedding_function=dense_fn,
-        sparse_embedding_function=sparse_fn,
-        context_builder=context_builder,
-        context_metadata_key=context_key,
-        # TODO: phase out this hotfix argument
-        legacy_bm25=os.getenv("MILVUS_LEGACY_BM25", "false").strip().lower() == "true",
-    )
-
-    if retriever.bm25_requires_fit:
-        if bm25_path is None:
-            raise RuntimeError("Legacy Milvus BM25 requires BM25_PATH to load fitted parameters.")
-        if not Path(bm25_path).exists():
-            raise RuntimeError(f"BM25 parameters not found at: {bm25_path}")
-        retriever.load_bm25(bm25_path)
-
-    logger.info(f"Using Milvus retriever with collection: {collection_name}, sparse={use_sparse}, uri={milvus_uri}")
-    return retriever
-
-
-def build_retriever(storage_path: str | None) -> QdrantHybridRetriever | MilvusContextualRetriever:
-    """
-    Build a retriever based on the configured backend.
-
-    Parameters
-    ----------
-    storage_path : str | None
-        Qdrant storage path. Required when RETRIEVER_BACKEND=qdrant.
-
-    Returns
-    -------
-    QdrantHybridRetriever | MilvusContextualRetriever
-        Configured retriever instance.
-    """
-
-    backend = os.getenv("RETRIEVER_BACKEND", "qdrant").strip().lower()
-    if backend == "milvus":
-        return build_milvus_retriever()
-    if storage_path is None:
-        raise RuntimeError("QDRANT_STORAGE_PATH is required when RETRIEVER_BACKEND=qdrant.")
-    return build_hybrid_retriever(storage_path)
 
 
 def build_reranker() -> CrossEncoderReranker:
@@ -348,10 +235,10 @@ def build_reranker() -> CrossEncoderReranker:
 
 
 class RAGService:
-    def __init__(self, storage_path: str | None):
+    def __init__(self):
         self.llm = _llm_for_chat()
         logger.info(f"Using LLM chat model: {self.llm.chat_model}")
-        self.retriever = build_retriever(storage_path)
+        self.retriever = build_retriever()
         self.reranker = build_reranker()
         self._context_strategy, self._context_window, self._context_key = _context_config()
 
@@ -360,76 +247,73 @@ class RAGService:
         # self.chunker_pdf = DoclingHybridChunker(use_mistral_ocr=False)
 
     @staticmethod
-    def _chunk_metadata_for_ui(meta: dict | None) -> dict | None:
-        if not isinstance(meta, dict):
-            return None
-
-        def _is_json_scalar(v):
-            return v is None or isinstance(v, (str, int, float, bool))
-
+    def _chunk_metadata_for_ui(meta: object) -> dict | None:
+        parsed = chunk_metadata_from_value(meta)
         out: dict[str, object] = {}
 
-        doc = meta.get("doc")
-        if isinstance(doc, dict):
+        if parsed.doc is not None:
             keep = {}
-            for k in (
-                "company",
-                "ticker",
-                "cik",
-                "filing_type",
-                "filing_date",
-                "period_end_date",
-                "filing_quarter",
-                "filing_quarter_basis",
-            ):
-                v = doc.get(k)
-                if _is_json_scalar(v):
-                    keep[k] = v
+            if parsed.doc.company is not None:
+                keep["company"] = parsed.doc.company
+            if parsed.doc.ticker is not None:
+                keep["ticker"] = parsed.doc.ticker
+            if parsed.doc.cik is not None:
+                keep["cik"] = parsed.doc.cik
+            if parsed.doc.filing_type is not None:
+                keep["filing_type"] = parsed.doc.filing_type
+            if parsed.doc.filing_date is not None:
+                keep["filing_date"] = parsed.doc.filing_date
+            if parsed.doc.period_end_date is not None:
+                keep["period_end_date"] = parsed.doc.period_end_date
+            if parsed.doc.filing_quarter is not None:
+                keep["filing_quarter"] = parsed.doc.filing_quarter
+            if parsed.doc.filing_quarter_basis is not None:
+                keep["filing_quarter_basis"] = parsed.doc.filing_quarter_basis
             if keep:
                 out["doc"] = keep
 
-        summary = meta.get("summary")
-        if isinstance(summary, str) and summary.strip():
-            out["summary"] = summary.strip()
+        if parsed.summary is not None and parsed.summary.strip():
+            out["summary"] = parsed.summary.strip()
 
         return out or None
 
     def _serialize_top_chunks(self, reranked) -> list[TopChunk]:
-        index_text_key = getattr(self.retriever, "_index_text_key", "index_text")
-        return [
-            TopChunk(
-                chunk_id=sc.chunk.id,
-                doc_id=sc.chunk.doc_id,
-                page_no=sc.chunk.page_no,
-                headings=sc.chunk.headings,
-                score=sc.score,
-                preview=str(((sc.chunk.metadata or {}).get(index_text_key) or sc.chunk.text) or "")[:300],
-                source=sc.chunk.source,
-                text=str(((sc.chunk.metadata or {}).get(index_text_key) or sc.chunk.text) or ""),
-                context=(
-                    str((sc.chunk.metadata or {}).get(self._context_key))
-                    if (sc.chunk.metadata or {}).get(self._context_key) is not None
-                    else None
-                ),
-                metadata=self._chunk_metadata_for_ui(sc.chunk.metadata),
+        retrieval_text_key = getattr(self.retriever, "retrieval_text_key", "retrieval_text")
+        out: list[TopChunk] = []
+        for sc in reranked:
+            parsed = chunk_metadata_from_value(sc.chunk.metadata)
+            if retrieval_text_key == "retrieval_text":
+                raw_text = parsed.retrieval_text
+            else:
+                raw_text = parsed.context_for_key(retrieval_text_key)
+            display_text = str(raw_text or sc.chunk.text or "")
+            context_value = parsed.context_for_key(self._context_key)
+            out.append(
+                TopChunk(
+                    chunk_id=sc.chunk.id,
+                    doc_id=sc.chunk.doc_id,
+                    page_no=sc.chunk.page_no,
+                    headings=sc.chunk.headings,
+                    score=sc.score,
+                    preview=display_text[:300],
+                    source=sc.chunk.source,
+                    text=display_text,
+                    context=context_value,
+                    metadata=self._chunk_metadata_for_ui(parsed.to_dict()),
+                )
             )
-            for sc in reranked
-        ]
+        return out
 
     def ingest_document(self, path: str, use_mistral_ocr: bool) -> str:
         """
+        FIXME: docstring is outdated.
+
         Ingest a single PDF at `path` using either:
         - Mistral OCR -> Markdown -> Docling -> HybridChunker
         - Direct Docling PDF parsing -> HybridChunker
         """
         raise RuntimeError("On-the-fly ingestion is disabled for now. Use batch ingestion script.")
 
-        if isinstance(self.retriever, MilvusContextualRetriever) and self.retriever.use_sparse:
-            if self.retriever.uses_bm25:
-                raise RuntimeError(
-                    "Online ingestion with Milvus+BM25 is disabled. "
-                    "Rebuild BM25 and reindex in batch to keep sparse vectors consistent."
-                )
         doc_id = str(uuid.uuid4())
         chunker = self.chunker_ocr if use_mistral_ocr else self.chunker_pdf
 
@@ -447,90 +331,69 @@ class RAGService:
         return doc_id
 
     def answer_question(
-        self, question: str, settings: GenerationSettings, *, include_retrieved_chunks: bool = False
+        self,
+        question: str,
+        settings: GenerationSettings,
+        *,
+        tickers: list[str] | None = None,
+        filing_date_from: str | None = None,
+        filing_date_to: str | None = None,
+        include_retrieved_chunks: bool = False,
     ) -> QueryResponse:
-        tracer = trace.get_tracer(__name__)
+        """
 
-        backend = "milvus" if isinstance(self.retriever, MilvusContextualRetriever) else "qdrant"
-        system = _genai_system()
-        model = _llm_chat_model()
+        TODO's
+        ------
+        - should we infer filters from question?
+            i.e. build_filters() could be a tool called by the LLM if it deems necessary
+        - system should ask clarifying questions if question is underspecified
+            * AND/OR add logic to infer those details
+                e.g. "latest earnings report" -> map to most recent filing date filter
+        - system should refuse to answer if:
+            * retriever / reranker scores are too low - even before LLM gets to see them
+            * question is out of scope / harmful (DONE)
+            * final chunks do not contain required context (DONE)
+        """
+        filters: RetrievalFilters = self.retriever.build_filters(
+            tickers=tickers, filing_date_from=filing_date_from, filing_date_to=filing_date_to
+        )
 
-        try:
-            with tracer.start_as_current_span("finrag.retrieve") as span:
-                span.set_attribute(AISpanAttributes.VECTOR_DB_VENDOR, backend)
-                span.set_attribute(AISpanAttributes.VECTOR_DB_OPERATION, "retrieve_hybrid")
-                span.set_attribute(AISpanAttributes.VECTOR_DB_QUERY_TOP_K, int(settings.top_k_retrieve))
-                hybrid = self.retriever.retrieve_hybrid(
-                    question,
-                    top_k_semantic=settings.top_k_retrieve,
-                    top_k_bm25=settings.top_k_retrieve,
-                    top_k_final=settings.top_k_retrieve,
-                )
-                span.set_attribute("finrag.retrieve.count", len(hybrid))
+        hybrid = self.retriever.retrieve_hybrid(
+            question,
+            top_k_semantic=settings.top_k_retrieve,
+            top_k_bm25=settings.top_k_retrieve,
+            top_k_final=settings.top_k_retrieve,
+            filters=filters,
+        )
 
-            with tracer.start_as_current_span("finrag.rerank") as span:
-                span.set_attribute("finrag.rerank.enabled", bool(settings.enable_rerank))
-                span.set_attribute("finrag.rerank.top_k", int(settings.top_k_rerank))
-                if settings.enable_rerank:
-                    reranked = self.reranker.rerank(
-                        question,
-                        hybrid,
-                        top_k=settings.top_k_rerank,
-                        candidate_text_provider=self.retriever.text_for_rerank,
-                    )
-                else:
-                    reranked = hybrid[: settings.top_k_rerank]
-                span.set_attribute("finrag.rerank.count", len(reranked))
-
-            draft_prompt = build_draft_prompt(
-                question, reranked, draft_max_tokens=settings.draft_max_tokens, answer_style=settings.answer_style
+        if settings.enable_rerank:
+            reranked = self.reranker.rerank(
+                question, hybrid, top_k=settings.top_k_rerank, candidate_text_provider=self.retriever.text_for_rerank
             )
-            with tracer.start_as_current_span("finrag.llm.draft") as span:
-                if system:
-                    span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-                if model:
-                    span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-                span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.draft_max_tokens))
-                span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, float(settings.draft_temperature))
-                span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
-                span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, False)
-                span.set_attribute("finrag.prompt.messages", len(draft_prompt))
-                draft = self.llm.chat(draft_prompt, temperature=settings.draft_temperature)  # type: ignore[arg-type]
-                span.set_attribute("finrag.draft.chars", len(draft))
+        else:
+            reranked = hybrid[: settings.top_k_rerank]
 
-            final = draft
-            if settings.enable_refine:
-                refine_prompt = build_refine_prompt(
-                    question,
-                    draft,
-                    reranked,
-                    final_max_tokens=settings.final_max_tokens,
-                    answer_style=settings.answer_style,
-                )
-                with tracer.start_as_current_span("finrag.llm.final") as span:
-                    if system:
-                        span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-                    if model:
-                        span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-                    span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.final_max_tokens))
-                    span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, 0.0)
-                    span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
-                    span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, False)
-                    span.set_attribute("finrag.prompt.messages", len(refine_prompt))
-                    final = self.llm.chat(refine_prompt, temperature=0.0)  # type: ignore[arg-type]
-                    span.set_attribute("finrag.final.chars", len(final))
+        draft_prompt = build_draft_prompt(
+            question, reranked, draft_max_tokens=settings.draft_max_tokens, answer_style=settings.answer_style
+        )
+        draft = self.llm.chat(draft_prompt, temperature=settings.draft_temperature)  # type: ignore[arg-type]
 
-            top_chunks = self._serialize_top_chunks(reranked)
-            retrieved_chunks = self._serialize_top_chunks(hybrid) if include_retrieved_chunks else None
-            return QueryResponse(
-                draft_answer=draft, final_answer=final, top_chunks=top_chunks, retrieved_chunks=retrieved_chunks
+        final = draft
+        if settings.enable_refine:
+            refine_prompt = build_refine_prompt(
+                question,
+                draft,
+                reranked,
+                final_max_tokens=settings.final_max_tokens,
+                answer_style=settings.answer_style,
             )
-        except Exception as exc:  # noqa: BLE001
-            span = trace.get_current_span()
-            if span.is_recording():
-                span.record_exception(exc)
-                span.set_status(Status(StatusCode.ERROR, str(exc)))
-            raise
+            final = self.llm.chat(refine_prompt, temperature=0.0)  # type: ignore[arg-type]
+
+        top_chunks = self._serialize_top_chunks(reranked)
+        retrieved_chunks = self._serialize_top_chunks(hybrid) if include_retrieved_chunks else None
+        return QueryResponse(
+            draft_answer=draft, final_answer=final, top_chunks=top_chunks, retrieved_chunks=retrieved_chunks
+        )
 
 
 # -------------------------------------------------------------------
@@ -542,7 +405,7 @@ log_path = _setup_logging(project_root)
 logger.debug("Project root: %s", project_root)
 logger.info("Starting RAG service; logs at: %s", log_path)
 
-app = FastAPI(title="RAG Demo (Mistral + Docling + Qdrant)")
+app = FastAPI(title="Andromeda RAG (PostgreSQL)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -551,8 +414,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-setup_opentelemetry(app)
 
 # Eval review UI (labels + retrieval inspection).
 try:
@@ -581,7 +442,7 @@ def get_rag_service() -> "RAGService":
         return _RAG_SERVICE
     with _RAG_SERVICE_LOCK:
         if _RAG_SERVICE is None:
-            _RAG_SERVICE = RAGService(storage_path=os.getenv("QDRANT_STORAGE_PATH"))
+            _RAG_SERVICE = RAGService()
         return _RAG_SERVICE
 
 
@@ -655,39 +516,20 @@ async def query_docs(req: QueryRequest):
     # TODO: explore adding support for multi-turn Q&A
     settings = _resolve_generation(req)
     req_resolved = _request_with_resolved_settings(req, settings)
-
-    span = trace.get_current_span()
-    if span.is_recording():
-        span.set_attribute("finrag.request.question.len", len((req.question or "").strip()))
-        span.set_attribute("finrag.request.question.fp", _question_fingerprint(req.question))
-        _maybe_set_otel_question(span, req.question)
-        span.set_attribute("finrag.query.mode", settings.mode)
-        span.set_attribute("finrag.query.enable_rerank", bool(settings.enable_rerank))
-        span.set_attribute("finrag.query.enable_refine", bool(settings.enable_refine))
-        span.set_attribute("finrag.query.answer_style", settings.answer_style)
-        span.set_attribute("finrag.query.top_k_retrieve", int(settings.top_k_retrieve))
-        span.set_attribute("finrag.query.top_k_rerank", int(settings.top_k_rerank))
-        span.set_attribute("finrag.query.draft_max_tokens", int(settings.draft_max_tokens))
-        span.set_attribute("finrag.query.final_max_tokens", int(settings.final_max_tokens))
-        if system := _genai_system():
-            span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-        if model := _llm_chat_model():
-            span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-
-    try:
-        result = get_rag_service().answer_question(question=req.question, settings=settings)
-        _append_history(req=req_resolved, res=result)
-        return result
-    except Exception as exc:  # noqa: BLE001
-        if span.is_recording():
-            span.record_exception(exc)
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-        raise
+    result = get_rag_service().answer_question(
+        question=req.question,
+        settings=settings,
+        tickers=req.tickers,
+        filing_date_from=req.filing_date_from,
+        filing_date_to=req.filing_date_to,
+    )
+    _append_history(req=req_resolved, res=result)
+    return result
 
 
 def _stream_chunk_dict(sc, *, preview_chars: int, text_chars: int) -> dict:
-    meta = sc.chunk.metadata if isinstance(sc.chunk.metadata, dict) else {}
-    base_text = meta.get("index_text") or sc.chunk.text or ""
+    parsed = chunk_metadata_from_value(sc.chunk.metadata)
+    base_text = parsed.retrieval_text or sc.chunk.text or ""
     text = str(base_text).strip()
     preview = text[:preview_chars] if preview_chars > 0 else ""
     chunk_text = text[:text_chars] if text_chars > 0 else ""
@@ -700,31 +542,6 @@ def _stream_chunk_dict(sc, *, preview_chars: int, text_chars: int) -> dict:
         "preview": preview,
         "source": sc.chunk.source,
         "text": chunk_text,
-        "metadata": RAGService._chunk_metadata_for_ui(sc.chunk.metadata),
-    }
-
-
-def _trace_chunk_dict(
-    sc, *, index_text_key: str, context_key: str, preview_chars: int, text_chars: int, context_chars: int
-) -> dict:
-    meta = sc.chunk.metadata if isinstance(sc.chunk.metadata, dict) else {}
-    base_text = meta.get(index_text_key) or sc.chunk.text or ""
-    text = str(base_text).strip()
-    preview = text[:preview_chars] if preview_chars > 0 else ""
-    chunk_text = text[:text_chars] if text_chars > 0 else ""
-    ctx_val = meta.get(context_key)
-    ctx = str(ctx_val).strip() if ctx_val is not None else ""
-    ctx_out = ctx[:context_chars] if context_chars > 0 else ""
-    return {
-        "chunk_id": sc.chunk.id,
-        "doc_id": sc.chunk.doc_id,
-        "page_no": sc.chunk.page_no,
-        "headings": sc.chunk.headings,
-        "score": sc.score,
-        "source": sc.chunk.source,
-        "preview": preview,
-        "text": chunk_text,
-        "context": (ctx_out or None),
         "metadata": RAGService._chunk_metadata_for_ui(sc.chunk.metadata),
     }
 
@@ -741,14 +558,14 @@ def cancel(req: CancelRequest):
 async def query_docs_stream(req: QueryStreamRequest, request: Request):
     rag_service = get_rag_service()
     request_id = (req.request_id or "").strip() or str(uuid.uuid4())
-    base_req = QueryRequest(**req.dict(exclude={"request_id"}))
+    base_req = QueryRequest(**req.model_dump(exclude={"request_id"}))
     settings = _resolve_generation(base_req)
     req_resolved = _request_with_resolved_settings(base_req, settings)
     cancel_evt = _register_cancel_event(request_id)
     started_ms = int(time.time() * 1000)
-    started_at = datetime.fromtimestamp(started_ms / 1000, tz=timezone.utc)
-    parent_ctx = otel_context.get_current()
-    tracer = trace.get_tracer(__name__)
+    filters: RetrievalFilters = rag_service.retriever.build_filters(
+        tickers=req.tickers, filing_date_from=req.filing_date_from, filing_date_to=req.filing_date_to
+    )
 
     preview_chars = max(0, stream_chunks_preview_chars())
     max_chunks = max(0, stream_chunks_max())
@@ -761,25 +578,11 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
     async def gen():
         full_draft = ""
         full_final = ""
-        cancelled = False
-        error: str | None = None
-
-        trace_on = traces_enabled()
-        trace_retrieved: list[dict] = []
-        trace_reranked: list[dict] = []
         timing_ms: dict[str, float] = {}
         retrieve_step_ms: float | None = None
         rerank_step_ms: float | None = None
         draft_step_ms: float | None = None
         final_step_ms: float | None = None
-        trace_max_chunks, trace_preview_chars, trace_text_chars, trace_context_chars = trace_chunk_limits()
-        index_text_key = getattr(getattr(rag_service, "retriever", None), "_index_text_key", "index_text")
-        context_key = getattr(rag_service, "_context_key", "context")
-
-        token = otel_context.attach(parent_ctx)
-        span = tracer.start_span("finrag.query_stream")
-        span_ctx = trace.set_span_in_context(span)
-        span_token = otel_context.attach(span_ctx)
 
         def is_cancelled() -> bool:
             return cancel_evt.is_set()
@@ -788,50 +591,23 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
             cancel_evt.set()
 
         try:
-            if span.is_recording():
-                span.set_attribute("finrag.request_id", request_id)
-                span.set_attribute("finrag.request.question.len", len((req.question or "").strip()))
-                span.set_attribute("finrag.request.question.fp", _question_fingerprint(req.question))
-                _maybe_set_otel_question(span, req.question)
-                span.set_attribute("finrag.query.mode", settings.mode)
-                span.set_attribute("finrag.query.enable_rerank", bool(settings.enable_rerank))
-                span.set_attribute("finrag.query.enable_refine", bool(settings.enable_refine))
-                span.set_attribute("finrag.query.answer_style", settings.answer_style)
-                span.set_attribute("finrag.query.top_k_retrieve", int(settings.top_k_retrieve))
-                span.set_attribute("finrag.query.top_k_rerank", int(settings.top_k_rerank))
-                span.set_attribute("finrag.query.draft_max_tokens", int(settings.draft_max_tokens))
-                span.set_attribute("finrag.query.final_max_tokens", int(settings.final_max_tokens))
-                span.set_attribute("finrag.stream.preview_chars", int(preview_chars))
-                span.set_attribute("finrag.stream.text_chars", int(text_chars))
-                span.set_attribute("finrag.stream.max_chunks", int(max_chunks))
-                if system := _genai_system():
-                    span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-                if model := _llm_chat_model():
-                    span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-
             yield ndjson_bytes({"type": "start", "request_id": request_id})
 
             yield ndjson_bytes({"type": "status", "step": "retrieve", "message": "Retrieving chunks…"})
-            with tracer.start_as_current_span("finrag.retrieve") as step_span:
-                backend = "milvus" if isinstance(rag_service.retriever, MilvusContextualRetriever) else "qdrant"
-                step_span.set_attribute(AISpanAttributes.VECTOR_DB_VENDOR, backend)
-                step_span.set_attribute(AISpanAttributes.VECTOR_DB_OPERATION, "retrieve_hybrid")
-                step_span.set_attribute(AISpanAttributes.VECTOR_DB_QUERY_TOP_K, int(settings.top_k_retrieve))
-                t0 = time.perf_counter()
-                hybrid = await asyncio.to_thread(
-                    rag_service.retriever.retrieve_hybrid,
-                    req.question,
-                    top_k_semantic=settings.top_k_retrieve,
-                    top_k_bm25=settings.top_k_retrieve,
-                    top_k_final=settings.top_k_retrieve,
-                )
-                retrieve_step_ms = (time.perf_counter() - t0) * 1000.0
-                step_span.set_attribute("finrag.retrieve.count", len(hybrid))
+            t0 = time.perf_counter()
+            hybrid = await asyncio.to_thread(
+                rag_service.retriever.retrieve_hybrid,
+                req.question,
+                top_k_semantic=settings.top_k_retrieve,
+                top_k_bm25=settings.top_k_retrieve,
+                top_k_final=settings.top_k_retrieve,
+                filters=filters,
+            )
+            retrieve_step_ms = (time.perf_counter() - t0) * 1000.0
 
             if await request.is_disconnected():
                 set_cancelled()
             if is_cancelled():
-                cancelled = True
                 yield ndjson_bytes(
                     {"type": "cancelled", "request_id": request_id, "elapsed_ms": int(time.time() * 1000) - started_ms}
                 )
@@ -842,18 +618,6 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
             ]
             if max_chunks:
                 retrieved_payload = retrieved_payload[:max_chunks]
-            if trace_on:
-                trace_retrieved = [
-                    _trace_chunk_dict(
-                        sc,
-                        index_text_key=index_text_key,
-                        context_key=context_key,
-                        preview_chars=trace_preview_chars,
-                        text_chars=trace_text_chars,
-                        context_chars=trace_context_chars,
-                    )
-                    for sc in hybrid[:trace_max_chunks]
-                ]
             if retrieve_step_ms is not None:
                 timing_ms["retrieve_ms"] = retrieve_step_ms
             yield ndjson_bytes(
@@ -873,27 +637,22 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                     "message": ("Reranking chunks…" if settings.enable_rerank else "Skipping rerank (mode preset)…"),
                 }
             )
-            with tracer.start_as_current_span("finrag.rerank") as step_span:
-                step_span.set_attribute("finrag.rerank.enabled", bool(settings.enable_rerank))
-                step_span.set_attribute("finrag.rerank.top_k", int(settings.top_k_rerank))
-                t0 = time.perf_counter()
-                if settings.enable_rerank:
-                    reranked = await asyncio.to_thread(
-                        rag_service.reranker.rerank,
-                        req.question,
-                        hybrid,
-                        top_k=settings.top_k_rerank,
-                        candidate_text_provider=rag_service.retriever.text_for_rerank,
-                    )
-                else:
-                    reranked = hybrid[: settings.top_k_rerank]
-                rerank_step_ms = (time.perf_counter() - t0) * 1000.0
-                step_span.set_attribute("finrag.rerank.count", len(reranked))
+            t0 = time.perf_counter()
+            if settings.enable_rerank:
+                reranked = await asyncio.to_thread(
+                    rag_service.reranker.rerank,
+                    req.question,
+                    hybrid,
+                    top_k=settings.top_k_rerank,
+                    candidate_text_provider=rag_service.retriever.text_for_rerank,
+                )
+            else:
+                reranked = hybrid[: settings.top_k_rerank]
+            rerank_step_ms = (time.perf_counter() - t0) * 1000.0
 
             if await request.is_disconnected():
                 set_cancelled()
             if is_cancelled():
-                cancelled = True
                 yield ndjson_bytes(
                     {"type": "cancelled", "request_id": request_id, "elapsed_ms": int(time.time() * 1000) - started_ms}
                 )
@@ -902,18 +661,6 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
             reranked_payload = [
                 _stream_chunk_dict(sc, preview_chars=preview_chars, text_chars=text_chars) for sc in reranked
             ]
-            if trace_on:
-                trace_reranked = [
-                    _trace_chunk_dict(
-                        sc,
-                        index_text_key=index_text_key,
-                        context_key=context_key,
-                        preview_chars=trace_preview_chars,
-                        text_chars=trace_text_chars,
-                        context_chars=trace_context_chars,
-                    )
-                    for sc in reranked[:trace_max_chunks]
-                ]
             if rerank_step_ms is not None:
                 timing_ms["rerank_ms"] = rerank_step_ms
             yield ndjson_bytes(
@@ -937,49 +684,30 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                     draft_max_tokens=settings.draft_max_tokens,
                     answer_style=settings.answer_style,
                 )
-                with tracer.start_as_current_span("finrag.llm.draft_stream") as step_span:
-                    if system := _genai_system():
-                        step_span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-                    if model := _llm_chat_model():
-                        step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.draft_max_tokens))
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, float(settings.draft_temperature))
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
-                    step_span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, bool(stream_draft_enabled()))
-                    step_span.set_attribute("finrag.prompt.messages", len(draft_prompt))
-                    first_delta_ms: int | None = None
-                    t0 = time.monotonic()
-
-                    if stream_draft_enabled():
-                        batcher = TextDeltaBatcher.from_env()
-                        async for delta in iter_chat_deltas(
-                            rag_service.llm,
-                            draft_prompt,  # type: ignore[arg-type]
-                            temperature=settings.draft_temperature,
-                            is_cancelled=is_cancelled,
-                            set_cancelled=set_cancelled,
-                            is_disconnected=request.is_disconnected,
-                        ):
-                            if first_delta_ms is None and delta:
-                                first_delta_ms = int((time.monotonic() - t0) * 1000)
-                                step_span.add_event("finrag.first_delta", {"finrag.ms": first_delta_ms})
-                            full_draft += delta
-                            batcher.add(delta)
-                            out = batcher.pop_ready()
-                            if out:
-                                yield ndjson_bytes({"type": "draft_delta", "delta": out})
-                            if is_cancelled():
-                                break
-                        out = batcher.pop_all()
+                t0 = time.monotonic()
+                if stream_draft_enabled():
+                    batcher = TextDeltaBatcher.from_env()
+                    async for delta in iter_chat_deltas(
+                        rag_service.llm,
+                        draft_prompt,  # type: ignore[arg-type]
+                        temperature=settings.draft_temperature,
+                        is_cancelled=is_cancelled,
+                        set_cancelled=set_cancelled,
+                        is_disconnected=request.is_disconnected,
+                    ):
+                        full_draft += delta
+                        batcher.add(delta)
+                        out = batcher.pop_ready()
                         if out:
                             yield ndjson_bytes({"type": "draft_delta", "delta": out})
-                    else:
-                        full_draft = await asyncio.to_thread(
-                            rag_service.llm.chat, draft_prompt, settings.draft_temperature
-                        )
-                    draft_step_ms = (time.monotonic() - t0) * 1000.0
-
-                    step_span.set_attribute("finrag.draft.chars", len(full_draft))
+                        if is_cancelled():
+                            break
+                    out = batcher.pop_all()
+                    if out:
+                        yield ndjson_bytes({"type": "draft_delta", "delta": out})
+                else:
+                    full_draft = await asyncio.to_thread(rag_service.llm.chat, draft_prompt, settings.draft_temperature)
+                draft_step_ms = (time.monotonic() - t0) * 1000.0
 
                 if draft_step_ms is not None:
                     timing_ms["draft_ms"] = draft_step_ms
@@ -995,7 +723,6 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 if await request.is_disconnected():
                     set_cancelled()
                 if is_cancelled():
-                    cancelled = True
                     yield ndjson_bytes(
                         {
                             "type": "cancelled",
@@ -1015,43 +742,27 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                     final_max_tokens=settings.final_max_tokens,
                     answer_style=settings.answer_style,
                 )
-                with tracer.start_as_current_span("finrag.llm.final_stream") as step_span:
-                    if system := _genai_system():
-                        step_span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-                    if model := _llm_chat_model():
-                        step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.final_max_tokens))
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, 0.0)
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
-                    step_span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, True)
-                    step_span.set_attribute("finrag.prompt.messages", len(refine_prompt))
-                    first_delta_ms: int | None = None
-                    t0 = time.monotonic()
-
-                    batcher = TextDeltaBatcher.from_env()
-                    async for delta in iter_chat_deltas(
-                        rag_service.llm,
-                        refine_prompt,  # type: ignore[arg-type]
-                        temperature=0.0,
-                        is_cancelled=is_cancelled,
-                        set_cancelled=set_cancelled,
-                        is_disconnected=request.is_disconnected,
-                    ):
-                        if first_delta_ms is None and delta:
-                            first_delta_ms = int((time.monotonic() - t0) * 1000)
-                            step_span.add_event("finrag.first_delta", {"finrag.ms": first_delta_ms})
-                        full_final += delta
-                        batcher.add(delta)
-                        out = batcher.pop_ready()
-                        if out:
-                            yield ndjson_bytes({"type": "final_delta", "delta": out})
-                        if is_cancelled():
-                            break
-                    out = batcher.pop_all()
+                t0 = time.monotonic()
+                batcher = TextDeltaBatcher.from_env()
+                async for delta in iter_chat_deltas(
+                    rag_service.llm,
+                    refine_prompt,  # type: ignore[arg-type]
+                    temperature=0.0,
+                    is_cancelled=is_cancelled,
+                    set_cancelled=set_cancelled,
+                    is_disconnected=request.is_disconnected,
+                ):
+                    full_final += delta
+                    batcher.add(delta)
+                    out = batcher.pop_ready()
                     if out:
                         yield ndjson_bytes({"type": "final_delta", "delta": out})
-                    final_step_ms = (time.monotonic() - t0) * 1000.0
-                    step_span.set_attribute("finrag.final.chars", len(full_final))
+                    if is_cancelled():
+                        break
+                out = batcher.pop_all()
+                if out:
+                    yield ndjson_bytes({"type": "final_delta", "delta": out})
+                final_step_ms = (time.monotonic() - t0) * 1000.0
             else:
                 yield ndjson_bytes({"type": "status", "step": "final", "message": "Generating answer…"})
                 answer_prompt = build_draft_prompt(
@@ -1060,45 +771,32 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                     draft_max_tokens=settings.draft_max_tokens,
                     answer_style=settings.answer_style,
                 )
-                with tracer.start_as_current_span("finrag.llm.answer_stream") as step_span:
-                    if system := _genai_system():
-                        step_span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-                    if model := _llm_chat_model():
-                        step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.draft_max_tokens))
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, float(settings.draft_temperature))
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
-                    step_span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, True)
-                    step_span.set_attribute("finrag.prompt.messages", len(answer_prompt))
-
-                    batcher = TextDeltaBatcher.from_env()
-                    t0 = time.monotonic()
-                    async for delta in iter_chat_deltas(
-                        rag_service.llm,
-                        answer_prompt,  # type: ignore[arg-type]
-                        temperature=settings.draft_temperature,
-                        is_cancelled=is_cancelled,
-                        set_cancelled=set_cancelled,
-                        is_disconnected=request.is_disconnected,
-                    ):
-                        full_final += delta
-                        batcher.add(delta)
-                        out = batcher.pop_ready()
-                        if out:
-                            yield ndjson_bytes({"type": "final_delta", "delta": out})
-                        if is_cancelled():
-                            break
-                    out = batcher.pop_all()
+                batcher = TextDeltaBatcher.from_env()
+                t0 = time.monotonic()
+                async for delta in iter_chat_deltas(
+                    rag_service.llm,
+                    answer_prompt,  # type: ignore[arg-type]
+                    temperature=settings.draft_temperature,
+                    is_cancelled=is_cancelled,
+                    set_cancelled=set_cancelled,
+                    is_disconnected=request.is_disconnected,
+                ):
+                    full_final += delta
+                    batcher.add(delta)
+                    out = batcher.pop_ready()
                     if out:
                         yield ndjson_bytes({"type": "final_delta", "delta": out})
-                    final_step_ms = (time.monotonic() - t0) * 1000.0
-                    step_span.set_attribute("finrag.final.chars", len(full_final))
+                    if is_cancelled():
+                        break
+                out = batcher.pop_all()
+                if out:
+                    yield ndjson_bytes({"type": "final_delta", "delta": out})
+                final_step_ms = (time.monotonic() - t0) * 1000.0
                 full_draft = full_final
 
             if await request.is_disconnected():
                 set_cancelled()
             if is_cancelled():
-                cancelled = True
                 yield ndjson_bytes(
                     {
                         "type": "cancelled",
@@ -1115,12 +813,12 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 final_answer=(full_final if full_final else full_draft),
                 top_chunks=rag_service._serialize_top_chunks(reranked),
             )
-            _append_history(req=req_resolved, res=res)
 
             if final_step_ms is not None:
                 timing_ms["final_ms"] = final_step_ms
             total_ms = (time.time() * 1000) - started_ms
             timing_ms["total_ms"] = float(total_ms)
+            _append_history(req=req_resolved, res=res, timing_ms=timing_ms)
 
             yield ndjson_bytes(
                 {
@@ -1134,10 +832,6 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Streaming query failed: %r", exc)
-            error = str(exc)
-            if span.is_recording():
-                span.record_exception(exc)
-                span.set_status(Status(StatusCode.ERROR, str(exc)))
             yield ndjson_bytes(
                 {
                     "type": "error",
@@ -1147,64 +841,6 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 }
             )
         finally:
-            if trace_on:
-                try:
-                    if retrieve_step_ms is not None and "retrieve_ms" not in timing_ms:
-                        timing_ms["retrieve_ms"] = retrieve_step_ms
-                    if rerank_step_ms is not None and "rerank_ms" not in timing_ms:
-                        timing_ms["rerank_ms"] = rerank_step_ms
-                    if draft_step_ms is not None and "draft_ms" not in timing_ms:
-                        timing_ms["draft_ms"] = draft_step_ms
-                    if final_step_ms is not None and "final_ms" not in timing_ms:
-                        timing_ms["final_ms"] = final_step_ms
-                    timing_ms.setdefault("total_ms", float((time.time() * 1000) - started_ms))
-
-                    generation = {
-                        "query_id": request_id,
-                        "kind": "trace",
-                        "question": (req.question or "").strip(),
-                        "created_at": started_at.isoformat(),
-                        "settings": {
-                            "mode": settings.mode,
-                            "top_k_retrieve": settings.top_k_retrieve,
-                            "top_k_rerank": settings.top_k_rerank,
-                            "draft_max_tokens": settings.draft_max_tokens,
-                            "final_max_tokens": settings.final_max_tokens,
-                            "enable_rerank": settings.enable_rerank,
-                            "enable_refine": settings.enable_refine,
-                            "answer_style": settings.answer_style,
-                            "draft_temperature": settings.draft_temperature,
-                        },
-                        "draft_answer": full_draft or None,
-                        "final_answer": (full_final if full_final else full_draft) or None,
-                        "top_chunks": trace_reranked,
-                        "retrieved_chunks": trace_retrieved,
-                        "timing_ms": timing_ms,
-                        "error": error,
-                        "cancelled": bool(cancelled),
-                    }
-                    tags = [f"mode={settings.mode}"]
-                    if cancelled:
-                        tags.append("cancelled")
-                    if error:
-                        tags.append("error")
-                    review_row = {
-                        "query_id": request_id,
-                        "kind": "trace",
-                        "question": (req.question or "").strip(),
-                        "tags": " ".join(tags),
-                        "target_tickers": "",
-                        "human_label": "",
-                        "human_notes": "",
-                    }
-                    write_trace(generation=generation, review_row=review_row, now=started_at)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Failed to write trace for %s: %r", request_id, exc)
-            if span.is_recording():
-                span.set_attribute("finrag.cancelled", bool(cancelled))
-            span.end()
-            otel_context.detach(span_token)
-            otel_context.detach(token)
             _cleanup_cancel_event(request_id)
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
@@ -1287,7 +923,15 @@ def get_source_text(path: str = Query(..., description="Local markdown/text file
     return {"path": str(p), "text": _read_text_file(p, max_bytes=max_bytes)}
 
 
-_INGESTED_COMPANIES_CACHE: dict[str, object] = {"path": None, "mtime_ns": None, "items": None}
+@dataclass
+class IngestedCompaniesCache:
+    path: str | None = None
+    mtime_ns: int | None = None
+    use_yahoo: bool | None = None
+    items: list[dict[str, str]] | None = None
+
+
+_INGESTED_COMPANIES_CACHE = IngestedCompaniesCache()
 _YAHOO_COMPANY_RESOLVER: object | None = None
 
 
@@ -1392,6 +1036,22 @@ def _company_name_from_markdown(path: Path) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class DocIndexSourceRow:
+    relpath: str
+    source: str
+
+    @classmethod
+    def from_json_obj(cls, value: object) -> "DocIndexSourceRow | None":
+        if not isinstance(value, dict):
+            return None
+        relpath_value = value["relpath"] if "relpath" in value else ""
+        source_value = value["source"] if "source" in value else ""
+        relpath = relpath_value if isinstance(relpath_value, str) else str(relpath_value)
+        source = source_value if isinstance(source_value, str) else str(source_value)
+        return cls(relpath=relpath, source=source)
+
+
 def _read_ingested_companies(doc_index_path: Path) -> list[dict[str, str]]:
     def _looks_like_junk_company_name(name: str) -> bool:
         s = " ".join((name or "").split()).strip()
@@ -1440,23 +1100,22 @@ def _read_ingested_companies(doc_index_path: Path) -> list[dict[str, str]]:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if not isinstance(obj, dict):
+            row = DocIndexSourceRow.from_json_obj(obj)
+            if row is None:
                 continue
-            relpath = str(obj.get("relpath") or "")
-            source = str(obj.get("source") or "")
-            ticker = _ticker_from_relpath(relpath or source)
+            ticker = _ticker_from_relpath(row.relpath or row.source)
             if not ticker or ticker in by_ticker:
                 continue
-            if not source:
+            if not row.source:
                 continue
-            by_ticker[ticker] = Path(source)
+            by_ticker[ticker] = Path(row.source)
 
     items: list[dict[str, str]] = []
     for ticker, md_path in by_ticker.items():
         company = _resolve_company_name(ticker, md_path)
         items.append({"ticker": ticker, "company": company})
 
-    items.sort(key=lambda x: (x.get("ticker") or ""))
+    items.sort(key=lambda item: item["ticker"])
     return items
 
 
@@ -1473,10 +1132,10 @@ def ingested_companies():
         return {"items": [], "count": 0, "path": None, "warning": "FINRAG_DOC_INDEX_PATH not set"}
 
     mtime_ns = path.stat().st_mtime_ns
-    cached_path = _INGESTED_COMPANIES_CACHE.get("path")
-    cached_mtime = _INGESTED_COMPANIES_CACHE.get("mtime_ns")
-    cached_use_yahoo = _INGESTED_COMPANIES_CACHE.get("use_yahoo")
-    cached_items = _INGESTED_COMPANIES_CACHE.get("items")
+    cached_path = _INGESTED_COMPANIES_CACHE.path
+    cached_mtime = _INGESTED_COMPANIES_CACHE.mtime_ns
+    cached_use_yahoo = _INGESTED_COMPANIES_CACHE.use_yahoo
+    cached_items = _INGESTED_COMPANIES_CACHE.items
     use_yahoo = _env_bool("FINRAG_INGESTED_COMPANIES_USE_YAHOO", default=True)
     if (
         cached_path == str(path)
@@ -1487,10 +1146,10 @@ def ingested_companies():
         return {"items": cached_items, "count": len(cached_items), "path": str(path)}
 
     items = _read_ingested_companies(path)
-    _INGESTED_COMPANIES_CACHE["path"] = str(path)
-    _INGESTED_COMPANIES_CACHE["mtime_ns"] = mtime_ns
-    _INGESTED_COMPANIES_CACHE["use_yahoo"] = use_yahoo
-    _INGESTED_COMPANIES_CACHE["items"] = items
+    _INGESTED_COMPANIES_CACHE.path = str(path)
+    _INGESTED_COMPANIES_CACHE.mtime_ns = mtime_ns
+    _INGESTED_COMPANIES_CACHE.use_yahoo = use_yahoo
+    _INGESTED_COMPANIES_CACHE.items = items
     return {"items": items, "count": len(items), "path": str(path)}
 
 
@@ -1499,6 +1158,25 @@ class HistoryEntry(BaseModel):
     created_at: str
     request: QueryRequest
     response: QueryResponse
+    timing_ms: dict[str, float] = Field(default_factory=dict)
+
+
+def _sanitize_timing_ms(timing_ms: dict[str, float] | None) -> dict[str, float]:
+    if not timing_ms:
+        return {}
+    out: dict[str, float] = {}
+    for key, value in timing_ms.items():
+        k = str(key or "").strip()
+        if not k:
+            continue
+        try:
+            n = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(n) or n < 0:
+            continue
+        out[k] = n
+    return out
 
 
 def _history_path() -> Path:
@@ -1508,11 +1186,15 @@ def _history_path() -> Path:
     return (_project_root() / "data" / "qa_history.jsonl").resolve()
 
 
-def _append_history(*, req: QueryRequest, res: QueryResponse) -> None:
+def _append_history(*, req: QueryRequest, res: QueryResponse, timing_ms: dict[str, float] | None = None) -> None:
     if _env_bool("DISABLE_HISTORY", default=False):
         return
     entry = HistoryEntry(
-        id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc).isoformat(), request=req, response=res
+        id=str(uuid.uuid4()),
+        created_at=datetime.now(timezone.utc).isoformat(),
+        request=req,
+        response=res,
+        timing_ms=_sanitize_timing_ms(timing_ms),
     )
     path = _history_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1543,26 +1225,22 @@ def _read_history(*, limit: int = 50, summary: bool = False) -> list[dict]:
             continue
         if not isinstance(payload, dict):
             continue
+        try:
+            entry = HistoryEntry.model_validate(payload)
+        except Exception:  # noqa: BLE001
+            continue
         if not summary:
-            out.append(payload)
+            out.append(entry.model_dump())
             continue
 
         # Keep the list lightweight for the UI: omit large answer text and chunks.
-        req_raw = payload.get("request")
-        req: dict[str, object] = req_raw if isinstance(req_raw, dict) else {}
-
-        res_raw = payload.get("response")
-        res: dict[str, object] = res_raw if isinstance(res_raw, dict) else {}
-
-        top_chunks_raw = res.get("top_chunks")
-        top_chunks: list[object] = top_chunks_raw if isinstance(top_chunks_raw, list) else []
-
         out.append(
             {
-                "id": payload.get("id"),
-                "created_at": payload.get("created_at"),
-                "request": {"question": req.get("question"), "mode": req.get("mode")},
-                "response": {"top_chunks_count": len(top_chunks)},
+                "id": entry.id,
+                "created_at": entry.created_at,
+                "request": {"question": entry.request.question, "mode": entry.request.mode},
+                "response": {"top_chunks_count": len(entry.response.top_chunks)},
+                "timing_ms": entry.timing_ms,
             }
         )
     return out
@@ -1594,8 +1272,14 @@ def history_entry(id: str = Query(..., description="History entry id")):
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(payload, dict) and str(payload.get("id") or "") == want:
-            return payload
+        if not isinstance(payload, dict):
+            continue
+        try:
+            entry = HistoryEntry.model_validate(payload)
+        except Exception:  # noqa: BLE001
+            continue
+        if entry.id == want:
+            return entry.model_dump()
 
     raise HTTPException(status_code=404, detail="History entry not found")
 

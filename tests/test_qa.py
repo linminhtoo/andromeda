@@ -7,7 +7,7 @@ from finrag.qa import answer_question_two_stage, build_context, build_draft_prom
 from tests.fakes import RecordingLLM
 
 
-def test_build_context_uses_index_text_and_context_metadata_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_context_uses_retrieval_text_and_context_metadata_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTEXT_METADATA_KEY", "ctx")
     chunks = [
         ScoredChunk(
@@ -18,7 +18,7 @@ def test_build_context_uses_index_text_and_context_metadata_key(monkeypatch: pyt
                 page_no=None,
                 headings=[],
                 source="s",
-                metadata={"index_text": "IDX1", "ctx": "C1"},
+                metadata={"retrieval_text": "IDX1", "ctx": "C1"},
             ),
             score=1.0,
             source="hybrid",
@@ -31,7 +31,7 @@ def test_build_context_uses_index_text_and_context_metadata_key(monkeypatch: pyt
                 page_no=None,
                 headings=[],
                 source="s",
-                metadata={"index_text": "IDX2"},
+                metadata={"retrieval_text": "IDX2"},
             ),
             score=0.5,
             source="hybrid",

@@ -8,6 +8,7 @@ from typing import Protocol
 from loguru import logger
 
 from finrag.dataclasses import DocChunk
+from finrag.metadata_models import DocumentMetadata, chunk_metadata_from_value
 
 
 class ChunkPostprocessor(Protocol):
@@ -311,12 +312,11 @@ class DocumentContextPostprocessor:
 
             doc_ctx.update(self._extract_from_filename(source))
 
-            existing_doc = (group[0].metadata or {}).get("doc")
-            existing_doc = existing_doc if isinstance(existing_doc, dict) else {}
-            ticker = existing_doc.get("ticker") or doc_ctx.get("ticker")
-            cik = existing_doc.get("cik") or doc_ctx.get("cik")
+            existing_doc = chunk_metadata_from_value(group[0].metadata).doc
+            ticker = existing_doc.ticker if existing_doc and existing_doc.ticker else doc_ctx.get("ticker")
+            cik = existing_doc.cik if existing_doc and existing_doc.cik else doc_ctx.get("cik")
 
-            if not existing_doc.get("company") and self.company_name_resolver is not None:
+            if not (existing_doc and existing_doc.company) and self.company_name_resolver is not None:
                 company = self.company_name_resolver.resolve(
                     ticker=str(ticker) if isinstance(ticker, str) else None,
                     cik=str(cik) if isinstance(cik, str) else None,
@@ -324,7 +324,7 @@ class DocumentContextPostprocessor:
                 if company:
                     logger.info(f"Resolved company name for ticker={ticker}: {company}")
                     doc_ctx["company"] = company
-            elif not existing_doc.get("company") and self.fallback_company_from_headings:
+            elif not (existing_doc and existing_doc.company) and self.fallback_company_from_headings:
                 company = self._pick_company_from_headings(group)
                 if company:
                     doc_ctx["company"] = company
@@ -350,9 +350,9 @@ class DocumentContextPostprocessor:
             # Attach to all chunks, merging with any existing keys.
             for ch in group:
                 meta = self._ensure_meta(ch)
-                existing = meta.get("doc")
-                if isinstance(existing, dict):
-                    merged = dict(existing)
+                existing = DocumentMetadata.from_value(meta["doc"]) if "doc" in meta else None
+                if existing is not None:
+                    merged = existing.to_dict()
                     for k, v in doc_ctx.items():
                         merged.setdefault(k, v)
                     meta["doc"] = merged
@@ -364,10 +364,10 @@ class DocumentContextPostprocessor:
 
 class HeuristicSummaryPostprocessor:
     """
-    Adds a short summary + an optional index/embedding text prefix.
+    Adds a short summary + a retrieval-oriented enriched text field.
 
     The summary is stored in `chunk.metadata['summary']`.
-    The enriched text for embedding/BM25 is stored in `chunk.metadata['index_text']`.
+    The enriched text for embedding/FTS is stored in `chunk.metadata['retrieval_text']`.
     """
 
     _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
@@ -376,22 +376,51 @@ class HeuristicSummaryPostprocessor:
         self,
         *,
         max_summary_chars: int = 300,
-        include_headings_in_index_text: bool = True,
-        include_page_in_index_text: bool = True,
-        include_summary_in_index_text: bool = True,
-        include_doc_context_in_index_text: bool = True,
+        include_headings_in_retrieval_text: bool = True,
+        include_page_in_retrieval_text: bool = True,
+        include_summary_in_retrieval_text: bool = True,
+        include_doc_context_in_retrieval_text: bool = True,
     ):
         self.max_summary_chars = int(max_summary_chars)
-        self.include_headings_in_index_text = include_headings_in_index_text
-        self.include_page_in_index_text = include_page_in_index_text
-        self.include_summary_in_index_text = include_summary_in_index_text
-        self.include_doc_context_in_index_text = include_doc_context_in_index_text
+        self.include_headings_in_retrieval_text = include_headings_in_retrieval_text
+        self.include_page_in_retrieval_text = include_page_in_retrieval_text
+        self.include_summary_in_retrieval_text = include_summary_in_retrieval_text
+        self.include_doc_context_in_retrieval_text = include_doc_context_in_retrieval_text
 
     @staticmethod
     def _ensure_meta(chunk: DocChunk) -> dict:
         if chunk.metadata is None:
             chunk.metadata = {}
         return chunk.metadata
+
+    @staticmethod
+    def _doc_prefix_lines(doc: DocumentMetadata) -> list[str]:
+        lines: list[str] = []
+        company = doc.company
+        ticker = doc.ticker
+        filing_type = doc.filing_type
+        filing_date = doc.filing_date
+        period_end_date = doc.period_end_date
+        filing_quarter = doc.filing_quarter
+
+        if company:
+            lines.append(f"Company: {company}")
+        if ticker:
+            lines.append(f"Ticker: {ticker}")
+
+        filing_bits = []
+        if filing_type:
+            filing_bits.append(str(filing_type))
+        if filing_date:
+            filing_bits.append(f"filed {filing_date}")
+        if period_end_date:
+            filing_bits.append(f"period ended {period_end_date}")
+        if filing_bits:
+            lines.append("Filing: " + ", ".join(filing_bits))
+
+        if filing_quarter:
+            lines.append(f"Filing quarter: {filing_quarter}")
+        return lines
 
     @classmethod
     def _looks_like_pipe_table(cls, text: str) -> bool:
@@ -445,9 +474,10 @@ class HeuristicSummaryPostprocessor:
     def process(self, chunks: list[DocChunk]) -> list[DocChunk]:
         for ch in chunks:
             meta = self._ensure_meta(ch)
+            parsed_meta = chunk_metadata_from_value(meta)
 
             # TODO: tables are not being captured. _looks_like_pipe_table() is not good enough.
-            is_table = bool(meta.get("block_type") == "table") or self._looks_like_pipe_table(ch.text)
+            is_table = bool(parsed_meta.block_type == "table") or self._looks_like_pipe_table(ch.text)
             if is_table:
                 summary = self._summarize_table(ch.text, ch.headings)
             else:
@@ -457,46 +487,22 @@ class HeuristicSummaryPostprocessor:
             if summary:
                 meta["summary"] = summary
 
-            # Build index_text used for embedding + BM25, without mutating `chunk.text`.
+            # Build retrieval_text used for embeddings + lexical retrieval, without mutating `chunk.text`.
             prefix_lines: list[str] = []
-            doc = meta.get("doc") if isinstance(meta.get("doc"), dict) else {}
-            if self.include_doc_context_in_index_text and doc:
-                company = doc.get("company")
-                ticker = doc.get("ticker")
-                filing_type = doc.get("filing_type")
-                filing_date = doc.get("filing_date")
-                period_end_date = doc.get("period_end_date")
-                filing_quarter = doc.get("filing_quarter")
-                # cik = doc.get("cik")
+            doc = parsed_meta.doc
+            if self.include_doc_context_in_retrieval_text and doc is not None:
+                prefix_lines.extend(self._doc_prefix_lines(doc))
 
-                if company:
-                    prefix_lines.append(f"Company: {company}")
-                if ticker:
-                    prefix_lines.append(f"Ticker: {ticker}")
-                # if cik:
-                #     prefix_lines.append(f"CIK: {cik}")
-                filing_bits = []
-                if filing_type:
-                    filing_bits.append(str(filing_type))
-                if filing_date:
-                    filing_bits.append(f"filed {filing_date}")
-                if period_end_date:
-                    filing_bits.append(f"period ended {period_end_date}")
-                if filing_bits:
-                    prefix_lines.append("Filing: " + ", ".join(filing_bits))
-                if filing_quarter:
-                    prefix_lines.append(f"Filing quarter: {filing_quarter}")
-
-            if self.include_headings_in_index_text and ch.headings:
+            if self.include_headings_in_retrieval_text and ch.headings:
                 prefix_lines.append("Section: " + " > ".join(ch.headings))
-            if self.include_page_in_index_text and ch.page_no is not None:
+            if self.include_page_in_retrieval_text and ch.page_no is not None:
                 prefix_lines.append(f"Page: {ch.page_no}")
-            if self.include_summary_in_index_text and summary:
+            if self.include_summary_in_retrieval_text and summary:
                 prefix_lines.append("Summary: " + summary)
 
             if prefix_lines:
-                meta["index_text"] = "\n".join(prefix_lines).strip() + "\n\n" + ch.text
+                meta["retrieval_text"] = "\n".join(prefix_lines).strip() + "\n\n" + ch.text
             else:
-                meta["index_text"] = ch.text
+                meta["retrieval_text"] = ch.text
 
         return chunks

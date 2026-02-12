@@ -3,31 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>FinRAG • Eval Review</title>
+    <title>Andromeda • Eval Review</title>
     <style>
       :root{
-        --bg: #0b1020;
-        --panel: rgba(255,255,255,0.06);
-        --panel2: rgba(255,255,255,0.08);
-        --text: rgba(255,255,255,0.92);
-        --muted: rgba(255,255,255,0.65);
-        --border: rgba(255,255,255,0.12);
-        --accent: #7c3aed;
-        --accent2: #22c55e;
-        --danger: #ef4444;
-        --shadow: 0 18px 45px rgba(0,0,0,0.35);
-        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --bg: #edf3f6;
+        --panel: #ffffff;
+        --panel2: #f6fafc;
+        --text: #142232;
+        --muted: #566375;
+        --border: #d3e0ea;
+        --accent: #0f766e;
+        --accent2: #0369a1;
+        --danger: #b91c1c;
+        --ok: #047857;
+        --shadow: 0 14px 34px rgba(15,23,42,0.09);
+        --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --ui: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+        --display: "Gill Sans", "Avenir Next Condensed", "Avenir Next", "Segoe UI", sans-serif;
       }
       * { box-sizing: border-box; }
       html, body { height: 100%; }
       body {
         margin: 0;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family: var(--ui);
         background:
-          radial-gradient(1200px 700px at 20% 10%, rgba(124,58,237,0.28), transparent 55%),
-          radial-gradient(1100px 650px at 80% 20%, rgba(34,197,94,0.22), transparent 55%),
-          radial-gradient(900px 500px at 50% 90%, rgba(59,130,246,0.20), transparent 55%),
-          var(--bg);
+          radial-gradient(1250px 760px at 14% 4%, rgba(14,116,144,0.12), transparent 60%),
+          radial-gradient(980px 620px at 86% 0%, rgba(13,148,136,0.11), transparent 65%),
+          linear-gradient(180deg, #f8fbfd 0%, var(--bg) 50%, #e8f0f4 100%);
         color: var(--text);
       }
       header {
@@ -35,7 +37,7 @@
         top: 0;
         z-index: 10;
         backdrop-filter: blur(14px);
-        background: linear-gradient(to bottom, rgba(11,16,32,0.92), rgba(11,16,32,0.65));
+        background: linear-gradient(to bottom, rgba(250,253,255,0.96), rgba(250,253,255,0.82));
         border-bottom: 1px solid var(--border);
       }
       .topbar {
@@ -48,7 +50,13 @@
         margin: 0 auto;
       }
       .brand { display: flex; align-items: baseline; gap: 0.8rem; }
-      h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.2px; }
+      h1 {
+        margin: 0;
+        font-size: 1.1rem;
+        letter-spacing: 0.15px;
+        font-family: var(--display);
+        font-weight: 700;
+      }
       .subtitle { color: var(--muted); font-size: 0.9rem; }
       .actions { display:flex; gap: 0.5rem; align-items:center; flex-wrap: wrap; }
       main {
@@ -68,7 +76,7 @@
       .panel {
         background: var(--panel);
         border: 1px solid var(--border);
-        border-radius: 14px;
+        border-radius: 16px;
         box-shadow: var(--shadow);
         overflow: hidden;
         min-width: 0;
@@ -80,7 +88,7 @@
         align-items: center;
         justify-content: space-between;
         gap: 0.75rem;
-        background: rgba(255,255,255,0.03);
+        background: linear-gradient(180deg, #f9fcfe 0%, #f3f8fb 100%);
       }
       .panelHeader h2 { margin: 0; font-size: 0.95rem; }
       .panelBody { padding: 1rem; }
@@ -92,39 +100,47 @@
         padding: 0.75rem 0.85rem;
         border-radius: 12px;
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.06);
+        background: #f9fcff;
         color: var(--text);
         outline: none;
+        transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+      }
+      input[type="text"]:focus, textarea:focus, select:focus {
+        border-color: rgba(14,116,144,0.45);
+        box-shadow: 0 0 0 3px rgba(14,116,144,0.12);
+        background: #fff;
       }
       textarea { min-height: 70px; resize: vertical; }
-      input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.45); }
+      input::placeholder, textarea::placeholder { color: #8394a6; }
       .btn {
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.06);
+        background: #f5f9fc;
         color: var(--text);
         padding: 0.55rem 0.8rem;
         border-radius: 999px;
         cursor: pointer;
         font-weight: 650;
         letter-spacing: 0.2px;
+        transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
       }
-      .btn:hover { background: rgba(255,255,255,0.10); }
-      .btn.primary { background: linear-gradient(135deg, rgba(124,58,237,0.95), rgba(59,130,246,0.85)); border-color: rgba(124,58,237,0.25); }
+      .btn:hover { background: #edf4f8; border-color: #c1d3df; }
+      .btn:active { transform: translateY(1px); }
+      .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: rgba(15,118,110,0.25); color: #f8ffff; }
       .btn.primary:hover { filter: brightness(1.05); }
       .btn:disabled { opacity: 0.6; cursor: not-allowed; }
       .pill {
         font-size: 0.78rem;
-        padding: 0.15rem 0.5rem;
+        padding: 0.18rem 0.56rem;
         border-radius: 999px;
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.06);
+        background: #f3f8fb;
         color: var(--muted);
         white-space: nowrap;
       }
-      .pill.pass { border-color: rgba(34,197,94,0.35); background: rgba(34,197,94,0.12); color: rgba(220,255,232,0.92); }
-      .pill.fail { border-color: rgba(239,68,68,0.40); background: rgba(239,68,68,0.14); color: rgba(255,228,228,0.92); }
-      .pill.err { border-color: rgba(239,68,68,0.40); background: rgba(239,68,68,0.14); color: rgba(255,228,228,0.92); }
-      .pill.kind { border-color: rgba(147,197,253,0.30); background: rgba(147,197,253,0.10); color: rgba(220,236,255,0.95); }
+      .pill.pass { border-color: rgba(4,120,87,0.30); background: rgba(4,120,87,0.10); color: #065f46; }
+      .pill.fail { border-color: rgba(185,28,28,0.32); background: rgba(185,28,28,0.10); color: #991b1b; }
+      .pill.err { border-color: rgba(185,28,28,0.32); background: rgba(185,28,28,0.10); color: #991b1b; }
+      .pill.kind { border-color: rgba(14,116,144,0.24); background: rgba(14,116,144,0.10); color: #0e5c77; }
 
       .listControls { display:grid; grid-template-columns: 1fr; gap: 0.75rem; }
       .filters { display:grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
@@ -133,12 +149,13 @@
       .caseList { max-height: calc(100vh - 220px); overflow: auto; }
       @media (max-width: 1100px) { .caseList { max-height: 60vh; } }
       .caseItem {
-        padding: 0.75rem 1rem;
+        padding: 0.8rem 1rem;
         border-bottom: 1px solid var(--border);
         cursor: pointer;
+        transition: background-color 120ms ease;
       }
-      .caseItem:hover { background: rgba(255,255,255,0.06); }
-      .caseItem.active { background: rgba(124,58,237,0.14); }
+      .caseItem:hover { background: #f5f9fc; }
+      .caseItem.active { background: rgba(14,116,144,0.13); }
       .caseQ { font-weight: 650; font-size: 0.92rem; line-height: 1.25rem; }
       .caseMeta { margin-top: 0.35rem; font-size: 0.82rem; color: var(--muted); display:flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
 
@@ -150,8 +167,8 @@
       .code {
         font-family: var(--mono);
         font-size: 0.86rem;
-        background: rgba(0,0,0,0.35);
-        border: 1px solid rgba(255,255,255,0.10);
+        background: #f5f9fc;
+        border: 1px solid rgba(44,64,82,0.15);
         border-radius: 12px;
         padding: 0.75rem;
         overflow: auto;
@@ -160,7 +177,7 @@
       details {
         border: 1px solid var(--border);
         border-radius: 12px;
-        background: rgba(255,255,255,0.04);
+        background: #fcfeff;
         overflow: hidden;
       }
       summary {
@@ -179,19 +196,51 @@
       .chunkMeta .mono { font-family: var(--mono); font-size: 0.82rem; }
       .chunkText { margin-top: 0.6rem; }
       .chunkGold summary { background: rgba(34,197,94,0.12); }
-      a { color: rgba(147,197,253,0.95); text-decoration: none; }
+      a { color: var(--accent2); text-decoration: none; }
       a:hover { text-decoration: underline; }
+      .timingGrid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.55rem;
+      }
+      @media (max-width: 980px) {
+        .timingGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      .timingCard {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel2);
+        padding: 0.5rem 0.6rem;
+      }
+      .timingName {
+        font-size: 0.74rem;
+        letter-spacing: 0.25px;
+        text-transform: uppercase;
+        color: #617487;
+        font-weight: 700;
+      }
+      .timingVal {
+        margin-top: 0.2rem;
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: #1f3346;
+      }
+      .timingTotal {
+        margin-top: 0.55rem;
+        font-size: 0.82rem;
+        color: #486073;
+      }
 
       .statusLine { font-size: 0.9rem; color: var(--muted); }
-      .statusOk { color: rgba(220,255,232,0.92); }
-      .statusBad { color: rgba(255,228,228,0.92); }
+      .statusOk { color: #065f46; }
+      .statusBad { color: #991b1b; }
     </style>
   </head>
   <body>
     <header>
       <div class="topbar">
         <div class="brand">
-          <h1>FinRAG • Eval Review</h1>
+          <h1> Andromeda • Eval Review</h1>
           <div class="subtitle">Label cases, inspect answers, and audit retrieval</div>
         </div>
 	        <div class="actions">
@@ -281,6 +330,32 @@
               </div>
             </div>
 
+            <div class="block" id="timingBlock" style="display:none;">
+              <div class="blockTitle">
+                <h3>Generation timings</h3>
+                <span class="pill" id="timingTotalPill">—</span>
+              </div>
+              <div class="timingGrid">
+                <div class="timingCard">
+                  <div class="timingName">Retrieve</div>
+                  <div class="timingVal" id="timingRetrieve">—</div>
+                </div>
+                <div class="timingCard">
+                  <div class="timingName">Rerank</div>
+                  <div class="timingVal" id="timingRerank">—</div>
+                </div>
+                <div class="timingCard">
+                  <div class="timingName">Draft</div>
+                  <div class="timingVal" id="timingDraft">—</div>
+                </div>
+                <div class="timingCard">
+                  <div class="timingName">Final</div>
+                  <div class="timingVal" id="timingFinal">—</div>
+                </div>
+              </div>
+              <div class="timingTotal" id="timingSummary"></div>
+            </div>
+
             <div class="block" id="judgeBlock" style="display:none;">
               <details>
                 <summary>
@@ -361,6 +436,13 @@
         metaTags: document.getElementById('metaTags'),
         metaTickers: document.getElementById('metaTickers'),
         metaJudge: document.getElementById('metaJudge'),
+        timingBlock: document.getElementById('timingBlock'),
+        timingTotalPill: document.getElementById('timingTotalPill'),
+        timingRetrieve: document.getElementById('timingRetrieve'),
+        timingRerank: document.getElementById('timingRerank'),
+        timingDraft: document.getElementById('timingDraft'),
+        timingFinal: document.getElementById('timingFinal'),
+        timingSummary: document.getElementById('timingSummary'),
         judgeBlock: document.getElementById('judgeBlock'),
         judgePredPill: document.getElementById('judgePredPill'),
         judgeIdPill: document.getElementById('judgeIdPill'),
@@ -446,6 +528,50 @@
         if (v === '0') return { text: 'judge: pass', cls: 'pass' };
         if (v === '1') return { text: 'judge: fail', cls: 'fail' };
         return { text: 'judge: —', cls: '' };
+      }
+
+      function formatDuration(ms) {
+        if (ms === null || ms === undefined) return '—';
+        const n = Number(ms);
+        if (!Number.isFinite(n) || n < 0) return '—';
+        if (n < 1000) return `${Math.round(n)}ms`;
+        const s = n / 1000;
+        if (s < 10) return `${s.toFixed(2)}s`;
+        if (s < 60) return `${s.toFixed(1)}s`;
+        const m = Math.floor(s / 60);
+        const rs = s - m * 60;
+        return `${m}m${rs.toFixed(0)}s`;
+      }
+
+      function timingMs(timing, key) {
+        const n = Number(timing && timing[key]);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+      }
+
+      function renderTimingBlock(timing) {
+        const t = (timing && typeof timing === 'object') ? timing : {};
+        const retrieve = timingMs(t, 'retrieve_ms');
+        const rerank = timingMs(t, 'rerank_ms');
+        const draft = timingMs(t, 'draft_ms');
+        const final = timingMs(t, 'final_ms');
+        const total = timingMs(t, 'total_ms');
+        const hasAny = [retrieve, rerank, draft, final, total].some(v => v !== null);
+
+        els.timingBlock.style.display = hasAny ? '' : 'none';
+        if (!hasAny) return;
+
+        els.timingRetrieve.textContent = formatDuration(retrieve);
+        els.timingRerank.textContent = formatDuration(rerank);
+        els.timingDraft.textContent = formatDuration(draft);
+        els.timingFinal.textContent = formatDuration(final);
+        els.timingTotalPill.textContent = total !== null ? `total ${formatDuration(total)}` : 'timed';
+
+        const bits = [];
+        if (retrieve !== null) bits.push(`retrieve ${formatDuration(retrieve)}`);
+        if (rerank !== null) bits.push(`rerank ${formatDuration(rerank)}`);
+        if (draft !== null) bits.push(`draft ${formatDuration(draft)}`);
+        if (final !== null) bits.push(`final ${formatDuration(final)}`);
+        els.timingSummary.textContent = bits.join(' · ');
       }
 
       function applyFilters() {
@@ -627,6 +753,7 @@
       function renderDetail(detail) {
         if (!detail) {
           setDetailVisible(false);
+          renderTimingBlock(null);
           return;
         }
 
@@ -651,6 +778,7 @@
 
         els.finalAnswer.textContent = gen.final_answer || row.final_answer || '';
         els.draftAnswer.textContent = gen.draft_answer || '';
+        renderTimingBlock(gen.timing_ms || null);
 
         els.humanLabel.value = normalizeLabel(row.human_label);
         els.humanNotes.value = row.human_notes || '';

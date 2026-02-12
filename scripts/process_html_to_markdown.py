@@ -1,1306 +1,652 @@
-import argparse
-import atexit
-import json
-import multiprocessing as mp
-import os
+"""
+Convert SEC filing HTML documents into Markdown using `sec-parser`.
 
+This replaces the old HTML->PDF->OCR path and parses SEC HTML directly.
+
+Output layout (compatible with downstream chunk/index scripts):
+  - <output>/processed_markdown/<relpath>.md
+  - <output>/debug/<relpath_stem>/metadata.json
+  - <output>/debug/<relpath_stem>/run_info.json
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
 import re
+import sys
 import time
-import uuid
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import warnings
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Annotated, Any, List, Mapping, cast
+from typing import Any
 
 from dotenv import load_dotenv
-import openai
-import weasyprint
-from langsmith.wrappers import wrap_openai
 from loguru import logger
-from marker.config.parser import ConfigParser
-from marker.converters.pdf import PdfConverter
-from marker.logger import get_logger
-from marker.models import create_model_dict
-from marker.renderers.markdown import MarkdownOutput, MarkdownRenderer
-from marker.schema.blocks import Block
-from marker.services.openai import OpenAIService as BaseOpenAIService
-from marker.settings import settings
-from marker.telemetry import sanitize_headers
-from openai import APITimeoutError, RateLimitError
-from PIL import Image, ImageStat
-from pydantic import BaseModel
 from tqdm import tqdm
-from weasyprint.text.fonts import FontConfiguration
+
+import sec_parser as sp
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-marker_logger = get_logger()
-
-_worker_converter: PdfConverter | None = None
-_worker_markdown_renderer: MarkdownRenderer | None = None
-_worker_renderer_config: dict | None = None
-_langsmith_flush_registered = False
-
-
-class CustomOpenAIService(BaseOpenAIService):
-    """Drop-in replacement for marker's OpenAIService with additional parameters."""
-
-    openai_temperature: Annotated[float, "The sampling temperature to use for OpenAI-like services."] = 0.1
-    openai_system_prompt: Annotated[str, "Optional system prompt to prepend before the user message."] = ""
-    openai_timeout: Annotated[int, "Request timeout in seconds."] = 240
-    openai_max_retries: Annotated[int, "Max retries for transient errors (rate limit/timeout)."] = 1
-    schema_routes: Annotated[
-        dict[str, dict],
-        "Optional per-schema overrides keyed by `<module>.<SchemaName>` (e.g. "
-        "`marker.processors.llm.llm_sectionheader.SectionHeaderSchema`). Supported keys include: "
-        "`openai_base_url`, `openai_model`, `openai_timeout`, `openai_max_retries`, `openai_temperature`, "
-        "`max_prompt_tokens`, `hf_model_id`, `max_image_long_side`, `skip_blank_images`, "
-        "`blank_image_variance_threshold`.",
-    ] = {}
-    hf_model_id: Annotated[
-        str,
-        "Optional HuggingFace model/tokenizer id used to estimate prompt token counts before sending the request. "
-        "Defaults to `openai_model` when empty.",
-    ] = ""
-    hf_trust_remote_code: Annotated[bool, "Pass trust_remote_code=True to transformers loaders."] = True
-    hf_count_image_tokens: Annotated[
-        bool, "When possible, include image tokens by using an AutoProcessor and decoding data URLs to PIL Images."
-    ] = True
-    log_prompt_token_count: Annotated[bool, "Log estimated prompt token counts before requesting the LLM."] = False
-    max_prompt_tokens: Annotated[
-        int, "If > 0, skip the LLM call when the estimated prompt tokens exceed this value (best-effort)."
-    ] = 0
-    max_image_long_side: Annotated[int, "If >0, downscale images so max(width,height) <= this before sending."] = 0
-    # NOTE: marker does have its own fn to check for blank images but it uses those during OCR, rather than LLMTableProcessor
-    skip_blank_images: Annotated[bool, "If true, skip LLM calls when all images look blank/uniform."] = False
-    blank_image_variance_threshold: Annotated[
-        float, "Grayscale variance threshold used to treat an image as blank (lower = stricter)."
-    ] = 0.25
-
-    def get_client(self, *, base_url: str | None = None, timeout: int | None = None) -> openai.OpenAI:
-        base_url = (base_url or self.openai_base_url).strip()
-        timeout = timeout if timeout is not None else self.openai_timeout
-        # OpenAI Python SDK defaults to `max_retries=2` (3 total attempts), which can make a single
-        # LangSmith-traced request appear to run up to ~3x longer than `timeout`. We implement our
-        # own retry loop below, so disable SDK retries for predictable timing.
-        return openai.OpenAI(api_key=self.openai_api_key, base_url=base_url, max_retries=0, timeout=timeout)
-
-    @staticmethod
-    def _schema_key(response_schema: type[BaseModel]) -> str:
-        return f"{response_schema.__module__}.{response_schema.__name__}"
-
-    def _route_for_schema(self, response_schema: type[BaseModel]) -> dict:
-        schema_key = self._schema_key(response_schema)
-        routes = self.schema_routes or {}
-        return routes.get(schema_key, {})
-
-    @staticmethod
-    def _downscale_image(image: Image.Image, max_long_side: int) -> Image.Image:
-        if max_long_side <= 0:
-            return image
-        width, height = image.size
-        if max(width, height) <= max_long_side:
-            return image
-        img_copy = image.copy()
-        img_copy.thumbnail((max_long_side, max_long_side))
-        return img_copy
-
-    @staticmethod
-    def _looks_blank(image: Image.Image, variance_threshold: float) -> bool:
-        try:
-            stat = ImageStat.Stat(image.convert("L"))
-            var = float(stat.var[0]) if stat.var else 0.0
-            return var <= variance_threshold
-        except Exception:  # noqa: BLE001 - best effort
-            return False
-
-    def _prepare_images(
-        self,
-        image: Image.Image | List[Image.Image] | None,
-        *,
-        max_long_side: int,
-        skip_blank_images: bool,
-        blank_variance_threshold: float,
-    ) -> Image.Image | List[Image.Image] | None:
-        if not image:
-            return None
-
-        images: list[Image.Image] = image if isinstance(image, list) else [image]
-        processed = [self._downscale_image(img, max_long_side) for img in images]
-
-        if skip_blank_images and processed:
-            if all(self._looks_blank(img, blank_variance_threshold) for img in processed):
-                return None
-
-        if isinstance(image, list):
-            return processed
-        return processed[0]
-
-    def __call__(
-        self,
-        prompt: str,
-        image: Image.Image | List[Image.Image] | None,
-        block: Block | None,
-        response_schema: type[BaseModel],
-        max_retries: int | None = None,  # ignored
-        timeout: int | None = None,  # ignored
-        extra_headers: Mapping[str, str] | None = None,
-    ):
-        request_id = uuid.uuid4().hex
-        start_time = time.perf_counter()
-
-        had_image = bool(image)
-        route = self._route_for_schema(response_schema)
-        model = (route.get("openai_model") or self.openai_model).strip()
-        base_url = (route.get("openai_base_url") or self.openai_base_url).strip()
-        temperature = float(route.get("openai_temperature", self.openai_temperature))
-        max_retries = int(route.get("openai_max_retries", self.openai_max_retries))
-        timeout = int(route.get("openai_timeout", self.openai_timeout))
-        max_prompt_tokens = int(route.get("max_prompt_tokens", self.max_prompt_tokens))
-        hf_model_id_override = (route.get("hf_model_id") or "").strip()
-        max_image_long_side = int(route.get("max_image_long_side", self.max_image_long_side))
-        skip_blank_images = bool(route.get("skip_blank_images", self.skip_blank_images))
-        blank_variance_threshold = float(
-            route.get("blank_image_variance_threshold", self.blank_image_variance_threshold)
-        )
-
-        logger.info(
-            f"CustomOpenAIService[{request_id}] start timeout={timeout}s max_retries={max_retries} model={model} schema={self._schema_key(response_schema)}"
-        )
-
-        image = self._prepare_images(
-            image,
-            max_long_side=max_image_long_side,
-            skip_blank_images=skip_blank_images,
-            blank_variance_threshold=blank_variance_threshold,
-        )
-        if skip_blank_images and had_image and image is None:
-            marker_logger.warning("CustomOpenAIService[%s] blank_image_detected; skipping LLM call", request_id)
-            return {}
-
-        client = self.get_client(base_url=base_url, timeout=timeout)
-        if os.environ.get("LANGSMITH_TRACING", "false").lower() == "true":
-            client = wrap_openai(client)
-
-        image_data = self.format_image_for_llm(image)
-
-        messages = []
-        if self.openai_system_prompt:
-            messages.append({"role": "system", "content": [{"type": "text", "text": self.openai_system_prompt}]})
-        messages.append({"role": "user", "content": [*image_data, {"type": "text", "text": prompt}]})
-
-        request_headers = {
-            "X-Title": "Marker",
-            "HTTP-Referer": "https://github.com/datalab-to/marker",
-            "X-Request-ID": request_id,
-        }
-        if block is not None and "X-Marker-Block" not in (extra_headers or {}):
-            request_headers["X-Marker-Block"] = str(block.id)
-        request_headers.update(sanitize_headers(extra_headers))
-
-        if self.log_prompt_token_count or max_prompt_tokens > 0:
-            try:
-                from finrag.hf_token_count import count_tokens_openai_messages
-
-                hf_model_id = (hf_model_id_override or self.hf_model_id or model).strip()
-                token_info = count_tokens_openai_messages(
-                    messages,
-                    hf_model_id,
-                    trust_remote_code=self.hf_trust_remote_code,
-                    count_images=self.hf_count_image_tokens,
-                )
-                marker_logger.info(
-                    "CustomOpenAIService[%s] prompt_tokens_est total=%s text=%s image=%s method=%s max_length=%s schema=%s warnings=%s",
-                    request_id,
-                    token_info.total_tokens,
-                    token_info.text_tokens,
-                    token_info.image_tokens,
-                    token_info.method,
-                    token_info.model_max_length,
-                    self._schema_key(response_schema),
-                    token_info.warnings if token_info.warnings else None,
-                )
-                # TODO: we can't do block.update_metadata bcos BlockMetadata doesn't have these new fields
-                # we will need to somehow override BlockMetadata to add these fields
-                if max_prompt_tokens > 0 and token_info.total_tokens > max_prompt_tokens:
-                    marker_logger.warning(
-                        "CustomOpenAIService[%s] prompt_too_long total=%s max=%s; skipping LLM call",
-                        request_id,
-                        token_info.total_tokens,
-                        max_prompt_tokens,
-                    )
-                    return {}
-            except Exception as exc:  # noqa: BLE001 - best effort
-                marker_logger.warning("CustomOpenAIService[%s] token_count_failed err=%s", request_id, exc)
-
-        total_tries = max_retries + 1
-        for tries in range(1, total_tries + 1):
-            try:
-                # if we use client.responses.parse(), we will get a response_id
-                # that we can POST an abort to vLLM if vLLM is not cancelling on its own
-                # however, based on testing, vLLM does cancel requests immediately once python process is killed
-                # (not just ctrl+C but kill -9)
-                # TODO: try guided JSON to further robustify the structured output
-                # however, this might be a strictly vLLM feature which is not available on actual OpenAI API
-                # hence, it may restrict usability
-                # extra_body={"guided_json": response_schema.model_json_schema()},
-                response = client.chat.completions.parse(
-                    model=model,
-                    messages=messages,
-                    timeout=timeout,
-                    response_format=response_schema,
-                    temperature=temperature,
-                    extra_headers=request_headers,
-                )
-                response_text = response.choices[0].message.content
-                if response_text is None:
-                    raise ValueError("LLM response missing content")
-                if response.usage is None:
-                    raise ValueError("LLM response missing usage information")
-                total_tokens = response.usage.total_tokens
-                if block:
-                    block.update_metadata(llm_tokens_used=total_tokens, llm_request_count=1)
-                elapsed_s = time.perf_counter() - start_time
-                marker_logger.info(
-                    "CustomOpenAIService[%s] success elapsed_s=%.3f attempt=%s/%s prompt_tokens=%s completion_tokens=%s total_tokens=%s schema=%s",
-                    request_id,
-                    elapsed_s,
-                    tries,
-                    total_tries,
-                    response.usage.prompt_tokens,
-                    response.usage.completion_tokens,
-                    total_tokens,
-                    self._schema_key(response_schema),
-                )
-                return json.loads(response_text)
-            except (APITimeoutError, RateLimitError) as e:
-                elapsed_s = time.perf_counter() - start_time
-                if tries == total_tries:
-                    marker_logger.error(
-                        "CustomOpenAIService[%s] retryable_error elapsed_s=%.3f giving_up attempt=%s/%s err=%s",
-                        request_id,
-                        elapsed_s,
-                        tries,
-                        total_tries,
-                        e,
-                    )
-                    break
-                wait_time = tries * self.retry_wait_time
-                marker_logger.warning(
-                    "CustomOpenAIService[%s] retryable_error elapsed_s=%.3f retry_in_s=%s attempt=%s/%s err=%s",
-                    request_id,
-                    elapsed_s,
-                    wait_time,
-                    tries,
-                    total_tries,
-                    e,
-                )
-                time.sleep(wait_time)
-            except Exception as e:  # noqa: BLE001 - best effort logging
-                elapsed_s = time.perf_counter() - start_time
-                marker_logger.error(
-                    "CustomOpenAIService[%s] error elapsed_s=%.3f attempt=%s/%s err=%s",
-                    request_id,
-                    elapsed_s,
-                    tries,
-                    total_tries,
-                    e,
-                )
-                break
-
-        elapsed_s = time.perf_counter() - start_time
-        marker_logger.warning(
-            "CustomOpenAIService[%s] failed elapsed_s=%.3f attempts=%s/%s", request_id, elapsed_s, tries, total_tries
-        )
-        return {}
-
-
-W_IN = 1400 / 96
-H_IN = 1350 / 96
-
-# Match marker's font rendering defaults for OCR consistency.
-FONT_FAMILY = settings.FONT_NAME.split(".")[0]
-FONT_CONFIG = FontConfiguration()
-
-# first part sets landscape orientation
-# second part handles page-breaks
-CSS_STYLESHEET = weasyprint.CSS(
-    string=f"""
-@font-face {{
-  font-family: {FONT_FAMILY};
-  src: url({settings.FONT_PATH});
-  font-display: swap;
-}}
-body {{
-  font-family: {FONT_FAMILY}, sans-serif;
-  font-variant-ligatures: none;
-  font-feature-settings: "liga" 0;
-  text-rendering: optimizeLegibility;
-}}
-@page {{ size: {W_IN:.3f}in {H_IN:.3f}in; margin: 4mm; }}
-html, body {{ margin: 0; }}
-"""
-    + """
-/* Turn EDGAR <hr page-break-after> into hard page boundaries */
-hr[style*="page-break-after"] {{
-  break-after: page;
-  page-break-after: always;
-  border: 0; height: 0; margin: 0; padding: 0;
-}}
-
-/* IMPORTANT: allow multi-page tables */
-table {{
-  break-inside: auto;          /* allow splitting */
-  page-break-inside: auto;     /* legacy */
-}}
-
-/* Optional: keep individual rows together (usually OK) */
-tr {{
-  break-inside: avoid;
-  page-break-inside: avoid;
-}}
-
-/* Optional but helpful: repeat header row on each page */
-thead {{ display: table-header-group; }}
-tfoot {{ display: table-footer-group; }}
-""",
-    font_config=FONT_CONFIG,
-)
+_DATE_SUFFIX_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})$")
+_FORM_IN_FILENAME_RE = re.compile(r"_(10-[KQ](?:/A)?|8-K|6-K|20-F|40-F|S-1|S-3|DEF 14A)_", re.IGNORECASE)
+_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
 
 
 @dataclass
 class Args:
     html_dir: str
     output_dir: str
-    openai_base_url: str
-    openai_model: str
-    analysis_style: str
-    sectionheader_analysis_style: str
-    sectionheader_rewrite_retries: int
-    sectionheader_max_chunk_tokens: int
-    sectionheader_chunk_tokenizer_hf_model_id: str
-    sectionheader_neighbor_text_max_blocks: int
-    sectionheader_neighbor_text_max_chars: int
-    sectionheader_recent_headers_max_count: int
-    sectionheader_openai_base_url: str
-    sectionheader_openai_model: str
-    sectionheader_hf_model_id: str
-    sectionheader_timeout: int
-    sectionheader_max_prompt_tokens: int
-    openai_system_prompt: str
-    openai_temperature: float
-    hf_model_id: str
-    hf_trust_remote_code: bool
-    hf_count_image_tokens: bool
-    log_prompt_token_count: bool
-    max_prompt_tokens: int
-    max_image_long_side: int
-    image_expansion_ratio: float
-    timeout: int
-    max_retries: int
-    max_concurrency: int
-    workers: int
-    gpu_ids: str
+    meta_dir: str | None
+    pattern: str
+    recursive: bool
     year_cutoff: int | None
-    disable_forms: bool
-    disable_table_merge: bool
-    drop_front_pages: int
-    drop_back_pages: int
-    strip_repeated_toc: bool
-    save_cleaned_html: bool
+    max_files: int | None
+    overwrite: bool
+    include_irrelevant_elements: bool
+    parser_mode: str
+    continue_on_error: bool
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class ParserSelection:
+    parser: Any
+    parser_name: str
+    suppress_invalid_section_warning: bool
+
+
+@dataclass(frozen=True)
+class ConversionResult:
+    relpath: str
+    source_html: str
+    output_markdown: str
+    metadata_path: str
+    num_elements: int
+    element_counts: dict[str, int]
+    form_type: str | None
+    parser: str
+    markdown_chars: int
+    table_count: int
+    heading_count: int
+
+
+@dataclass(frozen=True)
+class ConversionFailure:
+    relpath: str
+    source_html: str
+    error: str
+
+
 def parse_args() -> Args:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--html-dir", required=True, help="Directory containing HTML files to process (recursively).")
+    parser = argparse.ArgumentParser(description="Convert SEC filing HTML files to Markdown using sec-parser.")
+    parser.add_argument("--html-dir", required=True, help="Directory containing SEC HTML files.")
     parser.add_argument(
-        "--output-dir", default="outputs", help="Root output directory (writes `pdf/` and `markdown/` subfolders)."
+        "--output-dir",
+        default="outputs/sec_markdown",
+        help="Output root directory (writes `processed_markdown/` and `debug/`).",
     )
-    parser.add_argument("--openai-model", required=True, help="Model name for OpenAI-compatible API.")
     parser.add_argument(
-        "--analysis-style",
-        default="summary",
-        choices=("summary", "deep", "auto"),
-        help="How to structure LLM analysis: 'summary', 'deep', or 'auto' (default: summary).",
-    )
-    parser.add_argument("--openai-system-prompt", default="", help="Optional system prompt for the LLM.")
-    parser.add_argument("--openai-temperature", type=float, default=0.7, help="Sampling temperature.")
-    parser.add_argument(
-        "--token-count-hf-model-id",
-        "--hf-model-id",
-        default="",
+        "--meta-dir",
+        default=None,
         help=(
-            "Optional HuggingFace model/tokenizer id used ONLY to estimate prompt token counts "
-            "(defaults to --openai-model)."
+            "Optional metadata directory with JSON sidecars matching HTML filenames. "
+            "Defaults to sibling `<html-dir>/../meta` when it exists."
         ),
     )
-    hf_trust_group = parser.add_mutually_exclusive_group()
-    hf_trust_group.add_argument(
-        "--hf-trust-remote-code",
-        dest="hf_trust_remote_code",
-        action="store_true",
-        help="Enable trust_remote_code when loading the tokenizer/processor for token counting (default: enabled).",
-    )
-    hf_trust_group.add_argument(
-        "--no-hf-trust-remote-code",
-        dest="hf_trust_remote_code",
-        action="store_false",
-        help="Disable trust_remote_code when loading the tokenizer/processor for token counting.",
-    )
-    parser.set_defaults(hf_trust_remote_code=True)
-    parser.add_argument(
-        "--no-hf-count-image-tokens", action="store_true", help="Disable image token counting (only count text tokens)."
-    )
-    parser.add_argument(
-        "--log-prompt-token-count",
-        action="store_true",
-        help="Log estimated prompt tokens for each LLM request (best-effort).",
-    )
-    parser.add_argument(
-        "--max-prompt-tokens",
-        type=int,
-        default=0,
-        help="If >0, skip LLM calls whose estimated prompt exceeds this many tokens (best-effort).",
-    )
-    parser.add_argument(
-        "--max-image-long-side",
-        type=int,
-        default=0,
-        help="If >0, downscale images so max(width,height) <= this before sending to LLM.",
-    )
-    parser.add_argument(
-        "--image-expansion-ratio",
-        type=float,
-        default=0.01,
-        help="The ratio to expand each table's image by when cropping.",
-    )
-    parser.add_argument("--timeout", type=int, default=30, help="Request timeout in seconds.")
-    parser.add_argument(
-        "--max-retries", type=int, default=2, help="Max retries for transient errors (rate limit/timeout)."
-    )
-    parser.add_argument("--max-concurrency", type=int, default=3, help="Max parallel in-flight LLM requests.")
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=1,
-        help="Number of parallel workers over HTML files (effective LLM concurrency ~= workers * max_concurrency).",
-    )
+    parser.add_argument("--pattern", default="*.htm*", help="Glob pattern for HTML files.")
+    parser.add_argument("--recursive", action="store_true", help="Recurse into subdirectories.")
     parser.add_argument(
         "--year-cutoff",
         type=int,
         default=None,
-        help="Only process filings from this year (YYYY) based on the filename date.",
+        help="Only process filings with filename suffix YYYY-MM-DD where year >= cutoff.",
     )
+    parser.add_argument("--max-files", type=int, default=None, help="Optional cap on number of HTML files.")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing markdown outputs.")
     parser.add_argument(
-        "--gpu-ids", default="", help="Optional comma-separated GPU ids to round-robin across workers (e.g., '0,1')."
-    )
-    forms_group = parser.add_mutually_exclusive_group()
-    forms_group.add_argument(
-        "--disable-forms",
-        dest="disable_forms",
+        "--include-irrelevant-elements",
         action="store_true",
-        default=True,
-        help="Disable `marker.processors.llm.llm_form.LLMFormProcessor` (skip all form LLM calls) (default).",
-    )
-    forms_group.add_argument(
-        "--enable-forms",
-        dest="disable_forms",
-        action="store_false",
-        help="Enable `marker.processors.llm.llm_form.LLMFormProcessor` (process forms).",
-    )
-    table_merge_group = parser.add_mutually_exclusive_group()
-    table_merge_group.add_argument(
-        "--disable-table-merge",
-        dest="disable_table_merge",
-        action="store_true",
-        default=True,
-        help="Disable `marker.processors.llm.llm_table_merge.LLMTableMergeProcessor` (default).",
-    )
-    table_merge_group.add_argument(
-        "--enable-table-merge",
-        dest="disable_table_merge",
-        action="store_false",
-        help="Enable `marker.processors.llm.llm_table_merge.LLMTableMergeProcessor`.",
+        help="Include sec-parser irrelevant elements (page headers/numbers/etc.).",
     )
     parser.add_argument(
-        "--drop-front-pages",
-        type=int,
-        default=0,
-        help="Skip the first N pages of each PDF for Marker processing (0 = keep all, -1 = SEC auto-detect).",
-    )
-    parser.add_argument(
-        "--drop-back-pages",
-        type=int,
-        default=0,
-        help="Skip the last N pages of each PDF for Marker processing (0 = keep all, -1 = SEC auto-detect).",
-    )
-    toc_group = parser.add_mutually_exclusive_group()
-    toc_group.add_argument(
-        "--strip-repeated-toc",
-        dest="strip_repeated_toc",
-        action="store_true",
-        default=True,
-        help="Strip repeated 'Table of Contents' backlink artifacts before Marker by re-rendering the PDF (default).",
-    )
-    toc_group.add_argument(
-        "--no-strip-repeated-toc",
-        dest="strip_repeated_toc",
-        action="store_false",
-        help="Disable stripping repeated 'Table of Contents' backlink artifacts before Marker.",
-    )
-    parser.add_argument(
-        "--save-cleaned-html",
-        action="store_true",
-        default=False,
-        help="When repeated ToC artifacts are stripped, save the cleaned HTML into the per-file debug folder.",
-    )
-    parser.add_argument(
-        "--sectionheader-openai-model",
-        default="",
-        help="Optional model override for `LLMSectionHeaderProcessor` (text-only) requests.",
-    )
-    parser.add_argument(
-        "--sectionheader-analysis-style",
-        default="deep",
-        choices=("summary", "auto", "deep"),
-        help="How to structure LLM analysis for `LLMSectionHeaderProcessor` (default: deep).",
-    )
-    parser.add_argument(
-        "--sectionheader-rewrite-retries",
-        type=int,
-        default=1,
-        help="How many extra section header rewrite attempts to allow when confidence is low (default: 1).",
-    )
-    parser.add_argument(
-        "--sectionheader-max-chunk-tokens",
-        type=int,
-        default=8192,
-        help="Max prompt tokens per section header chunk (0 disables chunking) (default: 8192).",
-    )
-    parser.add_argument(
-        "--sectionheader-chunk-tokenizer-hf-model-id",
-        default="",
+        "--parser-mode",
+        choices=["auto", "10q_only", "generic_10q"],
+        default="auto",
         help=(
-            "Optional HuggingFace tokenizer model id for section header chunking token counts "
-            "(falls back to --sectionheader-hf-model-id, then --hf-model-id)."
+            "Parser selection mode: `auto` uses Edgar10QParser with form-aware fallbacks; "
+            "`10q_only` always uses Edgar10QParser; `generic_10q` strips 10-Q top-section steps for all forms."
         ),
     )
     parser.add_argument(
-        "--sectionheader-neighbor-text-max-blocks",
-        type=int,
-        default=1,
-        help="Max number of neighboring text blocks to include before/after each header (default: 1).",
+        "--continue-on-error", action="store_true", help="Continue processing remaining files when one file fails."
     )
-    parser.add_argument(
-        "--sectionheader-neighbor-text-max-chars",
-        type=int,
-        default=280,
-        help="Max chars of neighboring text to include per side (before/after) (default: 280).",
-    )
-    parser.add_argument(
-        "--sectionheader-recent-headers-max-count",
-        type=int,
-        default=20,
-        help="How many recently-processed headers to include as context for later chunks (default: 20).",
-    )
-    parser.add_argument(
-        "--sectionheader-token-count-hf-model-id",
-        "--sectionheader-hf-model-id",
-        default="",
-        help=(
-            "Optional HuggingFace model/tokenizer id used ONLY to estimate prompt token counts for "
-            "`LLMSectionHeaderProcessor` requests (falls back to --token-count-hf-model-id, then the request model)."
-        ),
-    )
-    parser.add_argument(
-        "--sectionheader-timeout",
-        type=int,
-        default=0,
-        help="Optional timeout override (seconds) for `LLMSectionHeaderProcessor` requests.",
-    )
-    parser.add_argument(
-        "--sectionheader-max-prompt-tokens",
-        type=int,
-        default=0,
-        help="If >0, skip `LLMSectionHeaderProcessor` requests whose estimated prompt exceeds this many tokens.",
-    )
-    args = parser.parse_args()
 
-    openai_base_url = (os.environ.get("OPENAI_BASE_URL") or "").strip()
-    if not openai_base_url:
-        raise RuntimeError("Set OPENAI_BASE_URL in `.env` (or the environment) before running.")
-
-    sectionheader_openai_base_url = (os.environ.get("SECTIONHEADER_OPENAI_BASE_URL") or "").strip()
-
+    ns = parser.parse_args()
     return Args(
-        html_dir=args.html_dir,
-        output_dir=args.output_dir,
-        openai_base_url=openai_base_url,
-        openai_model=args.openai_model,
-        analysis_style=args.analysis_style,
-        sectionheader_analysis_style=args.sectionheader_analysis_style,
-        sectionheader_rewrite_retries=args.sectionheader_rewrite_retries,
-        sectionheader_max_chunk_tokens=args.sectionheader_max_chunk_tokens,
-        sectionheader_chunk_tokenizer_hf_model_id=args.sectionheader_chunk_tokenizer_hf_model_id,
-        sectionheader_neighbor_text_max_blocks=args.sectionheader_neighbor_text_max_blocks,
-        sectionheader_neighbor_text_max_chars=args.sectionheader_neighbor_text_max_chars,
-        sectionheader_recent_headers_max_count=args.sectionheader_recent_headers_max_count,
-        sectionheader_openai_base_url=sectionheader_openai_base_url,
-        sectionheader_openai_model=args.sectionheader_openai_model,
-        sectionheader_hf_model_id=args.sectionheader_token_count_hf_model_id,
-        sectionheader_timeout=args.sectionheader_timeout,
-        sectionheader_max_prompt_tokens=args.sectionheader_max_prompt_tokens,
-        openai_system_prompt=args.openai_system_prompt,
-        openai_temperature=args.openai_temperature,
-        hf_model_id=args.token_count_hf_model_id,
-        hf_trust_remote_code=args.hf_trust_remote_code,
-        hf_count_image_tokens=not args.no_hf_count_image_tokens,
-        log_prompt_token_count=args.log_prompt_token_count,
-        max_prompt_tokens=args.max_prompt_tokens,
-        max_image_long_side=args.max_image_long_side,
-        image_expansion_ratio=args.image_expansion_ratio,
-        timeout=args.timeout,
-        max_retries=args.max_retries,
-        max_concurrency=args.max_concurrency,
-        workers=args.workers,
-        gpu_ids=args.gpu_ids,
-        year_cutoff=args.year_cutoff,
-        disable_forms=args.disable_forms,
-        disable_table_merge=args.disable_table_merge,
-        drop_front_pages=args.drop_front_pages,
-        drop_back_pages=args.drop_back_pages,
-        strip_repeated_toc=args.strip_repeated_toc,
-        save_cleaned_html=args.save_cleaned_html,
+        html_dir=ns.html_dir,
+        output_dir=ns.output_dir,
+        meta_dir=ns.meta_dir,
+        pattern=ns.pattern,
+        recursive=bool(ns.recursive),
+        year_cutoff=ns.year_cutoff,
+        max_files=ns.max_files,
+        overwrite=bool(ns.overwrite),
+        include_irrelevant_elements=bool(ns.include_irrelevant_elements),
+        parser_mode=ns.parser_mode,
+        continue_on_error=bool(ns.continue_on_error),
     )
 
 
-def count_llm_errors(rendered: MarkdownOutput) -> tuple[int, int]:
-    llm_err_total = 0
-    page_cnt = 0
-    for page_meta in rendered.metadata["page_stats"]:
-        block_meta = page_meta["block_metadata"]
-        llm_err_total += block_meta["llm_error_count"]
-        page_cnt += 1
-    return llm_err_total, page_cnt
+def _setup_logging(project_root: Path) -> Path:
+    logs_dir = project_root / "logs" / "process"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    log_path = logs_dir / f"process_sec_parser_{ts}.log"
+
+    logger.remove()
+    logger.add(sys.stderr, level="INFO")
+    logger.add(str(log_path), level="DEBUG")
+    return log_path
 
 
-def get_worker_index() -> int:
-    identity = mp.current_process()._identity
-    if identity:
-        return identity[0]
-    match = re.search(r"(\d+)$", mp.current_process().name)
-    if match:
-        return int(match.group(1))
-    return 1
+def _iter_html_files(root: Path, *, pattern: str, recursive: bool) -> list[Path]:
+    paths = list(root.rglob(pattern) if recursive else root.glob(pattern))
+    return sorted(p for p in paths if p.is_file())
 
 
-def extract_year_from_filename(html_path: Path) -> int | None:
-    match = re.search(r"(\d{4})-\d{2}-\d{2}$", html_path.stem)
-    if not match:
+def _extract_year_from_filename(path: Path) -> int | None:
+    m = _DATE_SUFFIX_RE.search(path.stem)
+    if not m:
         return None
-    return int(match.group(1))
-
-
-def init_worker(config: dict, gpu_ids: list[str]) -> None:
-    register_langsmith_flush()
-    if gpu_ids:
-        worker_index = get_worker_index()
-        gpu_id = gpu_ids[(worker_index - 1) % len(gpu_ids)]
-        # NOTE: setting env var is too late here, so we must use torch.cuda.set_device()
-        # os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.set_device(int(gpu_id))
-        except Exception as exc:  # noqa: BLE001 - best effort logging
-            logger.warning(f"Unable to pin CUDA device for worker {worker_index}: {exc}")
-        logger.info(f"Worker {worker_index} using GPU {gpu_id}")
-
-    global _worker_converter, _worker_markdown_renderer, _worker_renderer_config
-    config_parser = ConfigParser(config)
-    renderer_config = config_parser.generate_config_dict()
-    _worker_converter = PdfConverter(
-        config=renderer_config,
-        artifact_dict=create_model_dict(),
-        processor_list=config_parser.get_processors(),
-        renderer=config_parser.get_renderer(),
-        llm_service=config_parser.get_llm_service(),
-    )
-    _worker_markdown_renderer = MarkdownRenderer(renderer_config)
-    _worker_renderer_config = renderer_config
-
-
-def get_worker_pipeline() -> tuple[PdfConverter, MarkdownRenderer, dict]:
-    if _worker_converter is None or _worker_markdown_renderer is None or _worker_renderer_config is None:
-        raise RuntimeError("Worker pipeline has not been initialized")
-    return _worker_converter, _worker_markdown_renderer, _worker_renderer_config
-
-
-def flush_langsmith_traces() -> None:
-    if os.environ.get("LANGSMITH_TRACING", "false").lower() != "true":
-        return
     try:
-        from langsmith import Client
-    except Exception as exc:  # noqa: BLE001 - best effort
-        logger.warning(f"LangSmith client not available for flush: {exc}")
-        return
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def _infer_meta_root(html_root: Path, explicit_meta_dir: str | None) -> Path | None:
+    if explicit_meta_dir:
+        p = Path(explicit_meta_dir).expanduser().resolve()
+        return p if p.exists() and p.is_dir() else None
+
+    sibling_meta = (html_root.parent / "meta").resolve()
+    if sibling_meta.exists() and sibling_meta.is_dir():
+        return sibling_meta
+    return None
+
+
+def _load_meta_for_html(html_path: Path, *, html_root: Path, meta_root: Path | None) -> dict[str, Any] | None:
+    if meta_root is None:
+        return None
+    rel = html_path.resolve().relative_to(html_root)
+    meta_path = (meta_root / rel).with_suffix(".json")
+    if not meta_path.exists():
+        return None
     try:
-        Client().flush()
-        logger.info("Flushed LangSmith traces")
-    except Exception as exc:  # noqa: BLE001 - best effort
-        logger.warning(f"LangSmith flush failed: {exc}")
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to load sidecar metadata for {html_path.name}: {exc}")
+        return None
 
 
-def register_langsmith_flush() -> None:
-    global _langsmith_flush_registered
-    if _langsmith_flush_registered:
-        return
+def detect_form_type(*, filename: str, metadata: dict[str, Any] | None) -> str | None:
+    if metadata:
+        form = metadata.get("form")
+        if isinstance(form, str) and form.strip():
+            return form.strip().upper()
 
-    def _flush_langsmith() -> None:
-        flush_langsmith_traces()
+    m = _FORM_IN_FILENAME_RE.search(filename)
+    if m:
+        return m.group(1).upper()
+    return None
 
-    atexit.register(_flush_langsmith)
-    _langsmith_flush_registered = True
 
+def _build_generic_10q_parser() -> Any:
+    """
+    Build a parser that skips 10-Q-specific top-section assumptions.
 
-def get_pdf_page_count(pdf_path: Path) -> int:
-    import pypdfium2 as pdfium
+    This follows the approach in the sec-parser exploration notebook for
+    parsing non-10-Q forms with Edgar10QParser.
+    """
 
-    doc = pdfium.PdfDocument(str(pdf_path))
     try:
-        return len(doc)
-    finally:
-        doc.close()
+        from sec_parser.processing_steps import (  # type: ignore[attr-defined]
+            IndividualSemanticElementExtractor,
+            TopSectionManagerFor10Q,
+            TopSectionTitleCheck,
+        )
+    except Exception:
+        return sp.Edgar10QParser()
+
+    def get_steps() -> list[Any]:
+        base_parser = sp.Edgar10QParser()
+        all_steps = base_parser.get_default_steps()
+        steps_without_top_manager = [step for step in all_steps if not isinstance(step, TopSectionManagerFor10Q)]
+
+        def get_checks_without_top_section_title_check() -> list[Any]:
+            checks = base_parser.get_default_single_element_checks()
+            return [check for check in checks if not isinstance(check, TopSectionTitleCheck)]
+
+        updated_steps: list[Any] = []
+        for step in steps_without_top_manager:
+            if isinstance(step, IndividualSemanticElementExtractor):
+                updated_steps.append(
+                    IndividualSemanticElementExtractor(get_checks=get_checks_without_top_section_title_check)
+                )
+            else:
+                updated_steps.append(step)
+        return updated_steps
+
+    return sp.Edgar10QParser(get_steps=get_steps)
 
 
-def _pdfium_extract_page_text(doc: Any, page_index: int) -> str:
-    page = doc[page_index]
-    try:
-        textpage = page.get_textpage()
-        try:
-            char_count = textpage.count_chars()
-            if char_count <= 0:
-                return ""
-            return textpage.get_text_range(0, char_count)
-        finally:
-            textpage.close()
-    finally:
-        page.close()
-
-
-def _sec_toc_listing_score(page_text: str) -> int:
-    text = page_text.lower()
-    score = 0
-    if "table of contents" in text:
-        score += 2
-
-    if re.search(r"(?im)^\s*index\s*$", page_text):
-        score += 2
-
-    # SEC filings often (unhelpfully) include a "Table of Contents" header on every page after conversion.
-    # To reduce false positives, prefer ToC *listing* pages that have multiple Item/Part lines ending in
-    # page numbers (e.g. "ITEM 7A. ... 55").
-    tocish_lines = re.findall(r"(?im)^\s*(part\s+[ivx]+\b.*\s\d+\s*$|item\s+\d+[a-z]?\b.*\s\d+\s*$)", page_text)
-    tocish_count = len(tocish_lines)
-    if tocish_count >= 8:
-        score += 4
-    elif tocish_count >= 4:
-        score += 3
-    elif tocish_count >= 2:
-        score += 1
-
-    if re.search(r"(?i)\bpart\s+i\b", page_text) or "financial information" in text:
-        score += 1
-
-    if re.search(r"(?i)\bpage\b", page_text):
-        score += 1
-
-    return score
-
-
-def _sec_signatures_score(page_text: str) -> int:
-    text = page_text.lower()
-    score = 0
-    if re.search(r"(?im)^\s*signatures?\s*$", page_text):
-        score += 3
-    elif "signatures" in text or "signature" in text:
-        score += 1
-
-    if "pursuant to the requirements" in text:
-        score += 1
-    if "registrant has duly caused" in text or "duly caused this report to be signed" in text:
-        score += 1
-    if "thereunto duly authorized" in text:
-        score += 1
-    if "/s/" in text:
-        score += 2
-    if "chief executive officer" in text or "chief financial officer" in text:
-        score += 1
-    return score
-
-
-def _sec_exhibits_score(page_text: str) -> int:
-    text = page_text.lower()
-    score = 0
-    if re.search(r"(?i)\bitem\s+6\.?\s*exhibits?\b", page_text):
-        score += 2
-    if "exhibit index" in text:
-        score += 2
-    if "the exhibits listed below are filed as part of" in text:
-        score += 3
-    if "exhibit number" in text and "exhibit title" in text:
-        score += 1
-
-    # Many filings include a compact exhibits list without the long "exhibits listed below" caption.
-    # Heuristic: detect multiple exhibit numbers like 31.1 / 32.1 / 101.INS / 104.
-    exhibit_id_hits = re.findall(r"(?im)^\s*\*?\s*(\d{1,3}\.\d{1,2}|\d{1,3}\.[A-Z]{2,4}|\d{1,3})\b", page_text)
-    if len(exhibit_id_hits) >= 8:
-        score += 3
-    elif len(exhibit_id_hits) >= 4:
-        score += 2
-    elif len(exhibit_id_hits) >= 2:
-        score += 1
-    return score
-
-
-def infer_sec_page_window(
-    pdf_path: Path, *, max_front_scan_pages: int = 15, max_back_scan_pages: int = 25
-) -> tuple[int | None, int | None, dict[str, Any]]:
-    """
-    Infer a [start, end) window of pages to keep for SEC 10-K/10-Q style PDFs.
-
-    - start: first "real" Table of Contents listing page (drops cover/boilerplate before it)
-    - end: first Exhibits/Signatures page near the end (drops exhibits/signatures and anything after)
-    """
-    import pypdfium2 as pdfium
-
-    doc = pdfium.PdfDocument(str(pdf_path))
-    try:
-        page_count = len(doc)
-        front_scan = min(max_front_scan_pages, page_count)
-        back_scan = min(max_back_scan_pages, page_count)
-
-        toc_page: int | None = None
-        toc_score: int = 0
-        for i in range(front_scan):
-            text = _pdfium_extract_page_text(doc, i)
-            score = _sec_toc_listing_score(text)
-            if score > toc_score:
-                toc_score = score
-                toc_page = i
-            if score >= 5:
-                toc_page = i
-                break
-
-        # Only trust the ToC heuristic when it clears a minimum score; otherwise treat as unknown.
-        if toc_page is not None and toc_score < 4:
-            toc_page = None
-
-        exhibits_page: int | None = None
-        exhibits_score: int = 0
-        signatures_page: int | None = None
-        signatures_score: int = 0
-        start_back = max(0, page_count - back_scan)
-        for i in range(start_back, page_count):
-            text = _pdfium_extract_page_text(doc, i)
-
-            e_score = _sec_exhibits_score(text)
-            if e_score > exhibits_score:
-                exhibits_score = e_score
-                exhibits_page = i
-
-            s_score = _sec_signatures_score(text)
-            if s_score > signatures_score:
-                signatures_score = s_score
-                signatures_page = i
-
-        if exhibits_page is not None and exhibits_score < 2:
-            exhibits_page = None
-        if signatures_page is not None and signatures_score < 3:
-            signatures_page = None
-
-        cutoff_page: int | None = None
-        if exhibits_page is not None and signatures_page is not None:
-            cutoff_page = min(exhibits_page, signatures_page)
-        else:
-            cutoff_page = exhibits_page if exhibits_page is not None else signatures_page
-
-        info: dict[str, Any] = {
-            "page_count": page_count,
-            "toc_page": toc_page,
-            "toc_score": toc_score,
-            "exhibits_page": exhibits_page,
-            "exhibits_score": exhibits_score,
-            "signatures_page": signatures_page,
-            "signatures_score": signatures_score,
-            "cutoff_page": cutoff_page,
-            "max_front_scan_pages": front_scan,
-            "max_back_scan_pages": back_scan,
-        }
-        return toc_page, cutoff_page, info
-    finally:
-        doc.close()
-
-
-def _first_nonempty_line(text: str) -> str:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped:
-            return stripped
-    return ""
-
-
-_TOC_LINK_RE = re.compile(r"(?is)<a\b[^>]*>\s*table\s+of\s+contents\s*</a>")
-
-
-def strip_table_of_contents_links_from_html(html: str) -> tuple[str, int]:
-    """
-    SEC filings often include repeated 'Table of Contents' backlink anchors throughout the HTML.
-    When paginated to PDF, these links frequently end up at the top of pages and contaminate OCR.
-    """
-    cleaned, count = _TOC_LINK_RE.subn("", html)
-    return cleaned, count
-
-
-def detect_repeated_toc_header_artifact(
-    pdf_path: Path, *, max_scan_pages: int = 60, min_pages: int = 5, min_ratio: float = 0.35
-) -> tuple[bool, dict[str, Any]]:
-    """
-    Detect the common SEC artifact where 'Table of Contents' appears as the top line on many pages.
-
-    We exclude ToC *listing* pages (high ToC listing score) because they legitimately contain that heading.
-    """
-    import pypdfium2 as pdfium
-
-    doc = pdfium.PdfDocument(str(pdf_path))
-    try:
-        page_count = len(doc)
-        scan_pages = min(max_scan_pages, page_count)
-
-        toc_topline_pages: list[int] = []
-        excluded_listing_pages: list[int] = []
-        considered_pages: list[int] = []
-        for i in range(scan_pages):
-            text = _pdfium_extract_page_text(doc, i)
-            if _sec_toc_listing_score(text) >= 6:
-                excluded_listing_pages.append(i)
-                continue
-            considered_pages.append(i)
-            if _first_nonempty_line(text).lower() == "table of contents":
-                toc_topline_pages.append(i)
-
-        considered_count = len(considered_pages)
-        toc_count = len(toc_topline_pages)
-        ratio = toc_count / considered_count if considered_count else 0.0
-        is_artifact = (toc_count >= min_pages) and (ratio >= min_ratio)
-        info = {
-            "page_count": page_count,
-            "scan_pages": scan_pages,
-            "considered_pages": considered_pages,
-            "excluded_listing_pages": excluded_listing_pages,
-            "toc_topline_pages": toc_topline_pages,
-            "toc_topline_count": toc_count,
-            "toc_topline_ratio": ratio,
-            "min_pages": min_pages,
-            "min_ratio": min_ratio,
-        }
-        return is_artifact, info
-    finally:
-        doc.close()
-
-
-def process_one(
-    html_file_path: Path, html_dir: Path, pdf_root: Path, md_root: Path, debug_root: Path, args_dict: dict
-) -> None:
-    worker_converter, worker_markdown_renderer, renderer_config = get_worker_pipeline()
-    converter_config = worker_converter.config
-    if converter_config is None or not isinstance(converter_config, dict):
-        raise RuntimeError("Expected PdfConverter.config to be a dict in this script")
-    converter_config = cast(dict[str, Any], converter_config)
-
-    rel_path = html_file_path.relative_to(html_dir)
-    pdf_path = (pdf_root / rel_path).with_suffix(".pdf")
-    md_path = (md_root / rel_path).with_suffix(".md")
-    pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Processing {html_file_path} -> {pdf_path}, {md_path}")
-
-    debug_dir = debug_root / rel_path.parent / rel_path.stem
-    debug_dir.mkdir(parents=True, exist_ok=True)
-
-    # if all output paths already exist, skip
-    if pdf_path.exists() and md_path.exists():
-        logger.info(f"Outputs already exist; skipping: {rel_path}")
-        return
-
-    t_start = time.perf_counter()
-
-    # 1. convert HTML to PDF
-    source_url = f"file://{html_file_path.absolute()}"
-    weasyprint.HTML(source_url).write_pdf(str(pdf_path), stylesheets=[CSS_STYLESHEET])
-
-    toc_artifact_info: dict[str, Any] | None = None
-    if bool(args_dict.get("strip_repeated_toc", True)):
-        has_artifact, artifact_info = detect_repeated_toc_header_artifact(pdf_path)
-        toc_artifact_info = {"detected": has_artifact, **artifact_info}
-        if has_artifact:
-            html_raw = html_file_path.read_text(errors="ignore")
-            cleaned_html, removed = strip_table_of_contents_links_from_html(html_raw)
-            toc_artifact_info["removed_toc_link_anchors"] = removed
-            if bool(args_dict.get("save_cleaned_html", False)):
-                cleaned_html_path = debug_dir / "cleaned_for_pdf.html"
-                with open(cleaned_html_path, "w") as f:
-                    f.write(cleaned_html)
-
-            weasyprint.HTML(string=cleaned_html, base_url=str(html_file_path.parent)).write_pdf(
-                str(pdf_path), stylesheets=[CSS_STYLESHEET]
-            )
-            has_artifact_after, artifact_info_after = detect_repeated_toc_header_artifact(pdf_path)
-            toc_artifact_info["after"] = {"detected": has_artifact_after, **artifact_info_after}
-            logger.info(
-                f"{rel_path}: removed repeated ToC links (removed={removed}) detected_before={has_artifact} detected_after={has_artifact_after}"
-            )
-    logger.success(f"Wrote intermediate PDF to {pdf_path}, time taken: {time.perf_counter() - t_start:.2f}s")
-
-    # 2. convert PDF to document (so we can save multiple renderings/artifacts)
-    # each 10Q usually requires ~40 LLM calls for LLMTableProcessor
-    drop_front_pages = int(args_dict.get("drop_front_pages") or 0)
-    drop_back_pages = int(args_dict.get("drop_back_pages") or 0)
-    if drop_front_pages < -1 or drop_back_pages < -1:
-        raise ValueError("--drop-front-pages and --drop-back-pages must be >= 0 (or -1 for SEC auto-detect)")
-
-    sec_auto_drop_info: dict[str, Any] | None = None
-    if drop_front_pages == -1 or drop_back_pages == -1:
-        auto_start, auto_end, sec_auto_drop_info = infer_sec_page_window(pdf_path)
-        logger.info(f"{rel_path}: SEC auto-drop inferred start={auto_start} end={auto_end} info={sec_auto_drop_info}")
-        if drop_front_pages == -1:
-            drop_front_pages = int(auto_start or 0)
-        if drop_back_pages == -1:
-            page_count = int(sec_auto_drop_info.get("page_count") or get_pdf_page_count(pdf_path))
-            drop_back_pages = int(page_count - auto_end) if auto_end is not None else 0
-
-    if drop_front_pages or drop_back_pages:
-        page_count = get_pdf_page_count(pdf_path)
-        start = min(max(drop_front_pages, 0), page_count)
-        end = max(start, page_count - max(drop_back_pages, 0))
-        page_range = list(range(start, end))
-        if not page_range:
-            logger.warning(
-                f"Skipping {rel_path}: after dropping front/back pages ({drop_front_pages}/{drop_back_pages}), no pages remain (page_count={page_count})"
-            )
-            return
-        converter_config["page_range"] = page_range
-    else:
-        converter_config.pop("page_range", None)
-
-    document = worker_converter.build_document(str(pdf_path))
-    logger.success(f"Converted PDF to Marker document for {rel_path}")
-
-    rendered = worker_markdown_renderer(document)
-    logger.success(f"Rendered markdown for {rel_path}")
-
-    llm_err_total, page_cnt = count_llm_errors(rendered)
-    logger.info(f"{rel_path}: {llm_err_total=} out of {page_cnt=}")
-
-    with open(md_path, "w") as f:
-        f.write(rendered.markdown)
-
-    with open(debug_dir / "metadata.json", "w") as f:
-        json.dump(rendered.metadata, f, indent=2)
-
-    with open(debug_dir / "run_info.json", "w") as f:
-        json.dump(
-            {
-                "input_html": str(html_file_path),
-                "output_pdf": str(pdf_path),
-                "output_markdown": str(md_path),
-                "args": args_dict,
-                "config": renderer_config,
-                "page_range": converter_config.get("page_range"),
-                "sec_auto_drop": sec_auto_drop_info,
-                "toc_artifact": toc_artifact_info,
-                "llm_error_count": llm_err_total,
-                "page_count": page_cnt,
-                "llm_error_ratio": llm_err_total / page_cnt if page_cnt > 0 else None,
-            },
-            f,
-            indent=2,
+def select_parser(*, form_type: str | None, parser_mode: str) -> ParserSelection:
+    if parser_mode == "10q_only":
+        return ParserSelection(
+            parser=sp.Edgar10QParser(),
+            parser_name="Edgar10QParser",
+            suppress_invalid_section_warning=bool(form_type and form_type != "10-Q"),
         )
 
-    logger.success(f"Finished processing {rel_path}")
-    t_end = time.perf_counter()
-    elapsed_s = t_end - t_start
-    logger.info(f"Elapsed time for {rel_path}: {elapsed_s:.2f}s")
-    return
+    if parser_mode == "generic_10q":
+        return ParserSelection(
+            parser=_build_generic_10q_parser(),
+            parser_name="Edgar10QParser(generic_10q)",
+            suppress_invalid_section_warning=False,
+        )
+
+    # parser_mode == "auto"
+    if form_type == "10-Q":
+        return ParserSelection(
+            parser=sp.Edgar10QParser(), parser_name="Edgar10QParser", suppress_invalid_section_warning=False
+        )
+
+    if form_type == "10-K":
+        return ParserSelection(
+            parser=sp.Edgar10QParser(),
+            parser_name="Edgar10QParser(fallback_for_10K)",
+            suppress_invalid_section_warning=True,
+        )
+
+    # Other forms: use generic 10Q parser to avoid hard 10-Q section assumptions.
+    return ParserSelection(
+        parser=_build_generic_10q_parser(),
+        parser_name="Edgar10QParser(generic_other_form)",
+        suppress_invalid_section_warning=False,
+    )
 
 
-def main():
-    register_langsmith_flush()
+def _normalize_inline_text(text: str) -> str:
+    text = text.replace("\xa0", " ")
+    text = text.replace("\u2009", " ")
+    text = text.replace("\u2002", " ")
+    text = re.sub(r"[\t ]+", " ", text)
+    return text.strip()
+
+
+def normalize_paragraph_text(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\xa0", " ")
+    text = text.replace("\u2009", " ")
+    text = text.replace("\u2002", " ")
+
+    # SEC filings frequently use the bullet glyph inline without line breaks.
+    text = re.sub(r"\s*•\s*", "\n- ", text)
+
+    lines = [_normalize_inline_text(line) for line in text.split("\n")]
+    text = "\n".join(line for line in lines if line)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _parse_markdown_row(row: str) -> list[str]:
+    row = row.strip()
+    if row.startswith("|"):
+        row = row[1:]
+    if row.endswith("|"):
+        row = row[:-1]
+    return [_normalize_inline_text(cell) for cell in row.split("|")]
+
+
+def _render_markdown_row(cells: list[str]) -> str:
+    return "| " + " | ".join(cells) + " |"
+
+
+def normalize_markdown_table(table_markdown: str) -> str:
+    """
+    Normalize sec-parser table markdown for downstream table-preserving chunking.
+
+    - trims whitespace / NBSP artifacts
+    - drops columns that are empty in every row
+    - guarantees a markdown separator row after the first row
+    """
+
+    raw_lines = [line for line in table_markdown.splitlines() if line.strip()]
+    raw_lines = [line for line in raw_lines if "|" in line]
+    if not raw_lines:
+        return ""
+
+    rows = [_parse_markdown_row(line) for line in raw_lines]
+    if not rows:
+        return ""
+
+    max_cols = max(len(row) for row in rows)
+    rows = [row + [""] * (max_cols - len(row)) for row in rows]
+
+    keep_cols = [idx for idx in range(max_cols) if any(row[idx] for row in rows)]
+    if keep_cols:
+        rows = [[row[idx] for idx in keep_cols] for row in rows]
+
+    # Trim shared empty columns on both sides.
+    while rows and rows[0] and all(row[0] == "" for row in rows):
+        rows = [row[1:] for row in rows]
+    while rows and rows[0] and all(row[-1] == "" for row in rows):
+        rows = [row[:-1] for row in rows]
+
+    if not rows or not rows[0]:
+        return ""
+
+    rendered = [_render_markdown_row(row) for row in rows]
+    separator = _render_markdown_row(["---"] * len(rows[0]))
+
+    if len(rendered) == 1:
+        rendered.append(separator)
+    elif not _TABLE_SEPARATOR_RE.match(rendered[1]):
+        rendered.insert(1, separator)
+
+    return "\n".join(rendered).strip()
+
+
+def _safe_level(element: Any, default: int = 0) -> int:
+    raw = getattr(element, "level", default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def render_elements_to_markdown(elements: list[Any]) -> tuple[str, dict[str, int]]:
+    blocks: list[str] = []
+    block_stats = {"heading_count": 0, "table_count": 0}
+
+    def append_block(text: str) -> None:
+        normalized = text.strip()
+        if not normalized:
+            return
+        if blocks and blocks[-1] == normalized:
+            return
+        blocks.append(normalized)
+
+    for element in elements:
+        cls_name = type(element).__name__
+
+        if cls_name in {
+            "IntroductorySectionElement",
+            "PageHeaderElement",
+            "PageNumberElement",
+            "IrrelevantElement",
+            "EmptyElement",
+            "ImageElement",
+        }:
+            continue
+
+        if cls_name == "TopSectionTitle":
+            heading_level = min(max(1 + _safe_level(element, 0), 1), 6)
+            heading_text = normalize_paragraph_text(getattr(element, "text", ""))
+            if heading_text:
+                append_block(f"{'#' * heading_level} {heading_text}")
+                block_stats["heading_count"] += 1
+            continue
+
+        if cls_name == "TitleElement":
+            heading_level = min(max(3 + _safe_level(element, 0), 1), 6)
+            heading_text = normalize_paragraph_text(getattr(element, "text", ""))
+            if heading_text:
+                append_block(f"{'#' * heading_level} {heading_text}")
+                block_stats["heading_count"] += 1
+            continue
+
+        if cls_name == "TableElement":
+            table_text = ""
+            try:
+                table_text = normalize_markdown_table(element.table_to_markdown())
+            except Exception:  # noqa: BLE001 - best-effort fallback
+                table_text = ""
+            if not table_text:
+                table_text = normalize_paragraph_text(getattr(element, "text", ""))
+            if table_text:
+                append_block(table_text)
+                block_stats["table_count"] += 1
+            continue
+
+        paragraph_text = normalize_paragraph_text(getattr(element, "text", ""))
+        if paragraph_text:
+            append_block(paragraph_text)
+
+    markdown = "\n\n".join(blocks).strip()
+    markdown = re.sub(r"\n{3,}", "\n\n", markdown)
+    if markdown:
+        markdown += "\n"
+    return markdown, block_stats
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, set):
+        return sorted(value)
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()  # type: ignore[no-any-return]
+        except Exception:  # noqa: BLE001
+            pass
+    return str(value)
+
+
+def _process_one_file(
+    *,
+    html_file: Path,
+    html_root: Path,
+    meta_root: Path | None,
+    markdown_root: Path,
+    debug_root: Path,
+    include_irrelevant_elements: bool,
+    parser_mode: str,
+) -> ConversionResult:
+    rel = html_file.resolve().relative_to(html_root).as_posix()
+    md_path = (markdown_root / rel).with_suffix(".md")
+    debug_dir = debug_root / Path(rel).parent / Path(rel).stem
+    debug_dir.mkdir(parents=True, exist_ok=True)
+
+    html = html_file.read_text(encoding="utf-8", errors="ignore")
+    sidecar_meta = _load_meta_for_html(html_file, html_root=html_root, meta_root=meta_root)
+    form_type = detect_form_type(filename=html_file.name, metadata=sidecar_meta)
+
+    parser_selection = select_parser(form_type=form_type, parser_mode=parser_mode)
+
+    with warnings.catch_warnings():
+        if parser_selection.suppress_invalid_section_warning:
+            warnings.filterwarnings("ignore", message="Invalid section type for")
+
+        elements = parser_selection.parser.parse(html, include_irrelevant_elements=include_irrelevant_elements)
+
+    markdown, block_stats = render_elements_to_markdown(elements)
+
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text(markdown, encoding="utf-8")
+
+    element_counts = dict(Counter(type(el).__name__ for el in elements))
+
+    metadata = {
+        "source_html": str(html_file),
+        "source_relpath": rel,
+        "output_markdown": str(md_path),
+        "form_type": form_type,
+        "parser": parser_selection.parser_name,
+        "num_elements": len(elements),
+        "element_counts": element_counts,
+        "heading_count": block_stats["heading_count"],
+        "table_count": block_stats["table_count"],
+        "markdown_chars": len(markdown),
+        "table_of_contents": [],
+        "input_sidecar_metadata": sidecar_meta or {},
+    }
+
+    metadata_path = debug_dir / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
+    )
+
+    run_info = {
+        "source_html": str(html_file),
+        "source_relpath": rel,
+        "output_markdown": str(md_path),
+        "metadata_path": str(metadata_path),
+        "form_type": form_type,
+        "parser": parser_selection.parser_name,
+        "include_irrelevant_elements": include_irrelevant_elements,
+    }
+    run_info_path = debug_dir / "run_info.json"
+    run_info_path.write_text(
+        json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
+    )
+
+    return ConversionResult(
+        relpath=rel,
+        source_html=str(html_file),
+        output_markdown=str(md_path),
+        metadata_path=str(metadata_path),
+        num_elements=len(elements),
+        element_counts=element_counts,
+        form_type=form_type,
+        parser=parser_selection.parser_name,
+        markdown_chars=len(markdown),
+        table_count=block_stats["table_count"],
+        heading_count=block_stats["heading_count"],
+    )
+
+
+def main() -> int:
     args = parse_args()
-    logger.info(f"Starting processing with args: {args}")
 
-    html_dir = Path(args.html_dir).expanduser().resolve()
-    if not html_dir.exists() or not html_dir.is_dir():
-        raise RuntimeError(f"--html-dir must be an existing directory: {html_dir}")
+    project_root = Path(__file__).resolve().parents[1]
+    log_path = _setup_logging(project_root)
+
+    html_root = Path(args.html_dir).expanduser().resolve()
+    if not html_root.exists() or not html_root.is_dir():
+        raise RuntimeError(f"--html-dir must be an existing directory: {html_root}")
 
     output_root = Path(args.output_dir).expanduser().resolve()
-    pdf_root = output_root / "intermediate_pdf"
-    md_root = output_root / "processed_markdown"
+    markdown_root = output_root / "processed_markdown"
     debug_root = output_root / "debug"
-    pdf_root.mkdir(parents=True, exist_ok=True)
-    md_root.mkdir(parents=True, exist_ok=True)
+    markdown_root.mkdir(parents=True, exist_ok=True)
     debug_root.mkdir(parents=True, exist_ok=True)
 
-    openai_api_key = os.environ.get("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise RuntimeError("Set OPENAI_API_KEY before running so the OpenAI llm_service can authenticate.")
+    meta_root = _infer_meta_root(html_root, args.meta_dir)
 
-    html_paths = list(html_dir.rglob("*.html")) + list(html_dir.rglob("*.htm"))
-    if not html_paths:
-        raise RuntimeError(f"No HTML files found under: {html_dir}")
-    logger.info(f"Found {len(html_paths)} HTML files to process under {html_dir}")
+    logger.info(f"Project root: {project_root}")
+    logger.info(f"Logging to: {log_path}")
+    logger.info(f"HTML root: {html_root}")
+    logger.info(f"Output root: {output_root}")
+    logger.info(f"Meta root: {meta_root}")
 
+    html_files = _iter_html_files(html_root, pattern=args.pattern, recursive=args.recursive)
     if args.year_cutoff is not None:
-        filtered: list[Path] = []
-        skipped_missing_date: list[Path] = []
-        for html_path in html_paths:
-            year = extract_year_from_filename(html_path)
-            if year is None:
-                skipped_missing_date.append(html_path)
-                continue
-            if year >= args.year_cutoff:
-                filtered.append(html_path)
-        if skipped_missing_date:
-            logger.warning(
-                "Skipped %s HTML files without a YYYY-MM-DD suffix in the filename.", len(skipped_missing_date)
+        before = len(html_files)
+        html_files = [p for p in html_files if (_extract_year_from_filename(p) or 0) >= args.year_cutoff]
+        logger.info(f"Year cutoff {args.year_cutoff}: {before} -> {len(html_files)} files")
+
+    if args.max_files is not None:
+        html_files = html_files[: max(0, args.max_files)]
+
+    if not html_files:
+        raise RuntimeError(f"No HTML files found under {html_root}")
+
+    logger.info(f"Found {len(html_files)} HTML files")
+
+    processed: list[ConversionResult] = []
+    failures: list[ConversionFailure] = []
+
+    for html_file in tqdm(html_files, desc="Converting HTML", unit="file"):
+        rel = html_file.resolve().relative_to(html_root).as_posix()
+        md_path = (markdown_root / rel).with_suffix(".md")
+        if md_path.exists() and not args.overwrite:
+            logger.info(f"Skipping existing markdown: {md_path}")
+            continue
+
+        try:
+            result = _process_one_file(
+                html_file=html_file,
+                html_root=html_root,
+                meta_root=meta_root,
+                markdown_root=markdown_root,
+                debug_root=debug_root,
+                include_irrelevant_elements=args.include_irrelevant_elements,
+                parser_mode=args.parser_mode,
             )
-        html_paths = filtered
-        if not html_paths:
-            raise RuntimeError(f"No HTML files found for year >= {args.year_cutoff} under: {html_dir}")
-        logger.info(f"Filtered to {len(html_paths)} HTML files for year >= {args.year_cutoff}")
+            processed.append(result)
+            logger.success(
+                f"Converted {result.relpath} -> {result.output_markdown} | parser={result.parser} "
+                f"| elements={result.num_elements} | headings={result.heading_count} | tables={result.table_count}"
+            )
+        except Exception as exc:  # noqa: BLE001
+            failure = ConversionFailure(relpath=rel, source_html=str(html_file), error=repr(exc))
+            failures.append(failure)
+            logger.exception(f"Failed converting {rel}: {exc}")
+            if not args.continue_on_error:
+                break
 
-    # Sort by year (desc) based on the expected YYYY-MM-DD filename suffix; files without a date suffix go last.
-    def _html_sort_key(p: Path) -> tuple[int, int, str]:
-        year = extract_year_from_filename(p)
-        if year is None:
-            return (1, 0, p.as_posix())
-        return (0, -year, p.as_posix())
-
-    html_paths.sort(key=_html_sort_key)
-
-    if args.workers < 1:
-        raise RuntimeError("--workers must be >= 1")
-
-    schema_routes: dict[str, dict] = {}
-    sectionheader_schema_key = "marker.processors.llm.llm_sectionheader.SectionHeaderSchema"
-    if args.sectionheader_openai_base_url:
-        if args.sectionheader_openai_model is None or args.sectionheader_openai_model.strip() == "":
-            raise RuntimeError("--sectionheader-openai-model must be set when --sectionheader-openai-base-url is set")
-        schema_routes[sectionheader_schema_key] = {}
-        schema_routes[sectionheader_schema_key]["openai_base_url"] = args.sectionheader_openai_base_url
-        schema_routes[sectionheader_schema_key]["openai_model"] = args.sectionheader_openai_model
-        if args.sectionheader_timeout and args.sectionheader_timeout > 0:
-            schema_routes[sectionheader_schema_key]["openai_timeout"] = args.sectionheader_timeout
-    if args.sectionheader_max_prompt_tokens and args.sectionheader_max_prompt_tokens > 0:
-        schema_routes.setdefault(sectionheader_schema_key, {})
-        schema_routes[sectionheader_schema_key]["max_prompt_tokens"] = args.sectionheader_max_prompt_tokens
-    if (args.sectionheader_hf_model_id or "").strip():
-        schema_routes.setdefault(sectionheader_schema_key, {})
-        schema_routes[sectionheader_schema_key]["hf_model_id"] = args.sectionheader_hf_model_id
-
-    processors_override: str | None = None
-    if args.disable_forms or args.disable_table_merge:
-        from marker.converters.pdf import PdfConverter as _PdfConverter
-        from marker.processors import BaseProcessor
-        from marker.util import classes_to_strings
-
-        disabled = set()
-        if args.disable_forms:
-            disabled.add("marker.processors.llm.llm_form.LLMFormProcessor")
-        if args.disable_table_merge:
-            disabled.add("marker.processors.llm.llm_table_merge.LLMTableMergeProcessor")
-        default_processors = cast(list[type[BaseProcessor]], list(_PdfConverter.default_processors))
-        filtered_processors = [p for p in default_processors if f"{p.__module__}.{p.__name__}" not in disabled]
-        processors_override = ",".join(classes_to_strings(filtered_processors))
-
-    config = {
-        "output_format": "markdown",
-        "use_llm": True,
-        "llm_service": "scripts.process_html_to_markdown.CustomOpenAIService",
-        "openai_api_key": openai_api_key,
-        "openai_base_url": args.openai_base_url,
-        "openai_model": args.openai_model,
-        "CustomOpenAIService_openai_temperature": args.openai_temperature,
-        "CustomOpenAIService_openai_system_prompt": args.openai_system_prompt,
-        "CustomOpenAIService_openai_timeout": args.timeout,
-        "CustomOpenAIService_openai_max_retries": args.max_retries,
-        "CustomOpenAIService_max_image_long_side": args.max_image_long_side,
-        "CustomOpenAIService_schema_routes": schema_routes,
-        "CustomOpenAIService_hf_model_id": args.hf_model_id,
-        "CustomOpenAIService_hf_trust_remote_code": args.hf_trust_remote_code,
-        "CustomOpenAIService_hf_count_image_tokens": args.hf_count_image_tokens,
-        "CustomOpenAIService_log_prompt_token_count": args.log_prompt_token_count,
-        "CustomOpenAIService_max_prompt_tokens": args.max_prompt_tokens,
-        # Marker calls this "max_concurrency" (default 3). This controls parallel in-flight
-        # LLM requests (not "batching" into a single request).
-        "max_concurrency": args.max_concurrency,
-        "LLMTableProcessor_max_concurrency": args.max_concurrency,
-        "LLMTableProcessor_image_expansion_ratio": args.image_expansion_ratio,
-        "LLMTableProcessor_analysis_style": args.analysis_style,
-        "LLMSectionHeaderProcessor_analysis_style": args.sectionheader_analysis_style,
-        "LLMSectionHeaderProcessor_max_rewrite_retries": args.sectionheader_rewrite_retries,
-        "LLMSectionHeaderProcessor_max_chunk_tokens": args.sectionheader_max_chunk_tokens,
-        "LLMSectionHeaderProcessor_chunk_tokenizer_hf_model_id": (
-            args.sectionheader_chunk_tokenizer_hf_model_id or args.sectionheader_hf_model_id or args.hf_model_id
-        ),
-        "LLMSectionHeaderProcessor_neighbor_text_max_blocks": args.sectionheader_neighbor_text_max_blocks,
-        "LLMSectionHeaderProcessor_neighbor_text_max_chars": args.sectionheader_neighbor_text_max_chars,
-        "LLMSectionHeaderProcessor_recent_headers_max_count": args.sectionheader_recent_headers_max_count,
-        "LLMPageCorrectionProcessor_analysis_style": args.analysis_style,
-        "disable_image_extraction": True,
-        "force_ocr": False,
+    run_info = {
+        "args": args.to_dict(),
+        "html_root": str(html_root),
+        "output_root": str(output_root),
+        "meta_root": str(meta_root) if meta_root else None,
+        "processed_files": len(processed),
+        "failed_files": len(failures),
+        "log_path": str(log_path),
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    if processors_override:
-        config["processors"] = processors_override
 
-    if args.workers == 1:
-        gpu_ids = [gpu.strip() for gpu in args.gpu_ids.split(",") if gpu.strip()]
-        init_worker(config, gpu_ids)
-        logger.info("Processing HTML files sequentially with a single worker")
-        args_dict = args.to_dict()
-        for html_file_path in tqdm(html_paths, desc="Processing HTML files", unit="file"):
-            process_one(html_file_path, html_dir, pdf_root, md_root, debug_root, args_dict)
-        flush_langsmith_traces()
-        return
+    run_info_path = output_root / "run_info.json"
+    run_info_path.write_text(
+        json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
+    )
 
-    args_dict = args.to_dict()
-    ctx = mp.get_context("spawn")
-    logger.info(f"Processing HTML files in parallel with {args.workers} workers")
-    failures: list[Path] = []
-    gpu_ids = [gpu.strip() for gpu in args.gpu_ids.split(",") if gpu.strip()]
-    with ProcessPoolExecutor(
-        max_workers=args.workers, mp_context=ctx, initializer=init_worker, initargs=(config, gpu_ids)
-    ) as executor:
-        futures = {
-            executor.submit(process_one, p, html_dir, pdf_root, md_root, debug_root, args_dict): p for p in html_paths
-        }
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing HTML files", unit="file"):
-            html_file_path = futures[future]
-            try:
-                future.result()
-            except Exception:
-                failures.append(html_file_path)
-                logger.exception(f"Failed processing: {html_file_path}")
+    processed_index_path = output_root / "doc_index.jsonl"
+    with processed_index_path.open("w", encoding="utf-8") as f:
+        for rec in processed:
+            row = {
+                "source": rec.source_html,
+                "relpath": rec.relpath,
+                "markdown_path": rec.output_markdown,
+                "metadata_path": rec.metadata_path,
+                "form_type": rec.form_type,
+                "parser": rec.parser,
+                "num_elements": rec.num_elements,
+                "table_count": rec.table_count,
+                "heading_count": rec.heading_count,
+            }
+            f.write(json.dumps(row, ensure_ascii=False, default=_json_default) + "\n")
 
-    if failures:
-        raise RuntimeError(f"Failed to process {len(failures)} files; see logs for details.")
+    errors_path = output_root / "errors.jsonl"
+    with errors_path.open("w", encoding="utf-8") as f:
+        for err in failures:
+            f.write(json.dumps(asdict(err), ensure_ascii=False, default=_json_default) + "\n")
 
-    flush_langsmith_traces()
+    logger.success(
+        f"Done. processed={len(processed)} failed={len(failures)} | wrote {processed_index_path} {errors_path}"
+    )
+
+    if failures and not args.continue_on_error:
+        raise RuntimeError(f"Conversion failed for {len(failures)} file(s). See logs and {errors_path}.")
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

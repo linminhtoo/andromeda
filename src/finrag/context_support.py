@@ -4,6 +4,7 @@ from typing import Callable, cast
 
 from finrag.dataclasses import DocChunk
 from finrag.llm_clients import LLMClient
+from finrag.metadata_models import chunk_metadata_from_value
 
 ContextBuilder = Callable[[DocChunk], str]
 
@@ -37,9 +38,10 @@ def situate_context(
 
     prompt = (
         "You are helping improve vector search retrieval.\n"
-        "Given some context and a chunk, write a short, specific context that situates "
+        "Given some context and a chunk, write a CONCISE summary that situates "
         "the chunk within the larger context.\n"
-        "Return ONLY the context. Do not include quotes, headings, or preamble.\n\n"
+        "Return ONLY the summary. Ensure it is CONCISE. \n"
+        "Do not include quotes, headings, or preamble.\n\n"
         "<context>\n"
         f"{context}\n"
         "</context>\n\n"
@@ -55,10 +57,10 @@ def situate_context(
     return (out or "").strip()
 
 
-def context_builder_from_metadata(*, key: str = "context") -> ContextBuilder:
+def context_builder_from_metadata(*, key: str = "retrieval_context") -> ContextBuilder:
     def _builder(chunk: DocChunk) -> str:
-        meta = chunk.metadata or {}
-        value = meta.get(key)
+        parsed = chunk_metadata_from_value(chunk.metadata)
+        value = parsed.context_for_key(key)
         return str(value) if value else ""
 
     return _builder
@@ -70,7 +72,7 @@ def apply_context_strategy(
     strategy: str,
     neighbor_window: int = 1,
     doc_text: str | None = None,
-    metadata_key: str = "context",
+    metadata_key: str = "retrieval_context",
     llm_for_context: LLMClient | None = None,
     temperature: float = 0.0,
     max_concurrency: int = 32,
@@ -126,8 +128,8 @@ def apply_context_strategy(
             max_workers = max(1, int(max_concurrency))
             work_items: list[tuple[int, DocChunk]] = []
             for idx, ch in enumerate(chunks):
-                meta = ch.metadata or {}
-                if skip_if_exists and meta.get(metadata_key):
+                parsed = chunk_metadata_from_value(ch.metadata)
+                if skip_if_exists and parsed.context_for_key(metadata_key):
                     continue
                 work_items.append((idx, ch))
 
@@ -167,8 +169,8 @@ def apply_context_strategy(
             max_workers = max(1, int(max_concurrency))
             work_items: list[tuple[int, DocChunk, str]] = []
             for idx, ch in enumerate(chunks):
-                meta = ch.metadata or {}
-                if skip_if_exists and meta.get(metadata_key):
+                parsed = chunk_metadata_from_value(ch.metadata)
+                if skip_if_exists and parsed.context_for_key(metadata_key):
                     continue
                 before = texts[max(0, idx - window) : idx]
                 after = texts[idx + 1 : idx + 1 + window]

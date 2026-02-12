@@ -1,8 +1,9 @@
 """
-Chunk a directory of Markdown filings using `finrag.chunking.DoclingHybridChunker`.
+Chunk a directory of Markdown filings into structured `DocChunk` JSONL files.
 
-This script focuses on chunking + exporting chunks (and metadata) to disk.
-Indexing into a vector store can be done as a separate step.
+Supports two chunkers:
+- `markdown_table_preserving` (default): keeps markdown tables intact and preserves section headings.
+- `docling_hybrid`: token-aware Docling hybrid chunker with optional markdown table fencing.
 """
 
 import argparse
@@ -21,12 +22,14 @@ from loguru import logger
 from tqdm import tqdm
 
 from finrag.chunk_postprocess import (
+    ChunkPostprocessor,
+    ChunkPostprocessorPipeline,
     DocumentContextPostprocessor,
     HeuristicSummaryPostprocessor,
     SectionLinkPostprocessor,
     YahooFinanceCompanyNameResolver,
 )
-from finrag.chunking import DoclingHybridChunker
+from finrag.chunking import DoclingHybridChunker, MarkdownTablePreservingChunker
 from finrag.dataclasses import DocChunk
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -36,12 +39,15 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 class Args:
     markdown_dir: str
     output_dir: str
+    metadata_dir: str | None
     pattern: str
     recursive: bool
     max_files: int | None
     year_cutoff: int | None
     overwrite: bool
     doc_id_strategy: str
+    chunker: str
+    split_markdown_tables: bool
     hf_offline: bool
     tokenizer_model: str
     max_tokens: int
@@ -57,7 +63,7 @@ class Args:
 
 
 def parse_args() -> Args:
-    parser = argparse.ArgumentParser(description="Chunk a directory of Markdown files using DoclingHybridChunker.")
+    parser = argparse.ArgumentParser(description="Chunk a directory of Markdown files.")
     parser.add_argument(
         "--markdown-dir",
         required=True,
@@ -67,6 +73,14 @@ def parse_args() -> Args:
         "--output-dir",
         default="outputs/chunks_docling",
         help="Directory to write chunk exports (creates `chunks/`, `doc_index.jsonl`, `run_info.json`).",
+    )
+    parser.add_argument(
+        "--metadata-dir",
+        default=None,
+        help=(
+            "Optional root directory containing per-document metadata.json sidecars. "
+            "If unset and `<markdown-dir>/../debug` exists, it is used automatically."
+        ),
     )
     parser.add_argument("--pattern", default="*.md", help="Glob pattern for markdown files.")
     parser.add_argument("--recursive", action="store_true", help="Recurse into subdirectories.")
@@ -84,6 +98,20 @@ def parse_args() -> Args:
         default="uuid",
         help="How to generate `doc_id` for each markdown file.",
     )
+    parser.add_argument(
+        "--chunker",
+        choices=["markdown_table_preserving", "docling_hybrid"],
+        default="markdown_table_preserving",
+        help=(
+            "`markdown_table_preserving` keeps whole markdown tables and section headings. "
+            "`docling_hybrid` uses Docling tokenizer-aware chunking."
+        ),
+    )
+    parser.add_argument(
+        "--split-markdown-tables",
+        action="store_true",
+        help="Allow splitting oversized tables into multiple chunks when using markdown_table_preserving.",
+    )
 
     hf_group = parser.add_mutually_exclusive_group()
     hf_group.add_argument(
@@ -98,7 +126,7 @@ def parse_args() -> Args:
         action="store_false",
         help="Allow HuggingFace/transformers to download models if needed.",
     )
-    parser.set_defaults(hf_online=True)
+    parser.set_defaults(hf_offline=False)
 
     # Chunker options
     parser.add_argument(
@@ -148,12 +176,15 @@ def parse_args() -> Args:
     return Args(
         markdown_dir=args.markdown_dir,
         output_dir=args.output_dir,
+        metadata_dir=args.metadata_dir,
         pattern=args.pattern,
         recursive=bool(args.recursive),
         max_files=args.max_files,
         year_cutoff=args.year_cutoff,
         overwrite=bool(args.overwrite),
         doc_id_strategy=args.doc_id_strategy,
+        chunker=args.chunker,
+        split_markdown_tables=bool(args.split_markdown_tables),
         hf_offline=bool(args.hf_offline),
         tokenizer_model=args.tokenizer_model,
         max_tokens=args.max_tokens,
@@ -228,14 +259,29 @@ def _setup_logging(project_root: Path) -> Path:
     return log_path
 
 
-def _build_chunker(args: Args) -> DoclingHybridChunker:
+def _build_postprocessors(args: Args) -> list[ChunkPostprocessor]:
+    resolver = YahooFinanceCompanyNameResolver() if args.company_name_resolver == "yahoo" else None
+    return [
+        DocumentContextPostprocessor(company_name_resolver=resolver),
+        SectionLinkPostprocessor(neighbor_window=args.section_neighbor_window),
+        HeuristicSummaryPostprocessor(max_summary_chars=args.max_summary_chars),
+    ]
+
+
+def _build_chunker(
+    args: Args, *, postprocessors: list[ChunkPostprocessor]
+) -> DoclingHybridChunker | MarkdownTablePreservingChunker:
+    if args.chunker == "markdown_table_preserving":
+        return MarkdownTablePreservingChunker(
+            max_tokens=args.max_tokens, overlap_tokens=args.overlap_tokens, split_tables=args.split_markdown_tables
+        )
+
     tokenizer_kwargs: dict[str, Any] = {}
     if args.hf_offline:
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
         tokenizer_kwargs["local_files_only"] = True
 
-    resolver = YahooFinanceCompanyNameResolver() if args.company_name_resolver == "yahoo" else None
     return DoclingHybridChunker(
         tokenizer_model=args.tokenizer_model,
         max_tokens=args.max_tokens,
@@ -243,12 +289,33 @@ def _build_chunker(args: Args) -> DoclingHybridChunker:
         preprocess_markdown_tables=args.preprocess_markdown_tables,
         markdown_table_fence_lang=args.markdown_table_fence_lang,
         tokenizer_kwargs=tokenizer_kwargs,
-        chunk_postprocessors=[
-            DocumentContextPostprocessor(company_name_resolver=resolver),
-            SectionLinkPostprocessor(neighbor_window=args.section_neighbor_window),
-            HeuristicSummaryPostprocessor(max_summary_chars=args.max_summary_chars),
-        ],
+        chunk_postprocessors=postprocessors,
     )
+
+
+def _resolve_metadata_root(markdown_root: Path, metadata_dir_arg: str | None) -> Path | None:
+    if metadata_dir_arg:
+        p = Path(metadata_dir_arg).expanduser().resolve()
+        if p.exists() and p.is_dir():
+            return p
+        return None
+
+    inferred = (markdown_root.parent / "debug").resolve()
+    if inferred.exists() and inferred.is_dir():
+        return inferred
+    return None
+
+
+def _resolve_metadata_json_for_markdown(
+    md_path: Path, *, markdown_root: Path, metadata_root: Path | None
+) -> str | None:
+    if metadata_root is None:
+        return None
+    rel = md_path.resolve().relative_to(markdown_root)
+    candidate = metadata_root / rel.parent / rel.stem / "metadata.json"
+    if candidate.exists() and candidate.is_file():
+        return str(candidate)
+    return None
 
 
 def _chunk_to_dict(chunk: DocChunk) -> dict[str, Any]:
@@ -262,10 +329,13 @@ def main() -> int:
     output_root = Path(args.output_dir).expanduser().resolve()
     output_chunks_root = output_root / "chunks"
     output_chunks_root.mkdir(parents=True, exist_ok=True)
+    metadata_root = _resolve_metadata_root(markdown_root, args.metadata_dir)
 
     log_path = _setup_logging(project_root)
     logger.info(f"Project root: {project_root}")
     logger.info(f"Logging to: {log_path}")
+    logger.info(f"Chunker: {args.chunker}")
+    logger.info(f"Metadata root: {metadata_root}")
 
     md_files = [
         p for p in _iter_markdown_files(markdown_root, pattern=args.pattern, recursive=args.recursive) if p.is_file()
@@ -282,7 +352,11 @@ def main() -> int:
 
     logger.info(f"Found {len(md_files)} markdown files under {markdown_root}")
 
-    chunker = _build_chunker(args)
+    postprocessors = _build_postprocessors(args)
+    chunker = _build_chunker(args, postprocessors=postprocessors)
+    manual_postprocess = (
+        ChunkPostprocessorPipeline(postprocessors) if isinstance(chunker, MarkdownTablePreservingChunker) else None
+    )
 
     doc_index_path = output_root / "doc_index.jsonl"
     errors_path = output_root / "errors.jsonl"
@@ -305,7 +379,15 @@ def main() -> int:
             doc_start_time = time.time()
             doc_id = _make_doc_id(md_path, markdown_root=markdown_root, strategy=args.doc_id_strategy)
             try:
-                chunks = chunker.chunk_document(str(md_path), doc_id)
+                if isinstance(chunker, MarkdownTablePreservingChunker):
+                    metadata_json_path = _resolve_metadata_json_for_markdown(
+                        md_path, markdown_root=markdown_root, metadata_root=metadata_root
+                    )
+                    chunks = chunker.chunk_document(str(md_path), doc_id, metadata_json_path=metadata_json_path)
+                    if manual_postprocess is not None:
+                        chunks = manual_postprocess.process(chunks)
+                else:
+                    chunks = chunker.chunk_document(str(md_path), doc_id)
 
                 with out_path.open("w", encoding="utf-8") as out_f:
                     for ch in chunks:

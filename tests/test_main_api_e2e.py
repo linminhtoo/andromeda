@@ -27,12 +27,24 @@ def test_query_endpoint_uses_service(monkeypatch) -> None:
         def __init__(self):
             self.calls = []
 
-        def answer_question(self, *, question, settings, include_retrieved_chunks: bool = False):
+        def answer_question(
+            self,
+            *,
+            question,
+            settings,
+            tickers=None,
+            filing_date_from=None,
+            filing_date_to=None,
+            include_retrieved_chunks: bool = False,
+        ):
             self.calls.append(
                 {
                     "question": question,
                     "mode": settings.mode,
                     "top_k_retrieve": settings.top_k_retrieve,
+                    "tickers": tickers,
+                    "filing_date_from": filing_date_from,
+                    "filing_date_to": filing_date_to,
                     "include_retrieved_chunks": include_retrieved_chunks,
                 }
             )
