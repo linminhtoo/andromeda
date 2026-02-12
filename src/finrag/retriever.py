@@ -46,6 +46,10 @@ class PostgresHybridRetriever:
         Metadata key containing enriched indexing text.
     retrieval_context_key : str, optional
         Metadata key used for stored contextual text.
+    ann_hnsw_m : int | None, optional
+        Optional HNSW `m` index build parameter.
+    ann_hnsw_ef_construction : int | None, optional
+        Optional HNSW `ef_construction` index build parameter.
     auto_init_schema : bool, optional
         Whether to ensure schema/indexes on initialization.
     """
@@ -60,6 +64,8 @@ class PostgresHybridRetriever:
         context_builder: Callable[[DocChunk], str] | None = None,
         retrieval_text_key: str = "retrieval_text",
         retrieval_context_key: str = "retrieval_context",
+        ann_hnsw_m: int | None = None,
+        ann_hnsw_ef_construction: int | None = None,
         auto_init_schema: bool = True,
     ):
         self.llm = llm_client
@@ -68,7 +74,11 @@ class PostgresHybridRetriever:
         self.context_builder = context_builder
         self.retrieval_text_key = retrieval_text_key
         self.retrieval_context_key = retrieval_context_key
-        self.db = PostgresDB(dsn)
+        self.db = PostgresDB(
+            dsn,
+            ann_hnsw_m=ann_hnsw_m,
+            ann_hnsw_ef_construction=ann_hnsw_ef_construction,
+        )
 
         if auto_init_schema:
             self.db.ensure_schema()
