@@ -51,7 +51,8 @@ class Args:
     context_max_concurrency: int
     ann_hnsw_m: int | None
     ann_hnsw_ef_construction: int | None
-    truncate: bool
+    reset_corpus: bool
+    recreate_ann_index: bool
     skip_existing_chunks: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -189,7 +190,18 @@ def parse_args() -> Args:
         default=None,
         help="Optional HNSW index parameter ef_construction (higher can improve recall at higher build cost).",
     )
-    parser.add_argument("--truncate", action="store_true", help="Delete all existing corpus rows before indexing.")
+    parser.add_argument(
+        "--reset-corpus",
+        "--truncate",
+        dest="reset_corpus",
+        action="store_true",
+        help="Delete all existing corpus rows before indexing (--truncate is kept as a legacy alias).",
+    )
+    parser.add_argument(
+        "--recreate-ann-index",
+        action="store_true",
+        help="Drop and recreate ANN indexes so new HNSW settings take effect.",
+    )
     parser.add_argument(
         "--skip-existing-chunks", action="store_true", help="Skip chunk IDs that already exist in PostgreSQL."
     )
@@ -212,7 +224,8 @@ def parse_args() -> Args:
         context_max_concurrency=ns.context_max_concurrency,
         ann_hnsw_m=ns.ann_hnsw_m,
         ann_hnsw_ef_construction=ns.ann_hnsw_ef_construction,
-        truncate=bool(ns.truncate),
+        reset_corpus=bool(ns.reset_corpus),
+        recreate_ann_index=bool(ns.recreate_ann_index),
         skip_existing_chunks=bool(ns.skip_existing_chunks),
     )
 
@@ -325,9 +338,15 @@ def main() -> int:
         ann_hnsw_ef_construction=args.ann_hnsw_ef_construction,
     )
 
-    if args.truncate:
+    if args.reset_corpus:
         logger.warning("Truncating existing PostgreSQL corpus rows")
         retriever.db.clear_all()
+
+    if args.recreate_ann_index:
+        logger.warning("Dropping ANN indexes for recreation")
+        retriever.db.drop_ann_indexes()
+        if not args.reset_corpus:
+            retriever.db.ensure_ann_index()
 
     docs = [DocIndexEntry.from_mapping(item) for item in iter_jsonl(doc_index_path)]
     if args.max_docs is not None:
@@ -377,7 +396,7 @@ def main() -> int:
                 if not chunks_to_index:
                     skipped_docs += 1
                     continue
-            
+
             logger.debug(f"Indexing doc_id={doc_chunks[0].doc_id} chunks={len(chunks_to_index)}")
             for batch in batched(chunks_to_index, batch_size=args.batch_size):
                 retriever.index(batch)

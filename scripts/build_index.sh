@@ -20,11 +20,18 @@ cd "$project_root"
 
 now=$(date +"%Y%m%d_%H%M%S")
 ann_args=()
+reset_args=()
 if [[ -n "${ANN_HNSW_M:-}" ]]; then
   ann_args+=(--ann-hnsw-m "$ANN_HNSW_M")
 fi
 if [[ -n "${ANN_HNSW_EF_CONSTRUCTION:-}" ]]; then
   ann_args+=(--ann-hnsw-ef-construction "$ANN_HNSW_EF_CONSTRUCTION")
+fi
+if [[ "${RECREATE_ANN_INDEX:-0}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+  ann_args+=(--recreate-ann-index)
+fi
+if [[ "${RESET_CORPUS:-0}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+  reset_args+=(--reset-corpus)
 fi
 
 # REMEMBER TO CHANGE --ingest-output-dir
@@ -43,7 +50,9 @@ python3 -m scripts.build_index \
   --context-max-concurrency 64 \
   --batch-size 128 \
   --skip-existing-chunks \
-  --truncate \
+  "${reset_args[@]}" \
   "${ann_args[@]}" \
   2>&1 | tee "logs/build_index_${now}.log"
-# NOTE: set --truncate to remove existing postgresql rows
+# Optional env flags:
+#   RESET_CORPUS=true
+#   RECREATE_ANN_INDEX=true

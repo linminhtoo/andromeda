@@ -8,7 +8,7 @@ from typing import Any, Iterable, LiteralString, Sequence
 import psycopg
 from loguru import logger
 from psycopg.rows import dict_row
-from psycopg.sql import SQL, Literal
+from psycopg.sql import SQL, Composable, Literal
 from psycopg.types.json import Jsonb
 
 
@@ -164,15 +164,11 @@ class PostgresDB:
         embedding_dim: int | None = None,
         ann_hnsw_m: int | None = None,
         ann_hnsw_ef_construction: int | None = None,
-        ann_ivfflat_lists: int = 100,
     ):
         self.dsn = dsn
         self.embedding_dim = self.normalize_embedding_dim(embedding_dim)
         self.ann_hnsw_m = self.normalize_positive_int(ann_hnsw_m)
         self.ann_hnsw_ef_construction = self.normalize_positive_int(ann_hnsw_ef_construction)
-        self.ann_ivfflat_lists = self.normalize_positive_int(ann_ivfflat_lists)
-        if self.ann_ivfflat_lists is None:
-            self.ann_ivfflat_lists = 100
         self._ann_index_ready = False
 
     def connect(self) -> psycopg.Connection[Any]:
@@ -231,9 +227,7 @@ class PostgresDB:
 
     def ensure_ann_index(self, embedding_dim: int | None = None) -> None:
         """
-        Ensure an ANN index exists for cosine similarity search.
-
-        Prefers HNSW and falls back to ivfflat when needed.
+        Ensure a HNSW ANN index exists for cosine similarity search.
         """
 
         if embedding_dim is not None:
@@ -248,9 +242,9 @@ class PostgresDB:
         if self._ann_index_ready:
             return
 
-        vector_type = SQL(f"vector({dim})")
+        vector_type = SQL("vector({})").format(Literal(dim))
 
-        hnsw_with_clauses: list[SQL] = []
+        hnsw_with_clauses: list[Composable] = []
         if self.ann_hnsw_m is not None:
             hnsw_with_clauses.append(SQL("m = {}").format(Literal(self.ann_hnsw_m)))
         if self.ann_hnsw_ef_construction is not None:
@@ -265,29 +259,14 @@ class PostgresDB:
             ON chunks USING hnsw ((embedding::{vector_type}) vector_cosine_ops){hnsw_with_sql};
             """
         ).format(vector_type=vector_type, hnsw_with_sql=hnsw_with_sql)
-        ivfflat_sql = SQL(
-            """
-            CREATE INDEX IF NOT EXISTS idx_chunks_embedding_ivfflat
-            ON chunks USING ivfflat ((embedding::{vector_type}) vector_cosine_ops) WITH (lists = {lists});
-            """
-        ).format(vector_type=vector_type, lists=Literal(self.ann_ivfflat_lists))
 
         try:
             with self.connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(hnsw_sql)
             self._ann_index_ready = True
-            return
         except Exception as exc:  # noqa: BLE001
             logger.warning("Skipping hnsw index creation: {!r}", exc)
-
-        try:
-            with self.connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(ivfflat_sql)
-            self._ann_index_ready = True
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Skipping ivfflat index creation: {!r}", exc)
 
     def drop_ann_indexes(self) -> None:
         """
@@ -297,6 +276,7 @@ class PostgresDB:
         with self.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("DROP INDEX IF EXISTS idx_chunks_embedding_hnsw;")
+                # Keep cleanup for legacy deployments that previously created ivfflat indexes.
                 cur.execute("DROP INDEX IF EXISTS idx_chunks_embedding_ivfflat;")
         self._ann_index_ready = False
 
@@ -627,10 +607,10 @@ class PostgresDB:
             where_sql = SQL("WHERE ") + SQL(" AND ").join(where_clauses)
 
         vector_dim = self.resolve_embedding_dim()
-        embedding_expr = SQL("embedding")
-        query_vector_expr = SQL("%(query_vector)s::vector")
+        embedding_expr: Composable = SQL("embedding")
+        query_vector_expr: Composable = SQL("%(query_vector)s::vector")
         if vector_dim is not None:
-            vector_type = SQL(f"vector({vector_dim})")
+            vector_type = SQL("vector({})").format(Literal(vector_dim))
             embedding_expr = SQL("embedding::{}").format(vector_type)
             query_vector_expr = SQL("%(query_vector)s::{}").format(vector_type)
 
