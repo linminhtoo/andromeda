@@ -7,6 +7,7 @@ import sys
 import asyncio
 import threading
 import time
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +17,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # from finrag.chunking import DoclingHybridChunker
 from finrag.dataclasses import TopChunk
@@ -340,7 +341,7 @@ class RAGService:
         include_retrieved_chunks: bool = False,
     ) -> QueryResponse:
         """
-        
+
         TODO's
         ------
         - should we infer filters from question?
@@ -812,12 +813,12 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 final_answer=(full_final if full_final else full_draft),
                 top_chunks=rag_service._serialize_top_chunks(reranked),
             )
-            _append_history(req=req_resolved, res=res)
 
             if final_step_ms is not None:
                 timing_ms["final_ms"] = final_step_ms
             total_ms = (time.time() * 1000) - started_ms
             timing_ms["total_ms"] = float(total_ms)
+            _append_history(req=req_resolved, res=res, timing_ms=timing_ms)
 
             yield ndjson_bytes(
                 {
@@ -1157,6 +1158,25 @@ class HistoryEntry(BaseModel):
     created_at: str
     request: QueryRequest
     response: QueryResponse
+    timing_ms: dict[str, float] = Field(default_factory=dict)
+
+
+def _sanitize_timing_ms(timing_ms: dict[str, float] | None) -> dict[str, float]:
+    if not timing_ms:
+        return {}
+    out: dict[str, float] = {}
+    for key, value in timing_ms.items():
+        k = str(key or "").strip()
+        if not k:
+            continue
+        try:
+            n = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(n) or n < 0:
+            continue
+        out[k] = n
+    return out
 
 
 def _history_path() -> Path:
@@ -1166,11 +1186,15 @@ def _history_path() -> Path:
     return (_project_root() / "data" / "qa_history.jsonl").resolve()
 
 
-def _append_history(*, req: QueryRequest, res: QueryResponse) -> None:
+def _append_history(*, req: QueryRequest, res: QueryResponse, timing_ms: dict[str, float] | None = None) -> None:
     if _env_bool("DISABLE_HISTORY", default=False):
         return
     entry = HistoryEntry(
-        id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc).isoformat(), request=req, response=res
+        id=str(uuid.uuid4()),
+        created_at=datetime.now(timezone.utc).isoformat(),
+        request=req,
+        response=res,
+        timing_ms=_sanitize_timing_ms(timing_ms),
     )
     path = _history_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1216,6 +1240,7 @@ def _read_history(*, limit: int = 50, summary: bool = False) -> list[dict]:
                 "created_at": entry.created_at,
                 "request": {"question": entry.request.question, "mode": entry.request.mode},
                 "response": {"top_chunks_count": len(entry.response.top_chunks)},
+                "timing_ms": entry.timing_ms,
             }
         )
     return out

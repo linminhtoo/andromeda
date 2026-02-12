@@ -6,28 +6,30 @@
   <title>Andromeda</title>
   <style>
     :root{
-      --bg: #0b1020;
-      --panel: rgba(255,255,255,0.06);
-      --panel2: rgba(255,255,255,0.08);
-      --text: rgba(255,255,255,0.92);
-      --muted: rgba(255,255,255,0.65);
-      --border: rgba(255,255,255,0.12);
-      --accent: #7c3aed;
-      --accent2: #22c55e;
-      --danger: #ef4444;
-      --shadow: 0 18px 45px rgba(0,0,0,0.35);
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --bg: #edf3f6;
+      --panel: #ffffff;
+      --panel2: #f6fafc;
+      --text: #142232;
+      --muted: #566375;
+      --border: #d3e0ea;
+      --accent: #0f766e;
+      --accent2: #0369a1;
+      --danger: #b91c1c;
+      --ok: #047857;
+      --shadow: 0 14px 34px rgba(15,23,42,0.09);
+      --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --ui: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+      --display: "Gill Sans", "Avenir Next Condensed", "Avenir Next", "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body {
       margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--ui);
       background:
-        radial-gradient(1200px 700px at 20% 10%, rgba(124,58,237,0.28), transparent 55%),
-        radial-gradient(1100px 650px at 80% 20%, rgba(34,197,94,0.22), transparent 55%),
-        radial-gradient(900px 500px at 50% 90%, rgba(59,130,246,0.20), transparent 55%),
-        var(--bg);
+        radial-gradient(1250px 760px at 14% 4%, rgba(14,116,144,0.12), transparent 60%),
+        radial-gradient(980px 620px at 86% 0%, rgba(13,148,136,0.11), transparent 65%),
+        linear-gradient(180deg, #f8fbfd 0%, var(--bg) 50%, #e8f0f4 100%);
       color: var(--text);
     }
     header {
@@ -35,7 +37,7 @@
       top: 0;
       z-index: 10;
       backdrop-filter: blur(14px);
-      background: linear-gradient(to bottom, rgba(11,16,32,0.92), rgba(11,16,32,0.65));
+      background: linear-gradient(to bottom, rgba(250,253,255,0.96), rgba(250,253,255,0.82));
       border-bottom: 1px solid var(--border);
     }
     .topbar {
@@ -48,7 +50,13 @@
       margin: 0 auto;
     }
     .brand { display: flex; align-items: baseline; gap: 0.8rem; }
-    h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.2px; }
+    h1 {
+      margin: 0;
+      font-size: 1.1rem;
+      letter-spacing: 0.15px;
+      font-family: var(--display);
+      font-weight: 700;
+    }
     .subtitle { color: var(--muted); font-size: 0.9rem; }
     .actions { display:flex; gap: 0.5rem; align-items:center; flex-wrap: wrap; }
     main {
@@ -68,7 +76,7 @@
     .panel {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 16px;
       box-shadow: var(--shadow);
       overflow: hidden;
     }
@@ -79,7 +87,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 0.75rem;
-      background: rgba(255,255,255,0.03);
+      background: linear-gradient(180deg, #f9fcfe 0%, #f3f8fb 100%);
     }
     .panelHeader h2 { margin: 0; font-size: 0.95rem; }
     .panelBody { padding: 1rem; }
@@ -91,47 +99,67 @@
       padding: 0.75rem 0.85rem;
       border-radius: 12px;
       border: 1px solid var(--border);
-      background: rgba(255,255,255,0.06);
+      background: #f9fcff;
       color: var(--text);
       outline: none;
+      transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+    }
+    input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:focus {
+      border-color: rgba(14,116,144,0.45);
+      box-shadow: 0 0 0 3px rgba(14,116,144,0.12);
+      background: #fff;
     }
     textarea { min-height: 60px; resize: vertical; }
-    input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.45); }
+    input::placeholder, textarea::placeholder { color: #8394a6; }
     .btn {
       border: 1px solid var(--border);
-      background: rgba(255,255,255,0.06);
+      background: #f5f9fc;
       color: var(--text);
       padding: 0.55rem 0.8rem;
       border-radius: 999px;
       cursor: pointer;
       font-weight: 650;
       letter-spacing: 0.2px;
+      transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
     }
-    .btn:hover { background: rgba(255,255,255,0.10); }
-    .btn.primary { background: linear-gradient(135deg, rgba(124,58,237,0.95), rgba(59,130,246,0.85)); border-color: rgba(124,58,237,0.25); }
+    .btn:hover { background: #edf4f8; border-color: #c1d3df; }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: rgba(15,118,110,0.25); color: #f8ffff; }
     .btn.primary:hover { filter: brightness(1.05); }
-    .btn.danger { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.35); }
-    .btn.danger:hover { background: rgba(239,68,68,0.18); }
+    .btn.danger { background: #fff3f3; border-color: rgba(185,28,28,0.28); color: #9f1f1f; }
+    .btn.danger:hover { background: #ffe8e8; }
     .btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .pill {
       font-size: 0.78rem;
-      padding: 0.15rem 0.5rem;
+      padding: 0.18rem 0.56rem;
       border-radius: 999px;
       border: 1px solid var(--border);
-      background: rgba(255,255,255,0.06);
+      background: #f3f8fb;
       color: var(--muted);
       white-space: nowrap;
     }
+    .pill.ok {
+      border-color: rgba(4,120,87,0.3);
+      background: rgba(4,120,87,0.1);
+      color: #065f46;
+    }
+    .pill.bad {
+      border-color: rgba(185,28,28,0.32);
+      background: rgba(185,28,28,0.1);
+      color: #991b1b;
+    }
     .historyList { max-height: 70vh; overflow: auto; }
     .historyItem {
-      padding: 0.75rem 1rem;
+      padding: 0.8rem 1rem;
       border-bottom: 1px solid var(--border);
       cursor: pointer;
+      transition: background-color 120ms ease;
     }
-    .historyItem:hover { background: rgba(255,255,255,0.06); }
-    .historyItem.active { background: rgba(124,58,237,0.14); }
+    .historyItem:hover { background: #f5f9fc; }
+    .historyItem.active { background: rgba(14,116,144,0.13); }
     .historyQ { font-weight: 650; font-size: 0.92rem; line-height: 1.25rem; }
     .historyMeta { margin-top: 0.3rem; font-size: 0.82rem; color: var(--muted); display:flex; gap: 0.5rem; flex-wrap: wrap; }
+    .historyTiming { margin-top: 0.3rem; font-size: 0.78rem; color: #476171; }
     .statusLine { font-size: 0.9rem; color: var(--muted); }
     .answer {
       white-space: pre-wrap;
@@ -155,10 +183,10 @@
       right: 0;
       top: 50%;
       height: 1px;
-      background: rgba(255,255,255,0.16);
+      background: rgba(44,64,82,0.16);
     }
-    .hSplitter:hover::before { background: rgba(124,58,237,0.65); }
-    .hSplitter:focus-visible { outline: 2px solid rgba(124,58,237,0.85); outline-offset: -3px; }
+    .hSplitter:hover::before { background: rgba(14,116,144,0.6); }
+    .hSplitter:focus-visible { outline: 2px solid rgba(14,116,144,0.7); outline-offset: -3px; }
     .citationLink{
       font-family: var(--mono);
       font-size: 0.88em;
@@ -177,21 +205,21 @@
     .markdown h1 { font-size: 1.25rem; }
     .markdown h2 { font-size: 1.15rem; }
     .markdown h3 { font-size: 1.05rem; }
-    .markdown code { font-family: var(--mono); font-size: 0.9em; padding: 0.08rem 0.28rem; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; background: rgba(0,0,0,0.25); }
-    .markdown pre { font-family: var(--mono); font-size: 0.86rem; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; padding: 0.75rem; overflow: auto; }
-    .markdown .tableWrap { overflow-x: auto; margin: 0.75rem 0; border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; background: rgba(0,0,0,0.22); }
+    .markdown code { font-family: var(--mono); font-size: 0.9em; padding: 0.08rem 0.28rem; border: 1px solid rgba(44,64,82,0.15); border-radius: 8px; background: #f2f6f9; }
+    .markdown pre { font-family: var(--mono); font-size: 0.86rem; background: #f4f8fa; border: 1px solid rgba(44,64,82,0.16); border-radius: 12px; padding: 0.75rem; overflow: auto; }
+    .markdown .tableWrap { overflow-x: auto; margin: 0.75rem 0; border: 1px solid rgba(44,64,82,0.16); border-radius: 12px; background: #f7fafc; }
     .markdown table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; }
-    .markdown th, .markdown td { padding: 0.55rem 0.65rem; border-bottom: 1px solid rgba(255,255,255,0.08); border-right: 1px solid rgba(255,255,255,0.08); vertical-align: top; overflow-wrap: anywhere; }
+    .markdown th, .markdown td { padding: 0.55rem 0.65rem; border-bottom: 1px solid rgba(44,64,82,0.12); border-right: 1px solid rgba(44,64,82,0.12); vertical-align: top; overflow-wrap: anywhere; }
     .markdown th:last-child, .markdown td:last-child { border-right: none; }
-    .markdown thead th { background: rgba(255,255,255,0.06); font-weight: 750; }
-    .markdown tbody tr:nth-child(even) { background: rgba(255,255,255,0.03); }
+    .markdown thead th { background: #eaf2f8; font-weight: 750; }
+    .markdown tbody tr:nth-child(even) { background: #f8fbfd; }
     .markdown ul { margin: 0.5rem 0 0.5rem 1.25rem; }
     mark { background: rgba(34,197,94,0.22); color: var(--text); padding: 0.02rem 0.12rem; border-radius: 6px; }
     mark.active { outline: 2px solid rgba(34,197,94,0.85); background: rgba(34,197,94,0.30); }
     details {
       border: 1px solid var(--border);
       border-radius: 12px;
-      background: rgba(255,255,255,0.04);
+      background: #fcfeff;
       overflow: hidden;
     }
     summary {
@@ -209,19 +237,100 @@
     .chunkText {
       font-family: var(--mono);
       font-size: 0.86rem;
-      background: rgba(0,0,0,0.35);
-      border: 1px solid rgba(255,255,255,0.10);
+      background: #f5f9fc;
+      border: 1px solid rgba(44,64,82,0.15);
       border-radius: 12px;
       padding: 0.75rem;
       overflow: auto;
       white-space: pre-wrap;
     }
+    .progressPipeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.55rem;
+      margin-bottom: 0.8rem;
+    }
+    @media (max-width: 980px) {
+      .progressPipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .progressStep {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel2);
+      padding: 0.5rem 0.55rem;
+      min-height: 62px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 0.3rem;
+    }
+    .progressStepName {
+      font-size: 0.74rem;
+      letter-spacing: 0.25px;
+      text-transform: uppercase;
+      color: #617487;
+      font-weight: 700;
+    }
+    .progressStepState {
+      font-size: 0.84rem;
+      color: #2a3a4d;
+      font-weight: 650;
+    }
+    .progressStepTime {
+      font-size: 0.78rem;
+      color: #486073;
+    }
+    .progressStep[data-state="pending"] .progressStepState,
+    .progressStep[data-state="pending"] .progressStepTime {
+      color: #7f90a0;
+    }
+    .progressStep[data-state="running"] {
+      border-color: rgba(14,116,144,0.38);
+      background: rgba(14,116,144,0.08);
+    }
+    .progressStep[data-state="done"] {
+      border-color: rgba(4,120,87,0.35);
+      background: rgba(4,120,87,0.08);
+    }
+    .progressStep[data-state="error"] {
+      border-color: rgba(185,28,28,0.34);
+      background: rgba(185,28,28,0.08);
+    }
+    .progressStep[data-state="skipped"] {
+      border-color: rgba(90,110,130,0.25);
+      background: #eef3f7;
+    }
     #progressLog {
-      font-size: 0.82rem;
-      line-height: 1.15rem;
-      padding: 0.45rem 0.6rem;
-      max-height: calc(2 * 1.15rem + 0.9rem);
+      margin-bottom: 0.9rem;
+      padding: 0.55rem 0.65rem;
+      max-height: 170px;
       overflow-y: auto;
+    }
+    .progressFeed {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .progressItem {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.55rem;
+      align-items: start;
+      font-size: 0.82rem;
+      line-height: 1.2rem;
+    }
+    .progressTs {
+      color: #5f7183;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      padding-top: 1px;
+    }
+    .progressMsg {
+      color: #213244;
+    }
+    .progressEmpty {
+      color: #7f91a3;
+      font-size: 0.82rem;
     }
     a { color: rgba(147,197,253,0.95); text-decoration: none; }
     a:hover { text-decoration: underline; }
@@ -244,9 +353,9 @@
       z-index: 20;
       padding: 0.55rem 0.65rem;
       border-radius: 12px;
-      border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(11,16,32,0.92);
-      box-shadow: 0 14px 35px rgba(0,0,0,0.45);
+      border: 1px solid rgba(44,64,82,0.18);
+      background: rgba(249,252,255,0.96);
+      box-shadow: 0 14px 30px rgba(15,23,42,0.12);
       opacity: 0;
       transform: translateY(4px);
       pointer-events: none;
@@ -293,10 +402,10 @@
       bottom: 0;
       left: 50%;
       width: 1px;
-      background: rgba(255,255,255,0.16);
+      background: rgba(44,64,82,0.16);
     }
-    .qaSplitter:hover::before { background: rgba(124,58,237,0.65); }
-    .qaSplitter:focus-visible { outline: 2px solid rgba(124,58,237,0.85); outline-offset: -3px; }
+    .qaSplitter:hover::before { background: rgba(14,116,144,0.6); }
+    .qaSplitter:focus-visible { outline: 2px solid rgba(14,116,144,0.7); outline-offset: -3px; }
     .qaSources {
       flex: 0 0 var(--sourcesPaneWidth);
       min-width: 320px;
@@ -452,12 +561,37 @@
               <div id="answerBlock">
                   <div id="answerSplit">
                   <div id="answerPane">
-                    <div class="row" style="margin-bottom: 0.25rem;">
+                    <div class="row" style="margin-bottom: 0.35rem;">
                       <h3 style="margin: 0; font-size: 1rem;">Progress</h3>
                       <div class="spacer"></div>
+                      <span class="pill" id="progressSummaryPill">waiting</span>
                       <span class="pill" id="requestIdPill">idle</span>
                     </div>
-                    <div class="chunkText" id="progressLog" style="margin-bottom: 0.9rem;"></div>
+                    <div class="progressPipeline" id="progressPipeline">
+                      <div class="progressStep" data-step="retrieve" data-state="pending">
+                        <div class="progressStepName">Retrieve</div>
+                        <div class="progressStepState">waiting</div>
+                        <div class="progressStepTime">—</div>
+                      </div>
+                      <div class="progressStep" data-step="rerank" data-state="pending">
+                        <div class="progressStepName">Rerank</div>
+                        <div class="progressStepState">waiting</div>
+                        <div class="progressStepTime">—</div>
+                      </div>
+                      <div class="progressStep" data-step="draft" data-state="pending">
+                        <div class="progressStepName">Draft</div>
+                        <div class="progressStepState">waiting</div>
+                        <div class="progressStepTime">—</div>
+                      </div>
+                      <div class="progressStep" data-step="final" data-state="pending">
+                        <div class="progressStepName">Final</div>
+                        <div class="progressStepState">waiting</div>
+                        <div class="progressStepTime">—</div>
+                      </div>
+                    </div>
+                    <div class="chunkText" id="progressLog">
+                      <div class="progressEmpty">No activity yet.</div>
+                    </div>
 
                     <details id="draftDetails" style="margin-bottom: 0.9rem;">
                       <summary>
@@ -567,6 +701,8 @@
       chunksPane: $('chunksPane'),
       answerSplitter: $('answerSplitter'),
       requestIdPill: $('requestIdPill'),
+      progressSummaryPill: $('progressSummaryPill'),
+      progressPipeline: $('progressPipeline'),
       progressLog: $('progressLog'),
       draftDetails: $('draftDetails'),
       draftStatePill: $('draftStatePill'),
@@ -622,6 +758,7 @@
     let citationTargetsByDocId = new Map(); // doc_id -> {chunk_id, source, label}
     let lastRerankedChunks = [];
     let lastRetrievedChunks = [];
+    const STEP_ORDER = ['retrieve', 'rerank', 'draft', 'final'];
 
     function safeText(s) {
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1211,6 +1348,21 @@
       return d.toLocaleString();
     }
 
+    function getTimingMs(timing, key) {
+      const n = Number(timing?.[key]);
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    }
+
+    function timingBits(timing) {
+      const bits = [];
+      for (const step of STEP_ORDER) {
+        const ms = getTimingMs(timing, `${step}_ms`);
+        if (ms === null) continue;
+        bits.push(`${step} ${formatDuration(ms)}`);
+      }
+      return bits;
+    }
+
     function readLocalHistory() {
       try {
         const raw = localStorage.getItem(LS_HISTORY);
@@ -1497,15 +1649,21 @@
         div.className = 'historyItem' + ((activeEntry && it.id === activeEntry.id) ? ' active' : '');
         const question = it?.request?.question || '(missing question)';
         const when = fmtDate(it?.created_at);
-        const chunks = it?.response?.top_chunks?.length ?? 0;
+        const chunks = it?.response?.top_chunks?.length ?? it?.response?.top_chunks_count ?? 0;
         const mode = String(it?.request?.mode || '').trim().toLowerCase();
+        const timing = (it && typeof it.timing_ms === 'object' && it.timing_ms) ? it.timing_ms : {};
+        const totalMs = getTimingMs(timing, 'total_ms');
+        const bits = timingBits(timing);
+        const summary = totalMs !== null ? `total ${formatDuration(totalMs)}` : '';
         div.innerHTML = `
           <div class="historyQ">${safeText(question)}</div>
           <div class="historyMeta">
             <span>${safeText(when)}</span>
             <span class="pill">${chunks} chunks</span>
             ${mode ? `<span class="pill">mode: ${safeText(mode)}</span>` : ``}
+            ${summary ? `<span class="pill ok">${safeText(summary)}</span>` : ``}
           </div>
+          ${bits.length ? `<div class="historyTiming">${safeText(bits.join(' · '))}</div>` : ``}
         `;
         div.addEventListener('click', () => {
           activeEntry = it;
@@ -1602,7 +1760,10 @@
       const res = it.response || {};
       els.answerBlock.style.display = 'block';
       els.requestIdPill.textContent = it.id ? ('hist ' + String(it.id).slice(0, 8)) : 'history';
-      els.progressLog.textContent = '';
+      resetProgressUI();
+      applyTimingMsToProgress(it?.timing_ms || {});
+      const bits = timingBits(it?.timing_ms || {});
+      if (bits.length) appendProgress(`timings: ${bits.join(' · ')}`);
       els.draftStatePill.textContent = 'done';
       resetCitationTargets();
       const chunks = res.top_chunks || [];
@@ -1637,7 +1798,7 @@
 
       els.answerBlock.style.display = 'block';
       els.requestIdPill.textContent = 'idle';
-      els.progressLog.textContent = '';
+      resetProgressUI();
       els.draftStatePill.textContent = 'waiting';
       els.draftAnswer.innerHTML = '';
       els.finalAnswer.innerHTML = '<div class="muted">Ask a question below to see the answer here.</div>';
@@ -1719,13 +1880,6 @@
 
 	    let activeStream = null; // { controller, requestId }
 
-	    function appendProgress(line) {
-	      const prev = String(els.progressLog.textContent || '');
-	      const next = prev ? (prev + '\n' + String(line)) : String(line);
-	      els.progressLog.textContent = next;
-	      els.progressLog.scrollTop = els.progressLog.scrollHeight;
-	    }
-
 	    function formatDuration(ms) {
 	      if (ms === null || ms === undefined) return '';
 	      const n = Number(ms);
@@ -1737,6 +1891,93 @@
 	      const m = Math.floor(s / 60);
 	      const rs = s - m * 60;
 	      return `${m}m${rs.toFixed(0)}s`;
+	    }
+
+	    function setProgressSummary(text, kind) {
+	      if (!els.progressSummaryPill) return;
+	      els.progressSummaryPill.textContent = String(text || 'waiting');
+	      els.progressSummaryPill.className = 'pill';
+	      if (kind === 'ok') els.progressSummaryPill.classList.add('ok');
+	      if (kind === 'bad') els.progressSummaryPill.classList.add('bad');
+	    }
+
+	    function setProgressStep(step, state, ms) {
+	      const s = String(step || '').trim();
+	      if (!s || !els.progressPipeline) return;
+	      const node = els.progressPipeline.querySelector(`.progressStep[data-step="${s}"]`);
+	      if (!node) return;
+	      const nextState = String(state || 'pending').trim() || 'pending';
+	      node.setAttribute('data-state', nextState);
+	      const stateEl = node.querySelector('.progressStepState');
+	      const timeEl = node.querySelector('.progressStepTime');
+	      if (stateEl) {
+	        if (nextState === 'running') stateEl.textContent = 'in progress';
+	        else if (nextState === 'done') stateEl.textContent = 'done';
+	        else if (nextState === 'error') stateEl.textContent = 'error';
+	        else if (nextState === 'skipped') stateEl.textContent = 'skipped';
+	        else stateEl.textContent = 'waiting';
+	      }
+	      if (timeEl) timeEl.textContent = (ms === null || ms === undefined) ? '—' : (formatDuration(ms) || '—');
+	    }
+
+	    function resetProgressUI() {
+	      setProgressSummary('waiting');
+	      for (const step of STEP_ORDER) setProgressStep(step, 'pending', null);
+	      if (!els.progressLog) return;
+	      els.progressLog.innerHTML = '<div class="progressEmpty">No activity yet.</div>';
+	    }
+
+	    function applyTimingMsToProgress(timing) {
+	      const t = (timing && typeof timing === 'object') ? timing : {};
+	      let any = false;
+	      const missing = [];
+	      for (const step of STEP_ORDER) {
+	        const ms = getTimingMs(t, `${step}_ms`);
+	        if (ms === null) {
+	          missing.push(step);
+	          continue;
+	        }
+	        any = true;
+	        setProgressStep(step, 'done', ms);
+	      }
+	      const total = getTimingMs(t, 'total_ms');
+	      if (any || total !== null) {
+	        for (const step of missing) setProgressStep(step, 'skipped', null);
+	      } else {
+	        for (const step of missing) setProgressStep(step, 'pending', null);
+	      }
+	      if (total !== null) {
+	        setProgressSummary(`total ${formatDuration(total)}`, 'ok');
+	        return;
+	      }
+	      if (any) {
+	        setProgressSummary('timings recorded');
+	        return;
+	      }
+	      setProgressSummary('waiting');
+	    }
+
+	    function appendProgress(line) {
+	      if (!els.progressLog) return;
+	      let feed = els.progressLog.querySelector('.progressFeed');
+	      if (!feed) {
+	        els.progressLog.innerHTML = '';
+	        feed = document.createElement('div');
+	        feed.className = 'progressFeed';
+	        els.progressLog.appendChild(feed);
+	      }
+	      const row = document.createElement('div');
+	      row.className = 'progressItem';
+	      const ts = document.createElement('div');
+	      ts.className = 'progressTs';
+	      ts.textContent = new Date().toLocaleTimeString();
+	      const msg = document.createElement('div');
+	      msg.className = 'progressMsg';
+	      msg.textContent = String(line || '');
+	      row.appendChild(ts);
+	      row.appendChild(msg);
+	      feed.appendChild(row);
+	      els.progressLog.scrollTop = els.progressLog.scrollHeight;
 	    }
 
 	    let ingestedCompanies = [];
@@ -1829,7 +2070,8 @@
 
       els.answerBlock.style.display = 'block';
       els.requestIdPill.textContent = '…';
-      els.progressLog.textContent = '';
+      resetProgressUI();
+      setProgressSummary('running');
       els.draftStatePill.textContent = 'waiting';
       els.draftAnswer.innerHTML = '';
       els.finalAnswer.innerHTML = '';
@@ -1854,6 +2096,7 @@
 	        const s = String(step || '').trim();
 	        if (!s) return;
 	        if (!stepStarts.has(s)) stepStarts.set(s, performance.now());
+	        setProgressStep(s, 'running', null);
 	      };
 	      const finishStep = (step, serverMs) => {
 	        const s = String(step || '').trim();
@@ -1866,6 +2109,7 @@
 	          if (typeof t0 === 'number') ms = performance.now() - t0;
 	        }
 	        if (ms != null) stepDurations.set(s, ms);
+	        if (ms != null) setProgressStep(s, 'done', ms);
 	        return ms;
 	      };
 	      const stepSummary = () => {
@@ -1929,6 +2173,7 @@
 	            if (type === 'start') {
 	              streamState.requestId = String(evt?.request_id || '');
 	              els.requestIdPill.textContent = streamState.requestId ? ('req ' + streamState.requestId.slice(0, 8)) : 'req';
+	              setProgressSummary('running');
 	              appendProgress('Started ' + els.requestIdPill.textContent);
 	              continue;
 	            }
@@ -2004,6 +2249,7 @@
 	            if (type === 'cancelled') {
 	              els.queryStatus.textContent = 'Cancelled.';
 	              const elapsed = performance.now() - queryT0;
+	              setProgressSummary(`cancelled ${formatDuration(elapsed)}`, 'bad');
 	              appendProgress(`Cancelled · ${formatDuration(elapsed)}`);
 	              break;
 	            }
@@ -2011,6 +2257,10 @@
 	            if (type === 'error') {
 	              const err = String(evt?.error || 'Unknown error');
 	              els.queryStatus.textContent = 'Error: ' + err;
+	              setProgressSummary('error', 'bad');
+	              for (const step of STEP_ORDER) {
+	                if (!stepDurations.has(step) && stepStarts.has(step)) setProgressStep(step, 'error', null);
+	              }
 	              appendProgress('Error: ' + err);
 	              break;
 	            }
@@ -2038,9 +2288,21 @@
 
 	              // Refresh persisted history so the new entry shows up with its server timestamp/id.
 	              await loadHistoryFromServer();
-	              finishStep('final', evt?.final_ms);
+	              const timing = (evt?.timing_ms && typeof evt.timing_ms === 'object') ? evt.timing_ms : {};
+	              finishStep('final', evt?.final_ms ?? timing?.final_ms);
+	              if (Object.keys(timing).length) {
+	                applyTimingMsToProgress(timing);
+	              } else {
+	                for (const step of STEP_ORDER) {
+	                  if (!stepDurations.has(step)) setProgressStep(step, 'skipped', null);
+	                }
+	              }
 	              const totalMs = Number(evt?.elapsed_ms);
-	              const total = Number.isFinite(totalMs) ? totalMs : (performance.now() - queryT0);
+	              const totalFromTiming = getTimingMs(timing, 'total_ms');
+	              const total = totalFromTiming !== null
+	                ? totalFromTiming
+	                : (Number.isFinite(totalMs) ? totalMs : (performance.now() - queryT0));
+	              setProgressSummary(`total ${formatDuration(total)}`, 'ok');
 	              const summary = stepSummary();
 	              appendProgress(
 	                `Done in ${formatDuration(total)}${summary ? (' · ' + summary) : ''}`
@@ -2049,13 +2311,15 @@
 	            }
 	          }
 	        }
-	      } catch (e) {
+      } catch (e) {
         if (String(e?.name || '') === 'AbortError') {
           els.queryStatus.textContent = 'Cancelled.';
+          setProgressSummary('cancelled', 'bad');
           appendProgress('Cancelled');
         } else {
           console.error(e);
           els.queryStatus.textContent = 'Error: ' + e;
+          setProgressSummary('error', 'bad');
           appendProgress('Error: ' + e);
         }
       } finally {

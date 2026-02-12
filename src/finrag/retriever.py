@@ -74,11 +74,7 @@ class PostgresHybridRetriever:
         self.context_builder = context_builder
         self.retrieval_text_key = retrieval_text_key
         self.retrieval_context_key = retrieval_context_key
-        self.db = PostgresDB(
-            dsn,
-            ann_hnsw_m=ann_hnsw_m,
-            ann_hnsw_ef_construction=ann_hnsw_ef_construction,
-        )
+        self.db = PostgresDB(dsn, ann_hnsw_m=ann_hnsw_m, ann_hnsw_ef_construction=ann_hnsw_ef_construction)
 
         if auto_init_schema:
             self.db.ensure_schema()

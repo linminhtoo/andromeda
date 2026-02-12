@@ -289,6 +289,17 @@ class PostgresDB:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Skipping ivfflat index creation: {!r}", exc)
 
+    def drop_ann_indexes(self) -> None:
+        """
+        Drop ANN indexes so they can be recreated with new parameters.
+        """
+
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DROP INDEX IF EXISTS idx_chunks_embedding_hnsw;")
+                cur.execute("DROP INDEX IF EXISTS idx_chunks_embedding_ivfflat;")
+        self._ann_index_ready = False
+
     def ensure_schema(self) -> None:
         """
         Create required extensions, tables, and indexes.
