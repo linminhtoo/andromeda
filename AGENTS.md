@@ -73,6 +73,6 @@ key/attribute existence, such as by typing dictionaries and class attributes pro
 ## Testing rules
 
 * First, activate the venv by running `source .venv/bin/activate` from the repository root.
-* Then, run tests with `pytest src/test/`.
+* Then, run tests with `pytest -vvv tests/`.
 * Fix failing tests before proceeding.
 * Never bypass tests without explicit instruction.
