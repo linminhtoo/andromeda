@@ -6,7 +6,31 @@ this file.
 This format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
+### Added
+### Changed
+### Fixed
+### Removed
+### Deprecated
+### Dev
 
+
+## v1.5.0 - 14 Feb 2026
+### Added
+- Indexing schema selector for experiment isolation on shared Postgres instances: `--postgres-schema` / `POSTGRES_SCHEMA`.
+- Frontend TypeScript build tooling (`package.json`, `tsconfig.json`) plus migrated TS sources for both UIs:
+  - `src/finrag/static/ts/index/`
+  - `src/finrag/static/ts/review/`
+  - shared helpers in `src/finrag/static/ts/shared/`
+
+### Changed
+- Main/review HTML now load compiled JS module entrypoints (`/static/js/index/main.js`, `/static/js/review/main.js`) instead of inline scripts.
+- Launch scripts now compile TypeScript frontend assets before starting servers.
+- `launch_review.sh` now activates `.venv` before starting uvicorn, matching the main app launcher behavior.
+- Added safety guard to block destructive indexing flags on default schema unless explicitly overridden (`--allow-default-schema-mutations`).
+- Runtime retriever now honors `POSTGRES_SCHEMA` so app queries can target experiment schemas consistently.
+
+
+## v1.4.0 - 13 Feb 2026
 ### Added
 - PostgreSQL-native data layer (`src/finrag/db.py`) with minimal corpus schema (`documents`, `chunks`) and pgvector/FTS indexes.
 - PostgreSQL chunk inspection script (`scripts/inspect_collection.py`) with ticker/date filters.
@@ -33,7 +57,3 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Milvus backend and related scripts.
 - App-level OpenTelemetry/tracing modules and related tests/scripts.
 - Legacy `index_text` references in core runtime/tests.
-
-### Deprecated
-
-### Dev

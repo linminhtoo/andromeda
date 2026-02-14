@@ -8,7 +8,7 @@ from typing import Any, Iterable, LiteralString, Sequence
 import psycopg
 from loguru import logger
 from psycopg.rows import dict_row
-from psycopg.sql import SQL, Composable, Literal
+from psycopg.sql import SQL, Composable, Identifier, Literal
 from psycopg.types.json import Jsonb
 
 
@@ -161,11 +161,13 @@ class PostgresDB:
     def __init__(
         self,
         dsn: str,
+        postgres_schema: str | None = None,
         embedding_dim: int | None = None,
         ann_hnsw_m: int | None = None,
         ann_hnsw_ef_construction: int | None = None,
     ):
         self.dsn = dsn
+        self.postgres_schema = self.normalize_schema_name(postgres_schema)
         self.embedding_dim = self.normalize_embedding_dim(embedding_dim)
         self.ann_hnsw_m = self.normalize_positive_int(ann_hnsw_m)
         self.ann_hnsw_ef_construction = self.normalize_positive_int(ann_hnsw_ef_construction)
@@ -176,7 +178,25 @@ class PostgresDB:
         Open a PostgreSQL connection.
         """
 
-        return psycopg.connect(self.dsn)
+        conn = psycopg.connect(self.dsn)
+        if self.postgres_schema is not None:
+            with conn.cursor() as cur:
+                cur.execute(SQL("CREATE SCHEMA IF NOT EXISTS {};").format(Identifier(self.postgres_schema)))
+                cur.execute(SQL("SET search_path TO {}, public;").format(Identifier(self.postgres_schema)))
+        return conn
+
+    @staticmethod
+    def normalize_schema_name(value: str | None) -> str | None:
+        """
+        Return a normalized schema name, else `None`.
+        """
+
+        if value is None:
+            return None
+        name = value.strip()
+        if not name:
+            return None
+        return name
 
     @staticmethod
     def normalize_embedding_dim(value: int | None) -> int | None:
@@ -329,11 +349,15 @@ class PostgresDB:
                 IF EXISTS (
                     SELECT 1
                     FROM information_schema.columns
-                    WHERE table_name = 'chunks' AND column_name = 'index_text'
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'chunks'
+                      AND column_name = 'index_text'
                 ) AND NOT EXISTS (
                     SELECT 1
                     FROM information_schema.columns
-                    WHERE table_name = 'chunks' AND column_name = 'retrieval_text'
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'chunks'
+                      AND column_name = 'retrieval_text'
                 ) THEN
                     ALTER TABLE chunks RENAME COLUMN index_text TO retrieval_text;
                 END IF;
@@ -345,11 +369,15 @@ class PostgresDB:
                 IF EXISTS (
                     SELECT 1
                     FROM information_schema.columns
-                    WHERE table_name = 'chunks' AND column_name = 'context'
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'chunks'
+                      AND column_name = 'context'
                 ) AND NOT EXISTS (
                     SELECT 1
                     FROM information_schema.columns
-                    WHERE table_name = 'chunks' AND column_name = 'retrieval_context'
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'chunks'
+                      AND column_name = 'retrieval_context'
                 ) THEN
                     ALTER TABLE chunks RENAME COLUMN context TO retrieval_context;
                 END IF;
@@ -733,7 +761,12 @@ class PostgresDB:
                     raise RuntimeError("Failed to fetch chunks row count.")
                 n_chunks = int(chunks_row["n"])
 
-        return {"documents": n_documents, "chunks": n_chunks, "dsn": self.redacted_dsn()}
+        return {
+            "documents": n_documents,
+            "chunks": n_chunks,
+            "dsn": self.redacted_dsn(),
+            "schema": self.postgres_schema or "public",
+        }
 
     def redacted_dsn(self) -> str:
         """

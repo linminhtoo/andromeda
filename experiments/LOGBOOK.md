@@ -130,3 +130,95 @@
   - Conversion output root: `/home/system/tmp/sec_parser_smoke2/out`
   - Chunk output root: `/home/system/tmp/sec_parser_smoke2/chunks`
   - Result: successful markdown generation + table-preserving chunk export for both filings.
+
+## 2026-02-13 - Frontend TypeScript modularization (index/review submodules)
+
+### Scope completed
+- Replaced monolithic frontend TypeScript files with modular page-specific structures:
+  - `src/finrag/static/ts/index/`
+  - `src/finrag/static/ts/review/`
+  - shared helpers in `src/finrag/static/ts/shared/`
+- Added dedicated entrypoints:
+  - `src/finrag/static/ts/index/main.ts`
+  - `src/finrag/static/ts/review/main.ts`
+- Updated TS compile output to ESM module tree under `src/finrag/static/js/`.
+- Updated static HTML entry script tags to module entrypoints:
+  - `/static/js/index/main.js`
+  - `/static/js/review/main.js`
+- Updated `launch_review.sh` to activate `.venv` before running uvicorn.
+
+### Key implementation notes
+- Switched TypeScript compiler config from single-script style output to ESM output:
+  - `module: ES2020`
+  - `moduleResolution: bundler`
+- Build now compiles full TS tree via `tsc -p tsconfig.json` (instead of per-file commands).
+- Split responsibilities into focused modules (generation controls, markdown rendering, citations, source viewer, progress UI, layout splitters, history rendering, ingested company panel, review render helpers).
+
+### Surprising findings
+- `scripts/launch_review.sh` did not activate `.venv`, causing `uvicorn: command not found` in review-only launch mode.
+- `AGENTS.md` test command points to `pytest src/test/`, but this repository uses `tests/`; `src/test/` fails with path-not-found.
+
+### Validation experiments and results
+- TypeScript build:
+  - `npm run -s build:ts`
+  - Result: success; modular JS emitted under `src/finrag/static/js/index/`, `src/finrag/static/js/review/`, and `src/finrag/static/js/shared/`.
+- Runtime smoke (main app + review app):
+  - `bash ./scripts/launch_app.sh` + HTTP checks for `/`, `/review`, `/static/js/index/main.js`, `/static/js/review/main.js`
+  - `bash ./scripts/launch_review.sh` + HTTP checks for `/review`, `/static/js/review/main.js`
+  - Result: success after `.venv` activation fix in review launcher.
+- Lint/type:
+  - `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass (first run auto-fixed EOF on `scripts/build_index.sh`, second run clean).
+- Tests:
+  - `source .venv/bin/activate && pytest src/test/`
+  - Result: fails because path does not exist.
+  - `source .venv/bin/activate && pytest tests/`
+  - Result: `64 passed, 1 warning`.
+
+### Scripts preserved under `experiments/`
+- `experiments/20260213_validate_typescript_migration.sh`
+  - Runs TS build + launch smoke checks + `pre-commit` + `pytest tests/`.
+  - Executed successfully in this run.
+
+## 2026-02-13 - Postgres schema namespacing for safe experiment indexing
+
+### Scope completed
+- Added schema-aware indexing for experiment isolation on shared Postgres DSNs.
+- Added `build_index.py` flag:
+  - `--postgres-schema` (defaults from `POSTGRES_SCHEMA` env)
+- Added safety gate to block destructive operations on default schema:
+  - `--reset-corpus` / `--recreate-ann-index` now require either:
+    - explicit schema, or
+    - explicit override `--allow-default-schema-mutations`
+- Added schema plumbing across retriever/database:
+  - `PostgresHybridRetriever(..., postgres_schema=...)`
+  - `PostgresDB` sets `search_path` and auto-creates target schema on connect.
+- Runtime app retriever now also reads `POSTGRES_SCHEMA`, so query-serving can target the same experiment schema as indexing.
+- Updated shell ergonomics in `scripts/build_index.sh`:
+  - env passthrough for `POSTGRES_SCHEMA`, HNSW knobs, reset/recreate flags
+  - script-level refusal for unsafe destructive runs on default schema unless override is set.
+- Updated docs/changelog/env example for new schema-based workflow.
+
+### Key implementation notes
+- Schema names are applied as SQL identifiers (`Identifier(...)`) to avoid SQL injection/escaping issues.
+- Migration checks in `ensure_schema()` were scoped to `current_schema()` so legacy migration guards don’t accidentally inspect tables from other schemas.
+- `export_schema_snapshot()` now reports active schema (`schema`) to make run metadata explicit.
+
+### Surprising findings
+- A previous guard placement allowed retriever initialization before safety checks, which could still touch the default schema. Guard was moved to execute immediately after DSN resolution.
+
+### Validation experiments and results
+- Lint/type:
+  - `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- Tests:
+  - `source .venv/bin/activate && pytest tests/ -q`
+  - Result: `64 passed, 1 warning`.
+- CLI safety smoke:
+  - destructive run without schema now exits early with:
+    - `Refusing destructive operation on default schema...`
+
+### Scripts preserved under `experiments/`
+- `experiments/20260213_validate_postgres_schema_namespacing.sh`
+  - Runs pre-commit, full tests, and default-schema destructive guard check.
+  - Executed successfully in this run.

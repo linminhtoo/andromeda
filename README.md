@@ -125,6 +125,9 @@ Fill at least:
 - `OPENAI_API_KEY`
 - model endpoint base URLs
 
+Optional (recommended for experiment isolation on shared DBs):
+- `POSTGRES_SCHEMA` (used by both indexing and runtime retrieval)
+
 ### 1) Start PostgreSQL (lightweight local option)
 
 ```bash
@@ -144,15 +147,82 @@ docker run --name andromeda-pg \
 ./scripts/build_index.sh
 ```
 
+### Safe experiment runs (shared Postgres)
+
+If you run a shared Postgres instance (including a remote Docker host), use one schema per experiment.
+
+Recommended env pattern:
+
+```bash
+POSTGRES_SCHEMA=exp_ctx_neighbors_w8_m24_ef200 \
+RESET_CORPUS=true \
+RECREATE_ANN_INDEX=true \
+ANN_HNSW_M=24 \
+ANN_HNSW_EF_CONSTRUCTION=200 \
+bash scripts/build_index.sh
+```
+
+This keeps experiments isolated while reusing the same `POSTGRES_DSN`.
+
+What each knob does:
+- `POSTGRES_SCHEMA`: target schema for tables/indexes. If unset/empty, indexing uses the default schema (`public`).
+- `RESET_CORPUS=true`: applies `--reset-corpus` and truncates `documents` + `chunks` in the selected schema.
+- `RECREATE_ANN_INDEX=true`: drops and recreates ANN indexes in the selected schema.
+- `ANN_HNSW_M`: HNSW graph connectivity. Higher typically improves recall but increases index memory/build cost.
+- `ANN_HNSW_EF_CONSTRUCTION`: HNSW build-time search breadth. Higher typically improves recall but slows index build.
+
+Safety behavior:
+- If `POSTGRES_SCHEMA` is unset and you request destructive/index-recreate flags, the script exits early by default.
+- To intentionally mutate default schema, set `ALLOW_DEFAULT_SCHEMA_MUTATIONS=true` (dangerous on production DSNs).
+
+CLI equivalent (without shell env vars):
+
+```bash
+python -m scripts.build_index \
+  --ingest-output-dir ./data/sec_filings_md_secparser/chunked_1024_128 \
+  --postgres-dsn "$POSTGRES_DSN" \
+  --postgres-schema exp_ctx_neighbors_w8_m24_ef200 \
+  --context neighbors \
+  --context-window 8 \
+  --ann-hnsw-m 24 \
+  --ann-hnsw-ef-construction 200 \
+  --reset-corpus \
+  --recreate-ann-index
+```
+
+Note: runtime retrieval also reads `POSTGRES_SCHEMA`, so set the same schema when serving/evaluating that experiment.
+
 ### 3) Start app
 
 ```bash
 ./scripts/launch_app.sh
 ```
 
+`launch_app.sh` now compiles frontend TypeScript assets before starting Uvicorn.
+Node.js/npm must be installed locally.
+
 Open:
 - Q&A: `http://localhost:8236/`
 - Eval review UI: `http://localhost:8236/review`
+
+### Frontend TypeScript build (manual)
+
+```bash
+npm install
+npm run build:ts
+```
+
+Compiled assets are written to:
+- `src/finrag/static/js/index/main.js`
+- `src/finrag/static/js/review/main.js`
+- additional page submodules under:
+  - `src/finrag/static/js/index/`
+  - `src/finrag/static/js/review/`
+
+TypeScript source is now split into page-focused submodules:
+- `src/finrag/static/ts/index/`
+- `src/finrag/static/ts/review/`
+- shared helpers in `src/finrag/static/ts/shared/`
 
 ## UI notes
 
@@ -178,9 +248,11 @@ Open:
 
 - `scripts/build_index.py`
   - reads chunk exports and upserts into PostgreSQL
+  - supports schema-scoped indexing via `--postgres-schema` (or `POSTGRES_SCHEMA`)
   - supports context strategies (`none`, `document`, `neighbors`, `metadata`)
   - ANN is HNSW-only with optional tuning via `--ann-hnsw-m` and `--ann-hnsw-ef-construction`
   - supports `--reset-corpus` (`--truncate` alias), `--recreate-ann-index`, and `--skip-existing-chunks`
+  - blocks destructive flags on default schema unless `--allow-default-schema-mutations` is explicitly set
 
 - `scripts/run_eval.py`
   - runs eval queries through `RAGService.answer_question()`

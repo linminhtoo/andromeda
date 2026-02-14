@@ -18,6 +18,17 @@ project_root="$(
 )"
 cd "$project_root"
 
+if ! command -v npm >/dev/null 2>&1; then
+  echo "Missing npm; install Node.js/npm to build frontend TypeScript assets." >&2
+  exit 1
+fi
+
+if [[ ! -f "$project_root/node_modules/typescript/package.json" ]]; then
+  npm install --no-audit --no-fund
+fi
+
+npm run -s build:ts
+
 # Optional model overrides for local OpenAI-compatible endpoints.
 : "${OPENAI_CHAT_MODEL:=Qwen/Qwen3-VL-32B-Instruct-FP8}"
 : "${OPENAI_EMBED_MODEL:=BAAI/bge-m3}"

@@ -16,6 +16,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, Reque
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -218,13 +219,18 @@ def build_retriever() -> PostgresHybridRetriever:
     """
 
     _, _, context_key = _context_config()
+    postgres_schema = (os.getenv("POSTGRES_SCHEMA") or "").strip() or None
     retriever = PostgresHybridRetriever(
         llm_client=_llm_for_embeddings(),
         dsn=postgres_dsn(),
         context_builder=context_builder_from_metadata(key=context_key),
         retrieval_context_key=context_key,
+        postgres_schema=postgres_schema,
     )
-    logger.info("Using PostgreSQL retriever")
+    if postgres_schema:
+        logger.info("Using PostgreSQL retriever (schema={})", postgres_schema)
+    else:
+        logger.info("Using PostgreSQL retriever")
     return retriever
 
 
@@ -414,6 +420,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+static_dir = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # Eval review UI (labels + retrieval inspection).
 try:
