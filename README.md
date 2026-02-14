@@ -3,7 +3,7 @@
 Andromeda is a financial RAG assistant for SEC filings.
 This codebase is now **PostgreSQL-first**:
 - PostgreSQL is the source of truth for corpus data.
-- PostgreSQL also handles hybrid retrieval (`pgvector` + full text search).
+- PostgreSQL also handles hybrid retrieval (`pgvector` + BM25/FTS sparse ranking).
 - Retrieval supports native pre-filtering by ticker/date to reduce false positives.
 
 This rewrite intentionally removed backend sprawl:
@@ -21,7 +21,7 @@ Backward compatibility with old vector artifacts is not a goal. Rebuild the corp
 flowchart LR
   UI[Web UI] --> API[FastAPI /query_stream]
   API --> RET[PostgresHybridRetriever]
-  RET --> PG[(PostgreSQL + pgvector + FTS)]
+  RET --> PG[(PostgreSQL + pgvector + BM25 or FTS)]
   API --> RER[Cross-encoder reranker]
   API --> LLM[Chat LLM]
   LLM --> API
@@ -87,7 +87,8 @@ erDiagram
 
 `PostgresHybridRetriever` combines:
 - dense ranking: cosine distance on `embedding`
-- sparse ranking: PostgreSQL FTS on `retrieval_text`
+- sparse ranking (default): BM25 via `pg_textsearch`
+- sparse ranking (alternative): PostgreSQL FTS (`ts_rank_cd`)
 - fusion: weighted reciprocal-rank fusion (RRF)
 - ANN index strategy: HNSW (pgvector)
 
@@ -127,8 +128,14 @@ Fill at least:
 
 Optional (recommended for experiment isolation on shared DBs):
 - `POSTGRES_SCHEMA` (used by both indexing and runtime retrieval)
+- `POSTGRES_SPARSE_SEARCH_METHOD` (`bm25` default, or `fts`)
 
-### 1) Start PostgreSQL (lightweight local option)
+### 1) Start PostgreSQL
+
+BM25 is the default sparse method and requires PostgreSQL 17/18 plus `pg_textsearch`.
+Use an image that already has `pg_textsearch` installed, or switch to FTS mode (`POSTGRES_SPARSE_SEARCH_METHOD=fts`).
+
+FTS-only local option:
 
 ```bash
 docker run --name andromeda-pg \
@@ -154,7 +161,9 @@ If you run a shared Postgres instance (including a remote Docker host), use one 
 Recommended env pattern:
 
 ```bash
-POSTGRES_SCHEMA=exp_ctx_neighbors_w8_m24_ef200 \
+POSTGRES_SCHEMA=exp_ctx_neighbors_w1_m24_ef200 \
+POSTGRES_SPARSE_SEARCH_METHOD=bm25 \
+CONTEXT_MAX_TOKENS=256 \
 RESET_CORPUS=true \
 RECREATE_ANN_INDEX=true \
 ANN_HNSW_M=24 \
@@ -166,6 +175,7 @@ This keeps experiments isolated while reusing the same `POSTGRES_DSN`.
 
 What each knob does:
 - `POSTGRES_SCHEMA`: target schema for tables/indexes. If unset/empty, indexing uses the default schema (`public`).
+- `POSTGRES_SPARSE_SEARCH_METHOD`: sparse ranking mode (`bm25` or `fts`). Must match between indexing and retrieval.
 - `RESET_CORPUS=true`: applies `--reset-corpus` and truncates `documents` + `chunks` in the selected schema.
 - `RECREATE_ANN_INDEX=true`: drops and recreates ANN indexes in the selected schema.
 - `ANN_HNSW_M`: HNSW graph connectivity. Higher typically improves recall but increases index memory/build cost.
@@ -181,16 +191,21 @@ CLI equivalent (without shell env vars):
 python -m scripts.build_index \
   --ingest-output-dir ./data/sec_filings_md_secparser/chunked_1024_128 \
   --postgres-dsn "$POSTGRES_DSN" \
-  --postgres-schema exp_ctx_neighbors_w8_m24_ef200 \
+  --postgres-schema exp_ctx_neighbors_w1_m24_ef200 \
+  --sparse-search-method bm25 \
   --context neighbors \
-  --context-window 8 \
+  --context-window 1 \
   --ann-hnsw-m 24 \
   --ann-hnsw-ef-construction 200 \
   --reset-corpus \
   --recreate-ann-index
 ```
 
-Note: runtime retrieval also reads `POSTGRES_SCHEMA`, so set the same schema when serving/evaluating that experiment.
+Note: runtime retrieval also reads `POSTGRES_SCHEMA` and `POSTGRES_SPARSE_SEARCH_METHOD`, so use matching values when serving/evaluating that experiment.
+
+Compatibility safety:
+- Indexing records the sparse search method in schema metadata.
+- Retrieval raises an explicit error when configured method does not match indexed method.
 
 ### 3) Start app
 
@@ -249,6 +264,7 @@ TypeScript source is now split into page-focused submodules:
 - `scripts/build_index.py`
   - reads chunk exports and upserts into PostgreSQL
   - supports schema-scoped indexing via `--postgres-schema` (or `POSTGRES_SCHEMA`)
+  - supports sparse method selection via `--sparse-search-method` (`bm25` default, `fts` optional)
   - supports context strategies (`none`, `document`, `neighbors`, `metadata`)
   - ANN is HNSW-only with optional tuning via `--ann-hnsw-m` and `--ann-hnsw-ef-construction`
   - supports `--reset-corpus` (`--truncate` alias), `--recreate-ann-index`, and `--skip-existing-chunks`

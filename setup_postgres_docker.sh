@@ -41,7 +41,7 @@ docker exec andromeda-pg psql -U postgres -d andromeda -c "CREATE EXTENSION IF N
 docker exec andromeda-pg psql -U postgres -d andromeda -c "\dx"
 # You should see this output
 #                                  List of installed extensions
-#      Name      |  Version  |   Schema   |                     Description                      
+#      Name      |  Version  |   Schema   |                     Description
 # ---------------+-----------+------------+------------------------------------------------------
 #  pg_textsearch | 1.0.0-dev | public     | Full-text search with BM25 ranking
 #  plpgsql       | 1.0       | pg_catalog | PL/pgSQL procedural language
