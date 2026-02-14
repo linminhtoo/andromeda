@@ -40,27 +40,19 @@ def situate_context(
         "Given some <context> and <chunk>, write a CONCISE summary that situates "
         "the chunk within the larger context. <context> was derived from chunks before "
         "and after the chunk of interest.\n"
-        "FOCUS on summarizing the relationship between the <chunk> and the <context>, "
-        "then followed by the <chunk> content.\n"
+        "FOCUS on summarizing the relationship between the <chunk> and the <context>.\n"
         "DO NOT overemphasize the details of <context>.\n"
         "Return ONLY the summary.\n"
         "Your summary MUST BE CONCISE.\n"
-        "Do not include quotes, headings, or preamble.\n\n"
+        "Do not include quotes, headings, or preamble.\n"
     )
-    prompt = (
-        "<context>\n"
-        f"{context}\n"
-        "</context>\n\n"
-        "<chunk>\n"
-        f"{chunk}\n"
-        "</chunk>\n"
-    )
+    prompt = f"<context>\n{context}\n</context>\n\n<chunk>\n{chunk}\n</chunk>\n"
 
     try:
         out = llm.chat(
-            [{"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}],
-            temperature=temperature
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
     except Exception as exc:  # noqa: BLE001 - allow in-situate fallback
         raise RuntimeError(f"LLM call failed in situate_context(): {exc!r}") from exc
