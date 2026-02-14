@@ -55,7 +55,7 @@ key/attribute existence, such as by typing dictionaries and class attributes pro
 * Agents must not commit or push. Only the coordinator may commit/push after review passes.
 * Never modify repository files outside this `lrdml` git repository.
 * You must write down key learning points and observations in a `agent_logs/LOGBOOK.md` at this repository's root level:
-    - IMPORTANT: When you implement a new feature or make a breaking change, you need to 
+    - IMPORTANT: When you implement a new feature or make a breaking change, you need to
         highlight this in the `LOGBOOK.md`. State the previous state, what was changed, and why.
         This is needed to provide a clean lineage of design decisions taken during the course of development and iteration.
     - Note down any surprising facts you discovered about the codebase or its dependencies
