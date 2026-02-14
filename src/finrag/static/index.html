@@ -46,7 +46,7 @@
       justify-content: space-between;
       gap: 1rem;
       padding: 1rem 1.25rem;
-      max-width: 1400px;
+      max-width: 1760px;
       margin: 0 auto;
     }
     .brand { display: flex; align-items: baseline; gap: 0.8rem; }
@@ -60,13 +60,13 @@
     .subtitle { color: var(--muted); font-size: 0.9rem; }
     .actions { display:flex; gap: 0.5rem; align-items:center; flex-wrap: wrap; }
     main {
-      max-width: 3000px;
+      max-width: 1760px;
       margin: 0 auto;
-      padding: 1.25rem;
+      padding: clamp(0.9rem, 1.8vw, 1.35rem);
     }
     .grid {
       display: grid;
-      grid-template-columns: clamp(220px, 16vw, 300px) 1fr;
+      grid-template-columns: clamp(230px, 17vw, 310px) 1fr;
       gap: 1rem;
       align-items: start;
     }
@@ -163,7 +163,7 @@
     .statusLine { font-size: 0.9rem; color: var(--muted); }
     .answer {
       white-space: pre-wrap;
-      line-height: 1.45rem;
+      line-height: 1.5rem;
       font-size: 0.98rem;
     }
     #answerSplit { display: flex; flex-direction: column; min-height: 0; }
@@ -207,6 +207,7 @@
     .markdown h3 { font-size: 1.05rem; }
     .markdown code { font-family: var(--mono); font-size: 0.9em; padding: 0.08rem 0.28rem; border: 1px solid rgba(44,64,82,0.15); border-radius: 8px; background: #f2f6f9; }
     .markdown pre { font-family: var(--mono); font-size: 0.86rem; background: #f4f8fa; border: 1px solid rgba(44,64,82,0.16); border-radius: 12px; padding: 0.75rem; overflow: auto; }
+    .markdown hr { border: none; border-top: 1px solid rgba(44,64,82,0.22); margin: 0.95rem 0; }
     .markdown .tableWrap { overflow-x: auto; margin: 0.75rem 0; border: 1px solid rgba(44,64,82,0.16); border-radius: 12px; background: #f7fafc; }
     .markdown table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; }
     .markdown th, .markdown td { padding: 0.55rem 0.65rem; border-bottom: 1px solid rgba(44,64,82,0.12); border-right: 1px solid rgba(44,64,82,0.12); vertical-align: top; overflow-wrap: anywhere; }
@@ -301,11 +302,13 @@
       background: #eef3f7;
     }
     #progressLog {
-      margin-bottom: 0.9rem;
+      margin: 0;
       padding: 0.55rem 0.65rem;
       max-height: 170px;
       overflow-y: auto;
     }
+    .progressLogDetails summary { padding: 0.45rem 0.65rem; }
+    .progressLogDetails .toggleHint { font-size: 0.72rem; }
     .progressFeed {
       display: flex;
       flex-direction: column;
@@ -540,12 +543,27 @@
                       </div>
                       <div class="muted toggleHint">toggle</div>
                     </summary>
-                    <div class="chunkBody">
-                      <input id="ingestedFilter" type="text" placeholder="Filter by ticker or company…" />
-                      <div class="help" id="ingestedStatus" style="margin: 0.6rem 0;"></div>
-                      <div class="chunkText" id="ingestedList" style="max-height: 180px;"></div>
-                    </div>
-                  </details>
+	                    <div class="chunkBody">
+                      <div style="display:grid; grid-template-columns: minmax(0,1fr) 130px auto; gap:0.55rem; align-items:end; margin-bottom:0.65rem;">
+                        <div>
+                          <label class="muted" for="ingestTicker">Tickers</label>
+                          <input id="ingestTicker" type="text" placeholder="e.g. AMD, NVDA" autocomplete="off" />
+                        </div>
+                        <div>
+                          <label class="muted" for="ingestPerCompany">Files/company</label>
+                          <input id="ingestPerCompany" type="number" min="1" max="25" step="1" value="8" />
+                        </div>
+                        <button class="btn" type="button" id="ingestBtn">Ingest</button>
+                      </div>
+                      <div class="row" style="margin-bottom: 0.65rem;">
+                        <span class="pill" id="ingestJobPill">idle</span>
+                        <span class="help" id="ingestJobStatus">No active ingestion job.</span>
+                      </div>
+	                      <input id="ingestedFilter" type="text" placeholder="Filter by ticker or company…" />
+	                      <div class="help" id="ingestedStatus" style="margin: 0.6rem 0;"></div>
+	                      <div class="chunkText" id="ingestedList" style="max-height: 180px;"></div>
+	                    </div>
+	                  </details>
                   </div>
 
                 <div class="row" style="margin-top: 0.85rem;">
@@ -589,11 +607,21 @@
                         <div class="progressStepTime">—</div>
                       </div>
                     </div>
-                    <div class="chunkText" id="progressLog">
-                      <div class="progressEmpty">No activity yet.</div>
-                    </div>
+                    <details id="progressLogDetails" class="progressLogDetails" style="margin-bottom: 0.9rem;">
+                      <summary>
+                        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                          <strong class="labelSmall">Activity log</strong>
+                        </div>
+                        <div class="muted toggleHint">toggle</div>
+                      </summary>
+                      <div class="chunkBody">
+                        <div class="chunkText" id="progressLog">
+                          <div class="progressEmpty">No activity yet.</div>
+                        </div>
+                      </div>
+                    </details>
 
-                    <details id="draftDetails" style="margin-bottom: 0.9rem;">
+                    <details id="draftDetails" hidden style="margin-bottom: 0.9rem;">
                       <summary>
                         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
                           <strong>Draft</strong>

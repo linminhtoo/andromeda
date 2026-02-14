@@ -18,6 +18,8 @@ let lastQueryResponse: any = null;
 let lastRerankedChunks: any[] = [];
 let lastRetrievedChunks: any[] = [];
 let activeStream: { controller: AbortController; requestId: string | null } | null = null;
+let activeIngestJobId: string | null = null;
+let activeIngestPollHandle: number | null = null;
 
 const generationModes = new GenerationModeManager();
 const citationManager = new CitationManager();
@@ -59,6 +61,35 @@ function renderAnswerMarkdown(md: string, { citations = false }: { citations?: b
     citations,
     linkifyDocCitations: (html, opts) => citationManager.linkifyDocCitations(html, opts),
   });
+}
+
+/** Return true when current generation mode is expected to emit a draft stage. */
+function modeUsesDraft(modeOverride?: unknown): boolean {
+  const mode =
+    String(modeOverride || els.genMode?.value || '').trim().toLowerCase() || generationModes.getDefaultMode() || 'normal';
+  return generationModes.modeUsesDraft(mode);
+}
+
+/** Show/hide draft panel to keep default layout compact for non-refine modes. */
+function setDraftPanelVisibility(show: boolean): void {
+  if (!els.draftDetails) return;
+  els.draftDetails.hidden = !show;
+  if (!show) {
+    els.draftDetails.open = false;
+    return;
+  }
+}
+
+/** Collapse progress activity feed unless explicitly expanded. */
+function collapseProgressLog(): void {
+  if (!els.progressLogDetails) return;
+  els.progressLogDetails.open = false;
+}
+
+/** Expand progress activity feed for debugging/error inspection. */
+function expandProgressLog(): void {
+  if (!els.progressLogDetails) return;
+  els.progressLogDetails.open = true;
 }
 
 /** Read current generation controls into API request settings payload. */
@@ -158,22 +189,34 @@ function showEntry(entry: any): void {
   if (!entry) return;
 
   const res = entry.response || {};
+  const draft = String(res.draft_answer ?? '');
+  const final = String(res.final_answer ?? '');
+  const draftDiffers = Boolean(draft.trim() && draft.trim() !== final.trim());
+  const shouldShowDraft = Boolean(entry?.request?.enable_refine) || draftDiffers;
+
   els.answerBlock.style.display = 'block';
   els.requestIdPill.textContent = entry.id ? 'hist ' + String(entry.id).slice(0, 8) : 'history';
 
   progressUi.reset();
+  collapseProgressLog();
   progressUi.applyTimingMs(entry?.timing_ms || {});
   const bits = timingBits(entry?.timing_ms || {}, STEP_ORDER);
   if (bits.length) progressUi.append(`timings: ${bits.join(' · ')}`);
 
+  setDraftPanelVisibility(shouldShowDraft);
   els.draftStatePill.textContent = 'done';
 
   citationManager.reset();
   const chunks = res.top_chunks || [];
   citationManager.updateFromChunks(chunks);
 
-  els.draftAnswer.innerHTML = renderAnswerMarkdown(String(res.draft_answer ?? ''), { citations: true });
-  els.finalAnswer.innerHTML = renderAnswerMarkdown(String(res.final_answer ?? ''), { citations: true });
+  if (shouldShowDraft) {
+    els.draftAnswer.innerHTML = renderAnswerMarkdown(draft, { citations: true });
+    if (draftDiffers && els.draftDetails) els.draftDetails.open = true;
+  } else {
+    els.draftAnswer.innerHTML = '';
+  }
+  els.finalAnswer.innerHTML = renderAnswerMarkdown(final, { citations: true });
 
   renderChunkList(chunks);
 
@@ -208,7 +251,9 @@ function resetChatView({ clearQuestion = true, resetAnswerSplit = false }: { cle
   els.answerBlock.style.display = 'block';
   els.requestIdPill.textContent = 'idle';
   progressUi.reset();
-  els.draftStatePill.textContent = 'waiting';
+  collapseProgressLog();
+  setDraftPanelVisibility(modeUsesDraft());
+  els.draftStatePill.textContent = modeUsesDraft() ? 'waiting' : 'disabled';
   els.draftAnswer.innerHTML = '';
   els.finalAnswer.innerHTML = '<div class="muted">Ask a question below to see the answer here.</div>';
   els.copyAnswerBtn.disabled = true;
@@ -295,6 +340,151 @@ async function exportHistory(): Promise<void> {
   }
 }
 
+/** Stop polling active ticker ingestion status. */
+function stopIngestPolling(): void {
+  if (activeIngestPollHandle !== null) {
+    window.clearInterval(activeIngestPollHandle);
+    activeIngestPollHandle = null;
+  }
+  activeIngestJobId = null;
+}
+
+/** Render ticker ingestion status controls from latest job payload. */
+function renderIngestJobStatus(job: any): void {
+  const status = String(job?.status || '').trim().toLowerCase() || 'idle';
+  const stage = String(job?.stage || '').trim().toLowerCase();
+  const tickers = Array.isArray(job?.tickers)
+    ? job.tickers
+        .map((item: unknown) => String(item || '').trim().toUpperCase())
+        .filter((item: string) => Boolean(item))
+    : [String(job?.ticker || '').trim().toUpperCase()].filter((item: string) => Boolean(item));
+  const message = String(job?.message || '').trim();
+
+  const running = status === 'queued' || status === 'running';
+  els.ingestBtn.disabled = running;
+
+  els.ingestJobPill.className = 'pill';
+  if (status === 'succeeded') els.ingestJobPill.classList.add('ok');
+  if (status === 'failed') els.ingestJobPill.classList.add('bad');
+  els.ingestJobPill.textContent = status;
+
+  const parts: string[] = [];
+  if (tickers.length) parts.push(tickers.join(', '));
+  if (stage) parts.push(stage);
+  if (message) parts.push(message);
+  els.ingestJobStatus.textContent = parts.length ? parts.join(' · ') : 'No active ingestion job.';
+}
+
+/** Poll backend until ticker ingestion reaches a terminal state. */
+function startIngestPolling(jobId: string): void {
+  stopIngestPolling();
+  activeIngestJobId = String(jobId || '').trim();
+  if (!activeIngestJobId) return;
+
+  const poll = async (): Promise<void> => {
+    if (!activeIngestJobId) return;
+    try {
+      const res = await fetch(`/ingest/${encodeURIComponent(activeIngestJobId)}`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const job = await res.json();
+      renderIngestJobStatus(job);
+
+      const status = String(job?.status || '').trim().toLowerCase();
+      if (status === 'succeeded' || status === 'failed') {
+        stopIngestPolling();
+        if (status === 'succeeded') void ingestedPanel.load();
+      }
+    } catch (e) {
+      stopIngestPolling();
+      els.ingestBtn.disabled = false;
+      els.ingestJobPill.className = 'pill bad';
+      els.ingestJobPill.textContent = 'failed';
+      els.ingestJobStatus.textContent = 'Failed to poll ingestion status: ' + e;
+    }
+  };
+
+  void poll();
+  activeIngestPollHandle = window.setInterval(() => {
+    void poll();
+  }, 2000);
+}
+
+/** Normalize ticker text before submitting ingest request. */
+function parseTickerInput(raw: unknown): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const text = String(raw || '').trim();
+  if (!text) return out;
+
+  const parts = text.split(/[\s,;]+/g);
+  for (const part of parts) {
+    const ticker = String(part || '').trim().toUpperCase();
+    if (!ticker) continue;
+    if (seen.has(ticker)) continue;
+    seen.add(ticker);
+    out.push(ticker);
+  }
+  return out;
+}
+
+/** Parse and validate files-per-company numeric control. */
+function parsePerCompanyInput(raw: unknown): number | null {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  const value = Math.floor(n);
+  if (value <= 0) return null;
+  return value;
+}
+
+/** Submit ticker ingestion request and begin job polling. */
+async function startTickerIngestion(): Promise<void> {
+  const tickers = parseTickerInput(els.ingestTicker.value);
+  if (!tickers.length) {
+    els.ingestJobPill.className = 'pill bad';
+    els.ingestJobPill.textContent = 'failed';
+    els.ingestJobStatus.textContent = 'At least one ticker is required.';
+    return;
+  }
+
+  const perCompany = parsePerCompanyInput(els.ingestPerCompany.value);
+  if (perCompany === null) {
+    els.ingestJobPill.className = 'pill bad';
+    els.ingestJobPill.textContent = 'failed';
+    els.ingestJobStatus.textContent = 'Files/company must be a positive integer.';
+    return;
+  }
+
+  els.ingestBtn.disabled = true;
+  els.ingestJobPill.className = 'pill';
+  els.ingestJobPill.textContent = 'starting';
+  els.ingestJobStatus.textContent = `${tickers.join(', ')} · submitting request…`;
+
+  try {
+    const res = await fetch('/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tickers, per_company: perCompany }),
+    });
+    const payload = await res.json();
+    if (!res.ok) {
+      const detail = String(payload?.detail || '');
+      throw new Error(detail || 'HTTP ' + res.status);
+    }
+
+    const jobId = String(payload?.job_id || '').trim();
+    if (!jobId) throw new Error('Missing job_id in response.');
+
+    els.ingestTicker.value = tickers.join(', ');
+    renderIngestJobStatus(payload);
+    startIngestPolling(jobId);
+  } catch (e) {
+    els.ingestBtn.disabled = false;
+    els.ingestJobPill.className = 'pill bad';
+    els.ingestJobPill.textContent = 'failed';
+    els.ingestJobStatus.textContent = 'Failed to start ingestion: ' + e;
+  }
+}
+
 /** Abort active stream and send best-effort backend cancel signal. */
 async function stopActiveQuery(): Promise<void> {
   const stream = activeStream;
@@ -321,6 +511,7 @@ async function stopActiveQuery(): Promise<void> {
 /** Execute the full streaming query flow and update UI incrementally. */
 async function doQuery(question: string): Promise<void> {
   const settings = currentSettings();
+  const showDraft = modeUsesDraft(settings.mode);
   writeSettings(settings);
 
   els.queryBtn.disabled = true;
@@ -332,8 +523,10 @@ async function doQuery(question: string): Promise<void> {
   els.answerBlock.style.display = 'block';
   els.requestIdPill.textContent = '…';
   progressUi.reset();
+  collapseProgressLog();
   progressUi.setSummary('running');
-  els.draftStatePill.textContent = 'waiting';
+  setDraftPanelVisibility(showDraft);
+  els.draftStatePill.textContent = showDraft ? 'waiting' : 'disabled';
   els.draftAnswer.innerHTML = '';
   els.finalAnswer.innerHTML = '';
   els.retrievedCountPill.textContent = '0 chunks';
@@ -350,6 +543,7 @@ async function doQuery(question: string): Promise<void> {
 
   let draftText = '';
   let finalText = '';
+  let sawDraftStage = false;
   let draftRenderTimer: number | null = null;
   let finalRenderTimer: number | null = null;
   let streamState: { controller: AbortController; requestId: string | null } | null = null;
@@ -463,8 +657,10 @@ async function doQuery(question: string): Promise<void> {
           els.queryStatus.textContent = msg || (step ? 'Step: ' + step : '');
           progressUi.append(step ? step + ': ' + msg : msg);
           if (step === 'draft') {
+            sawDraftStage = true;
+            setDraftPanelVisibility(true);
             els.draftStatePill.textContent = 'streaming';
-            els.draftDetails.open = true;
+            if (els.draftDetails) els.draftDetails.open = true;
           }
           continue;
         }
@@ -509,14 +705,17 @@ async function doQuery(question: string): Promise<void> {
         if (type === 'draft_delta') {
           const delta = String(evt?.delta || '');
           if (delta) {
+            sawDraftStage = true;
             draftText += delta;
-            els.draftDetails.open = true;
+            setDraftPanelVisibility(true);
+            if (els.draftDetails) els.draftDetails.open = true;
             scheduleDraftRender();
           }
           continue;
         }
 
         if (type === 'draft_done') {
+          sawDraftStage = true;
           els.draftStatePill.textContent = 'done';
           const ms = finishStep('draft', evt?.step_ms ?? evt?.draft_ms);
           const dur = formatDuration(ms, { empty: '' });
@@ -538,6 +737,7 @@ async function doQuery(question: string): Promise<void> {
           const elapsed = performance.now() - queryT0;
           progressUi.setSummary(`cancelled ${formatDuration(elapsed)}`, 'bad');
           progressUi.append(`Cancelled · ${formatDuration(elapsed)}`);
+          expandProgressLog();
           break;
         }
 
@@ -549,6 +749,7 @@ async function doQuery(question: string): Promise<void> {
             if (!stepDurations.has(step) && stepStarts.has(step)) progressUi.setStep(step, 'error', null);
           }
           progressUi.append('Error: ' + err);
+          expandProgressLog();
           break;
         }
 
@@ -557,12 +758,18 @@ async function doQuery(question: string): Promise<void> {
           lastQueryResponse = data;
           els.queryStatus.textContent = '';
 
-          els.draftStatePill.textContent = 'done';
+          const showDraftResult = showDraft || sawDraftStage;
+          setDraftPanelVisibility(showDraftResult);
+          els.draftStatePill.textContent = showDraftResult ? 'done' : 'disabled';
           draftText = String(data.draft_answer ?? draftText);
           finalText = String(data.final_answer ?? finalText);
           citationManager.updateFromChunks(data.top_chunks || []);
 
-          els.draftAnswer.innerHTML = renderAnswerMarkdown(draftText, { citations: true });
+          if (showDraftResult) {
+            els.draftAnswer.innerHTML = renderAnswerMarkdown(draftText, { citations: true });
+          } else {
+            els.draftAnswer.innerHTML = '';
+          }
           els.finalAnswer.innerHTML = renderAnswerMarkdown(finalText, { citations: true });
 
           const chunks = data.top_chunks || [];
@@ -610,11 +817,13 @@ async function doQuery(question: string): Promise<void> {
       els.queryStatus.textContent = 'Cancelled.';
       progressUi.setSummary('cancelled', 'bad');
       progressUi.append('Cancelled');
+      expandProgressLog();
     } else {
       console.error(e);
       els.queryStatus.textContent = 'Error: ' + e;
       progressUi.setSummary('error', 'bad');
       progressUi.append('Error: ' + e);
+      expandProgressLog();
     }
   } finally {
     els.queryBtn.disabled = false;
@@ -626,70 +835,70 @@ async function doQuery(question: string): Promise<void> {
   }
 }
 
-/** Resolve citation target metadata by doc id across active chunk sets. */
-function findChunkTargetForDocId(docId: string): any | null {
-  const d = String(docId || '').trim();
-  if (!d) return null;
-
-  const direct = citationManager.get(d);
-  if (direct) return direct;
-
-  const fromReranked = (Array.isArray(lastRerankedChunks) ? lastRerankedChunks : []).find(
-    (c) => String(c?.doc_id || '').trim() === d,
-  );
-  if (fromReranked) {
-    const label = formatCitationLabelFromChunk(fromReranked);
-    if (!label) return null;
-    return {
-      doc_id: d,
-      chunk_id: String(fromReranked.chunk_id || ''),
-      source: String(fromReranked.source || ''),
-      label,
-    };
-  }
-
-  const fromRetrieved = (Array.isArray(lastRetrievedChunks) ? lastRetrievedChunks : []).find(
-    (c) => String(c?.doc_id || '').trim() === d,
-  );
-  if (fromRetrieved) {
-    const label = formatCitationLabelFromChunk(fromRetrieved);
-    if (!label) return null;
-    return {
-      doc_id: d,
-      chunk_id: String(fromRetrieved.chunk_id || ''),
-      source: String(fromRetrieved.source || ''),
-      label,
-    };
-  }
-
-  const fromDone = (Array.isArray(lastQueryResponse?.top_chunks) ? lastQueryResponse.top_chunks : []).find(
-    (c: any) => String(c?.doc_id || '').trim() === d,
-  );
-  if (fromDone) {
-    const label = formatCitationLabelFromChunk(fromDone);
-    if (!label) return null;
-    return {
-      doc_id: d,
-      chunk_id: String(fromDone.chunk_id || ''),
-      source: String(fromDone.source || ''),
-      label,
-    };
-  }
-
-  return null;
+/** Return concise fallback label when filing metadata is unavailable in chunk payload. */
+function fallbackCitationLabel(docId: string): string {
+  const doc = String(docId || '').trim();
+  if (!doc) return 'citation';
+  const short = doc.length > 14 ? `${doc.slice(0, 14)}...` : doc;
+  return `doc ${short}`;
 }
 
-/** Open source viewer at citation target for the given document id. */
-async function jumpToCitation(docId: string): Promise<void> {
-  const target = findChunkTargetForDocId(docId);
+/** Pick the best chunk target from a chunk list for citation-driven source jumps. */
+function chunkTargetFromList(chunks: any[], docId: string, chunkId: string): any | null {
+  const list = Array.isArray(chunks) ? chunks : [];
+  if (!list.length) return null;
+
+  const wantedDoc = String(docId || '').trim();
+  const wantedChunk = String(chunkId || '').trim();
+  const match = wantedChunk
+    ? list.find((chunk) => {
+        const candidateChunk = String(chunk?.chunk_id || '').trim();
+        if (candidateChunk !== wantedChunk) return false;
+        const candidateDoc = String(chunk?.doc_id || '').trim();
+        if (!wantedDoc) return true;
+        return candidateDoc === wantedDoc;
+      })
+    : list.find((chunk) => String(chunk?.doc_id || '').trim() === wantedDoc);
+
+  if (!match) return null;
+  const src = String(match?.source || '').trim();
+  const resolvedChunk = wantedChunk || String(match?.chunk_id || '').trim();
+  if (!src || !resolvedChunk) return null;
+  return {
+    doc_id: wantedDoc || String(match?.doc_id || '').trim(),
+    chunk_id: resolvedChunk,
+    source: src,
+    label: formatCitationLabelFromChunk(match) || fallbackCitationLabel(wantedDoc || String(match?.doc_id || '').trim()),
+  };
+}
+
+/** Resolve citation target metadata across active chunk sets. */
+function findChunkTargetForCitation(docId: string, chunkId: string): any | null {
+  const d = String(docId || '').trim();
+  const c = String(chunkId || '').trim();
+  if (!d && !c) return null;
+
+  const direct = citationManager.get(d, c);
+  if (direct) return direct;
+
+  const fromReranked = chunkTargetFromList(lastRerankedChunks, d, c);
+  if (fromReranked) return fromReranked;
+  const fromRetrieved = chunkTargetFromList(lastRetrievedChunks, d, c);
+  if (fromRetrieved) return fromRetrieved;
+  return chunkTargetFromList(lastQueryResponse?.top_chunks, d, c);
+}
+
+/** Open source viewer at citation target for the given document/chunk id pair. */
+async function jumpToCitation(docId: string, chunkId: string): Promise<void> {
+  const target = findChunkTargetForCitation(docId, chunkId);
   if (!target) return;
   const src = String(target.source || '').trim();
-  const chunkId = String(target.chunk_id || '').trim();
-  if (!src || !chunkId) return;
+  const cid = String(target.chunk_id || '').trim();
+  if (!src || !cid) return;
 
   els.sourceViewerDetails.open = true;
   els.sourceSelect.value = src;
-  await sourceViewer.render(src, chunkId);
+  await sourceViewer.render(src, cid);
 }
 
 /** Handle clicks on citation links embedded in rendered answers. */
@@ -699,7 +908,8 @@ function onCitationClick(e: Event): void {
   if (!link) return;
   e.preventDefault();
   const docId = String(link.getAttribute('data-doc-id') || '').trim();
-  void jumpToCitation(docId);
+  const chunkId = String(link.getAttribute('data-chunk-id') || '').trim();
+  void jumpToCitation(docId, chunkId);
 }
 
 els.queryForm.addEventListener('submit', async (e: Event) => {
@@ -777,11 +987,23 @@ els.genMode?.addEventListener('change', () => {
     finalMaxTokens: els.finalMaxTokens,
   });
   generationModes.updateModeHelp(mode, els.genModeHelp);
+  const showDraft = modeUsesDraft(mode);
+  setDraftPanelVisibility(showDraft);
+  if (!showDraft) els.draftAnswer.innerHTML = '';
+  if (!activeStream) els.draftStatePill.textContent = showDraft ? 'waiting' : 'disabled';
   writeSettings(currentSettings());
 });
 
 els.ingestedFilter?.addEventListener('input', () => {
   ingestedPanel.render();
+});
+els.ingestBtn?.addEventListener('click', () => {
+  void startTickerIngestion();
+});
+els.ingestTicker?.addEventListener('keydown', (e: KeyboardEvent) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  void startTickerIngestion();
 });
 
 /** Bootstrap controls, persisted state, and initial background loads. */
@@ -806,6 +1028,12 @@ els.ingestedFilter?.addEventListener('input', () => {
   );
   generationModes.updateModeHelp(mode, els.genModeHelp);
   applySettings(saved);
+  setDraftPanelVisibility(modeUsesDraft(mode));
+  if (!modeUsesDraft(mode)) {
+    els.draftStatePill.textContent = 'disabled';
+    els.draftAnswer.innerHTML = '';
+  }
+  collapseProgressLog();
 
   layout.applyUi(readUi());
   layout.setupSourcesSplitter();
@@ -813,6 +1041,7 @@ els.ingestedFilter?.addEventListener('input', () => {
 
   void sourceViewer.populateSourceSelect();
   void checkHealth();
+  renderIngestJobStatus({ status: 'idle', stage: '', message: 'No active ingestion job.' });
   void ingestedPanel.load();
   void loadHistory();
 })();
