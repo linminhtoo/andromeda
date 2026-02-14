@@ -24,7 +24,6 @@ def test_resolve_ingest_profile_name_precedence(monkeypatch) -> None:
     assert resolve_ingest_profile_name(None) == "default"
 
 
-
 def test_update_and_load_ingest_profile_step(tmp_path: Path) -> None:
     project_root = tmp_path
 

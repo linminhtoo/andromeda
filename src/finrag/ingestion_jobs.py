@@ -174,7 +174,9 @@ class TickerIngestionJobManager:
         self.jobs: dict[str, TickerIngestionJob] = {}
         self.jobs_lock = threading.Lock()
 
-    def start_job(self, *, tickers: list[str], per_company: int, config: TickerIngestionRuntimeConfig) -> dict[str, Any]:
+    def start_job(
+        self, *, tickers: list[str], per_company: int, config: TickerIngestionRuntimeConfig
+    ) -> dict[str, Any]:
         """
         Create and start a ticker ingestion background job.
         """
@@ -336,12 +338,7 @@ class TickerIngestionJobManager:
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Ticker ingestion job failed (job_id={}): {}", job_id, exc)
-            self.update_job(
-                job_id,
-                status="failed",
-                message=f"{type(exc).__name__}: {exc}",
-                finished_at=now_utc_iso(),
-            )
+            self.update_job(job_id, status="failed", message=f"{type(exc).__name__}: {exc}", finished_at=now_utc_iso())
 
 
 def now_utc_iso() -> str:
@@ -393,13 +390,7 @@ def build_job_paths(*, project_root: Path, jobs_root: Path, ticker: str, job_id:
 
 
 def build_download_command(
-    *,
-    tickers: list[str],
-    per_company: int,
-    output_dir: Path,
-    delay: float,
-    skip_existing: bool,
-    ingest_profile: str,
+    *, tickers: list[str], per_company: int, output_dir: Path, delay: float, skip_existing: bool, ingest_profile: str
 ) -> list[str]:
     """
     Build `scripts.download` command for one or more tickers.
@@ -573,14 +564,7 @@ def run_subprocess(*, command: list[str], cwd: Path, log_path: Path) -> None:
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(f"\n$ {cmd_str}\n")
 
-    result = subprocess.run(
-        command,
-        cwd=str(cwd),
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = subprocess.run(command, cwd=str(cwd), env=env, capture_output=True, text=True, check=False)
 
     with log_path.open("a", encoding="utf-8") as handle:
         if result.stdout:

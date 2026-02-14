@@ -58,7 +58,6 @@ def test_normalize_ticker_rejects_invalid_symbols() -> None:
         normalize_ticker("AMD$")
 
 
-
 def test_build_index_command_includes_runtime_compatibility_args() -> None:
     cfg = make_config()
     cmd = build_index_command(config=cfg, ingest_output_dir=Path("/tmp/chunked"))
@@ -84,7 +83,6 @@ def test_build_index_command_includes_runtime_compatibility_args() -> None:
     assert "BAAI/bge-m3" in cmd
     assert "--ingest-profile" in cmd
     assert "exp_finrag" in cmd
-
 
 
 def test_build_index_command_omits_optional_args_when_not_set() -> None:

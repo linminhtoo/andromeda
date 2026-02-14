@@ -82,11 +82,7 @@ def ingest_profile_dir(project_root: Path, root_override: str | Path | None = No
     return (project_root / path).resolve()
 
 
-def ingest_profile_path(
-    project_root: Path,
-    profile_name: str,
-    root_override: str | Path | None = None,
-) -> Path:
+def ingest_profile_path(project_root: Path, profile_name: str, root_override: str | Path | None = None) -> Path:
     """
     Return JSON file path for an ingest profile.
     """
@@ -109,9 +105,7 @@ def _json_default(value: Any) -> Any:
 
 
 def load_ingest_profile(
-    project_root: Path,
-    profile_name: str,
-    root_override: str | Path | None = None,
+    project_root: Path, profile_name: str, root_override: str | Path | None = None
 ) -> dict[str, Any]:
     """
     Load ingest profile JSON; return empty dict when absent/invalid.
@@ -183,10 +177,7 @@ def update_ingest_profile_step(
     steps_obj = payload["steps"]
     assert isinstance(steps_obj, dict)
 
-    step_payload: dict[str, Any] = {
-        "updated_at": now,
-        "settings": settings,
-    }
+    step_payload: dict[str, Any] = {"updated_at": now, "settings": settings}
     if metadata is not None:
         step_payload["metadata"] = metadata
 
