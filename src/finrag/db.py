@@ -286,7 +286,7 @@ class PostgresDB:
                     cur.execute(hnsw_sql)
             self._ann_index_ready = True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Skipping hnsw index creation: {!r}", exc)
+            raise RuntimeError(f"Failed to create ANN index: {exc!r}") from exc
 
     def drop_ann_indexes(self) -> None:
         """
@@ -605,6 +605,10 @@ class PostgresDB:
         -------
         list[HybridSearchRow]
             Typed rows for downstream conversion.
+
+        TODO's
+        ------
+        - Add ef_search parameter to control HNSW search breadth (currently uses default).
         """
 
         params: dict[str, Any] = {

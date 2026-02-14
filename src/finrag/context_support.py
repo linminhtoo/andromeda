@@ -15,12 +15,11 @@ def situate_context(
     context: str,
     chunk: str,
     temperature: float = 0.0,
-    max_context_chars: int = 20_000,
-    max_chunk_chars: int = 6_000,
+    max_context_chars: int = 24_000,
+    max_chunk_chars: int = 12_000,
 ) -> str:
     """
-    Ask an LLM to produce a short "situating" context for `chunk` given some
-    surrounding `context`.
+    Ask an LLM to produce a short "situating" summary for `chunk` given `context`.
 
     The returned string is meant to be stored in chunk metadata and appended to
     the chunk text before embedding/indexing.
@@ -36,12 +35,19 @@ def situate_context(
     if max_chunk_chars > 0 and len(chunk) > max_chunk_chars:
         chunk = chunk[:max_chunk_chars].rstrip() + "\n\n[TRUNCATED]"
 
-    prompt = (
-        "You are helping improve vector search retrieval.\n"
-        "Given some context and a chunk, write a CONCISE summary that situates "
-        "the chunk within the larger context.\n"
-        "Return ONLY the summary. Ensure it is CONCISE. \n"
+    system_prompt = (
+        "You are helping to improve vector search retrieval.\n"
+        "Given some <context> and <chunk>, write a CONCISE summary that situates "
+        "the chunk within the larger context. <context> was derived from chunks before "
+        "and after the chunk of interest.\n"
+        "FOCUS on summarizing the relationship between the <chunk> and the <context>, "
+        "then followed by the <chunk> content.\n"
+        "DO NOT overemphasize the details of <context>.\n"
+        "Return ONLY the summary.\n"
+        "Your summary MUST BE CONCISE.\n"
         "Do not include quotes, headings, or preamble.\n\n"
+    )
+    prompt = (
         "<context>\n"
         f"{context}\n"
         "</context>\n\n"
@@ -51,7 +57,11 @@ def situate_context(
     )
 
     try:
-        out = llm.chat([{"role": "user", "content": prompt}], temperature=temperature)
+        out = llm.chat(
+            [{"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}],
+            temperature=temperature
+        )
     except Exception as exc:  # noqa: BLE001 - allow in-situate fallback
         raise RuntimeError(f"LLM call failed in situate_context(): {exc!r}") from exc
     return (out or "").strip()
@@ -75,7 +85,7 @@ def apply_context_strategy(
     metadata_key: str = "retrieval_context",
     llm_for_context: LLMClient | None = None,
     temperature: float = 0.0,
-    max_concurrency: int = 32,
+    max_concurrency: int = 64,
     skip_if_exists: bool = True,
 ) -> None:
     """
@@ -176,9 +186,9 @@ def apply_context_strategy(
                 after = texts[idx + 1 : idx + 1 + window]
                 parts: list[str] = []
                 if before:
-                    parts.append("Previous chunks:\n" + "\n\n".join(before))
+                    parts.append("Contents of chunks BEFORE this chunk:\n\n" + "\n\n".join(before))
                 if after:
-                    parts.append("Next chunks:\n" + "\n\n".join(after))
+                    parts.append("Contents of chunks AFTER this chunk:\n" + "\n\n".join(after))
                 neighbor_context = "\n\n".join(p for p in parts if p.strip())
                 if not neighbor_context:
                     continue
