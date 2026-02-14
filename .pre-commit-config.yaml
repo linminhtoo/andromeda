@@ -52,7 +52,7 @@ repos:
     rev: v1.1.408
     hooks:
     - id: pyright
-      files: ^src/
+      files: ^(src/|scripts/)
 
   # - repo: local
   #   hooks:
