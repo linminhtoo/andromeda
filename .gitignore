@@ -7,6 +7,7 @@ debug_outputs/
 data/
 eval/
 logs/traces/
+notebooks/
 
 # JS files are generated from TS files by the build process, so we ignore them.
 src/finrag/static/js/
