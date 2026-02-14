@@ -1,7 +1,10 @@
+# pyright: reportMissingImports=false
+
 import base64
 import urllib.request
 from io import BytesIO
 from pathlib import Path
+from typing import Any, cast
 
 import torch
 from dotenv import load_dotenv
@@ -13,9 +16,10 @@ from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # Initialize the model
-model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-    "allenai/olmOCR-2-7B-1025", torch_dtype=torch.bfloat16
-).eval()
+model = cast(
+    Any,
+    Qwen2_5_VLForConditionalGeneration.from_pretrained("allenai/olmOCR-2-7B-1025", torch_dtype=torch.bfloat16).eval(),
+)
 processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)

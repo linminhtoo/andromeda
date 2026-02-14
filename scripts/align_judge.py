@@ -6,6 +6,7 @@ import csv
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any, cast
 
 from dotenv import load_dotenv
 from sklearn.metrics import cohen_kappa_score, confusion_matrix, f1_score, precision_score, recall_score
@@ -53,6 +54,7 @@ def _spec_from_id(judge_id: str) -> JudgeSpec:
 
 
 def _metrics(y_true: list[int], y_pred: list[int]) -> dict:
+    zero_division = cast(Any, 0)
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
     return {
         "n": len(y_true),
@@ -61,9 +63,9 @@ def _metrics(y_true: list[int], y_pred: list[int]) -> dict:
         "tn": int(tn),
         "fn": int(fn),
         # Positive class is FAIL (1): we care about catching defects.
-        "precision_fail": float(precision_score(y_true, y_pred, pos_label=1, zero_division=0)),
-        "recall_fail": float(recall_score(y_true, y_pred, pos_label=1, zero_division=0)),
-        "f1_fail": float(f1_score(y_true, y_pred, pos_label=1, zero_division=0)),
+        "precision_fail": float(precision_score(y_true, y_pred, pos_label=1, zero_division=zero_division)),
+        "recall_fail": float(recall_score(y_true, y_pred, pos_label=1, zero_division=zero_division)),
+        "f1_fail": float(f1_score(y_true, y_pred, pos_label=1, zero_division=zero_division)),
         "cohen_kappa": float(cohen_kappa_score(y_true, y_pred)),
     }
 

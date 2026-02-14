@@ -28,6 +28,8 @@ from tqdm import tqdm
 
 import sec_parser as sp
 
+from finrag.ingest_profile import resolve_ingest_profile_name, update_ingest_profile_step
+
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 _DATE_SUFFIX_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})$")
@@ -39,6 +41,7 @@ _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?
 class Args:
     html_dir: str
     output_dir: str
+    ingest_profile: str | None
     meta_dir: str | None
     pattern: str
     recursive: bool
@@ -91,6 +94,14 @@ def parse_args() -> Args:
         help="Output root directory (writes `processed_markdown/` and `debug/`).",
     )
     parser.add_argument(
+        "--ingest-profile",
+        default=None,
+        help=(
+            "Profile name for persisting conversion settings to disk "
+            "(default resolution: FINRAG_INGEST_PROFILE, then POSTGRES_SCHEMA, then `default`)."
+        ),
+    )
+    parser.add_argument(
         "--meta-dir",
         default=None,
         help=(
@@ -130,6 +141,7 @@ def parse_args() -> Args:
     return Args(
         html_dir=ns.html_dir,
         output_dir=ns.output_dir,
+        ingest_profile=(str(ns.ingest_profile).strip() if ns.ingest_profile is not None else None) or None,
         meta_dir=ns.meta_dir,
         pattern=ns.pattern,
         recursive=bool(ns.recursive),
@@ -533,6 +545,7 @@ def _process_one_file(
 
 def main() -> int:
     args = parse_args()
+    profile_name = resolve_ingest_profile_name(args.ingest_profile)
 
     project_root = Path(__file__).resolve().parents[1]
     log_path = _setup_logging(project_root)
@@ -554,6 +567,7 @@ def main() -> int:
     logger.info(f"HTML root: {html_root}")
     logger.info(f"Output root: {output_root}")
     logger.info(f"Meta root: {meta_root}")
+    logger.info("Ingest profile: {}", profile_name)
 
     html_files = _iter_html_files(html_root, pattern=args.pattern, recursive=args.recursive)
     if args.year_cutoff is not None:
@@ -615,6 +629,19 @@ def main() -> int:
     run_info_path = output_root / "run_info.json"
     run_info_path.write_text(
         json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
+    )
+
+    update_ingest_profile_step(
+        project_root=project_root,
+        profile_name=profile_name,
+        step_name="process_html_to_markdown",
+        settings=args.to_dict(),
+        metadata={
+            "output_root": str(output_root),
+            "processed_files": len(processed),
+            "failed_files": len(failures),
+            "run_info_path": str(run_info_path),
+        },
     )
 
     processed_index_path = output_root / "doc_index.jsonl"
