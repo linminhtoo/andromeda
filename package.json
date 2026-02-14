@@ -1,0 +1,14 @@
+{
+  "name": "finrag-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TypeScript build for FinRAG static UIs",
+  "scripts": {
+    "check:ts": "tsc -p tsconfig.json --noEmit",
+    "build:ts": "tsc -p tsconfig.json",
+    "watch:ts": "tsc -p tsconfig.json --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
