@@ -5,11 +5,13 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from dotenv import load_dotenv
 from openai import BadRequestError, OpenAI
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
+
+ToolChoice = Literal["auto", "required", "none"]
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -23,15 +25,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="OpenAI-compatible endpoint (defaults to OPENAI_CHAT_BASE_URL, then OPENAI_BASE_URL).",
     )
     parser.add_argument(
-        "--api-key",
-        default=None,
-        help="API key (defaults to OPENAI_API_KEY; test is common for local vLLM).",
+        "--api-key", default=None, help="API key (defaults to OPENAI_API_KEY; test is common for local vLLM)."
     )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help="Chat model name (defaults to OPENAI_CHAT_MODEL).",
-    )
+    parser.add_argument("--model", default=None, help="Chat model name (defaults to OPENAI_CHAT_MODEL).")
     parser.add_argument(
         "--prompt",
         default="What is the latest price for NVDA? Use the available tool before answering.",
@@ -43,12 +39,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Tool choice mode sent to the OpenAI API.",
     )
-    parser.add_argument(
-        "--max-tokens",
-        type=int,
-        default=256,
-        help="Max completion tokens per model call.",
-    )
+    parser.add_argument("--max-tokens", type=int, default=256, help="Max completion tokens per model call.")
     return parser
 
 
@@ -166,34 +157,17 @@ def dispatch_tool_call(tool_name: str, tool_arguments: dict[str, Any]) -> str:
     return lookup_quote(ticker_value)
 
 
-def run_tool_call_probe(
-    client: OpenAI,
-    model: str,
-    prompt: str,
-    tool_choice: str,
-    max_tokens: int,
-) -> int:
+def run_tool_call_probe(client: OpenAI, model: str, prompt: str, tool_choice: ToolChoice, max_tokens: int) -> int:
     """Run a tool-calling roundtrip and return a process-style status code."""
     tools = build_tools()
     messages: list[ChatCompletionMessageParam] = [
-        {
-            "role": "system",
-            "content": "You are a test assistant. Use the lookup_quote function when relevant.",
-        },
-        {
-            "role": "user",
-            "content": prompt,
-        },
+        {"role": "system", "content": "You are a test assistant. Use the lookup_quote function when relevant."},
+        {"role": "user", "content": prompt},
     ]
 
     try:
         first_response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            temperature=0,
-            max_tokens=max_tokens,
+            model=model, messages=messages, tools=tools, tool_choice=tool_choice, temperature=0, max_tokens=max_tokens
         )
     except BadRequestError as error:
         print("RESULT: FAIL (request rejected by server)")
@@ -217,6 +191,9 @@ def run_tool_call_probe(
     messages.append(assistant_message)
 
     for tool_call in tool_calls:
+        if tool_call.type != "function":
+            raise RuntimeError(f"Unsupported non-function tool call type: {tool_call.type}")
+
         tool_name = tool_call.function.name
         tool_arguments = parse_tool_arguments(tool_call.function.arguments)
         tool_result = dispatch_tool_call(tool_name, tool_arguments)
@@ -227,20 +204,12 @@ def run_tool_call_probe(
         print(f"tool_result: {tool_result}")
 
         tool_message = cast(
-            ChatCompletionMessageParam,
-            {
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": tool_result,
-            },
+            ChatCompletionMessageParam, {"role": "tool", "tool_call_id": tool_call.id, "content": tool_result}
         )
         messages.append(tool_message)
 
     second_response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=0,
-        max_tokens=max_tokens,
+        model=model, messages=messages, temperature=0, max_tokens=max_tokens
     )
     final_message = second_response.choices[0].message
 
@@ -265,12 +234,9 @@ def main() -> None:
     print(f"tool_choice: {args.tool_choice}")
 
     client = OpenAI(api_key=api_key, base_url=base_url)
+    tool_choice = cast(ToolChoice, args.tool_choice)
     exit_code = run_tool_call_probe(
-        client=client,
-        model=model,
-        prompt=args.prompt,
-        tool_choice=args.tool_choice,
-        max_tokens=args.max_tokens,
+        client=client, model=model, prompt=args.prompt, tool_choice=tool_choice, max_tokens=args.max_tokens
     )
     raise SystemExit(exit_code)
 
