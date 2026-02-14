@@ -51,10 +51,19 @@ class RecordingLLM:
         return self.embed_fn(texts)
 
     def chat(
-        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         self.chat_calls.append(
-            {"messages": list(messages), "temperature": float(temperature), "response_model": response_model}
+            {
+                "messages": list(messages),
+                "temperature": float(temperature),
+                "response_model": response_model,
+                "max_tokens": max_tokens,
+            }
         )
         if self.chat_fn is None:
             return "OK"

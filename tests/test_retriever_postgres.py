@@ -5,9 +5,10 @@ from datetime import date
 from typing import Any
 
 import numpy as np
+import pytest
 
 from finrag.dataclasses import DocChunk
-from finrag.db import ChunkRecord, DocumentRecord, HybridSearchRow, RetrievalFilters
+from finrag.db import ChunkRecord, DocumentRecord, HybridSearchRow, PostgresDB, RetrievalFilters
 from finrag.retriever import PostgresHybridRetriever
 from tests.fakes import RecordingLLM
 
@@ -122,3 +123,18 @@ def test_retrieve_hybrid_passes_filters_and_maps_rows() -> None:
     assert call_filters.normalized_tickers() == ("NVDA", "AAPL")
     assert call_filters.filing_date_from == date(2024, 1, 1)
     assert call_filters.filing_date_to == date(2024, 12, 31)
+
+
+def test_sparse_search_method_normalization() -> None:
+    assert PostgresDB.normalize_sparse_search_method(" bm25 ") == "bm25"
+    assert PostgresDB.normalize_sparse_search_method("FTS") == "fts"
+    with pytest.raises(ValueError):
+        PostgresDB.normalize_sparse_search_method("invalid")
+
+
+def test_retriever_accepts_sparse_search_method_override() -> None:
+    llm = RecordingLLM()
+    retriever = PostgresHybridRetriever(
+        llm_client=llm, dsn="postgresql://user:pass@localhost/db", sparse_search_method="fts", auto_init_schema=False
+    )
+    assert retriever.db.sparse_search_method == "fts"
