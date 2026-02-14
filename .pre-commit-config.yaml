@@ -39,6 +39,24 @@ repos:
         always_run: true
         files: ^(src/finrag/static/ts/.*\.ts|tsconfig\.json|package(-lock)?\.json)$
 
+      - id: frontend-unit-tests
+        name: frontend unit tests (vitest)
+        entry: npm run -s test:unit
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+        files: ^(src/finrag/static/ts/.*\.ts|src/finrag/static/index\.html|tests/ui-unit/.*\.ts|vitest\.config\.ts|package(-lock)?\.json)$
+
+      - id: frontend-ui-tests
+        name: frontend ui tests (playwright)
+        entry: npm run -s test:ui
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+        files: ^(src/finrag/static/ts/.*\.ts|src/finrag/static/index\.html|tests/ui/.*\.ts|playwright\.config\.ts|package(-lock)?\.json)$
+
       # Unit tests
       - id: run-tests
         name: run tests
@@ -53,11 +71,3 @@ repos:
     hooks:
     - id: pyright
       files: ^(src/|scripts/)
-
-  # - repo: local
-  #   hooks:
-  #     - id: mypy
-  #       name: mypy
-  #       entry: mypy
-  #       language: system
-  #       types: [python]

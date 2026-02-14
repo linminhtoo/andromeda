@@ -16,6 +16,8 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Deprecated
 
 ### Dev
+- Pre-commit now runs frontend Vitest unit tests (`frontend-unit-tests`) for static UI/TypeScript changes.
+- Pre-push now runs Playwright browser-flow checks (`frontend-ui-tests`) for frontend/UI changes.
 
 
 ## v1.6.0 - 14 Feb 2026

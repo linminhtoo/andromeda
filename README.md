@@ -291,7 +291,7 @@ These filters are enforced in SQL before dense/sparse candidate generation.
 
 ```bash
 python3 scripts/make_eval_set.py \
-  --ingest-output-dir ./data/sec_filings_md_v5/chunked_1024_128 \
+  --ingest-output-dir ./data/sec_filings_md_secparser/chunked_1024_128 \
   --out ./eval/eval_queries.jsonl
 
 python3 -m scripts.run_eval \

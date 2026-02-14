@@ -628,3 +628,33 @@
 - Tests:
   - `source .venv/bin/activate && pytest -vvv tests/`
   - Result: `77 passed, 1 warning`.
+
+## 2026-02-14 - Pre-commit wiring for frontend test layers
+
+### Previous state
+- Frontend unit tests (`vitest`) and UI integration tests (`playwright`) existed as npm scripts but were not enforced by pre-commit hooks.
+
+### What changed
+- Updated `.pre-commit-config.yaml` local hooks:
+  - Added `frontend-unit-tests` (`npm run -s test:unit`) at `pre-commit` stage.
+  - Added `frontend-ui-tests` (`npm run -s test:ui`) at `pre-push` stage.
+- Scoped both hooks with frontend-focused file filters to avoid unrelated runs.
+- Kept heavy browser UI checks at `pre-push` to avoid slowing standard commit cycles.
+
+### Why
+- Ensures frontend regressions in pure rendering/citation helpers are caught early on commit.
+- Ensures browser interaction regressions are gated before push.
+
+### Validation experiments and results
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass (includes `frontend-unit-tests`).
+- `source .venv/bin/activate && pre-commit run frontend-ui-tests --all-files --hook-stage pre-push`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `77 passed, 1 warning`.
+- Reproducible validation script executed:
+  - `bash agent_logs/20260214_validate_precommit_frontend_hooks.sh`
+  - Result: pass.
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260214_validate_precommit_frontend_hooks.sh`
