@@ -26,7 +26,11 @@ class LLMClient(Protocol):
     def embed_texts(self, texts: list[str]) -> np.ndarray: ...
 
     def chat(
-        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+        max_tokens: int | None = None,
     ) -> str: ...
 
     def chat_stream(
@@ -79,18 +83,26 @@ class MistralClientWrapper:
         return np.vstack(vectors)
 
     def chat(
-        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         mistral_messages = [cast(MessagesTypedDict, msg) for msg in messages]
         response_format: MistralResponseFormatTypedDict | None = (
             _build_response_format(provider="mistral", response_model=response_model) if response_model else None
         )
+        request_kwargs: dict[str, Any] = {}
+        if max_tokens is not None:
+            request_kwargs["max_tokens"] = int(max_tokens)
         res = self.client.chat.complete(
             model=self.chat_model,
             messages=mistral_messages,
             temperature=temperature,
             stream=False,
             response_format=response_format,
+            **request_kwargs,
         )
         try:
             return res.choices[0].message.content  # type: ignore
@@ -150,17 +162,28 @@ class OpenAIClientWrapper:
         return np.vstack(vectors)
 
     def chat(
-        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         oa_messages: list[ChatCompletionMessageParam] = [cast(ChatCompletionMessageParam, msg) for msg in messages]
+        request_kwargs: dict[str, Any] = {}
+        if max_tokens is not None:
+            request_kwargs["max_tokens"] = int(max_tokens)
         if response_model is None:
             res = self.client.chat.completions.create(
-                model=self.chat_model, messages=oa_messages, temperature=temperature
+                model=self.chat_model, messages=oa_messages, temperature=temperature, **request_kwargs
             )
         else:
             response_format = _build_response_format(provider="openai", response_model=response_model)
             res = self.client.chat.completions.create(
-                model=self.chat_model, messages=oa_messages, temperature=temperature, response_format=response_format
+                model=self.chat_model,
+                messages=oa_messages,
+                temperature=temperature,
+                response_format=response_format,
+                **request_kwargs,
             )
         try:
             content = res.choices[0].message.content
