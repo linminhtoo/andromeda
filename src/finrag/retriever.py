@@ -7,7 +7,15 @@ from loguru import logger
 from sentence_transformers import CrossEncoder
 
 from finrag.dataclasses import DocChunk, ScoredChunk
-from finrag.db import ChunkRecord, DocumentRecord, HybridSearchRow, PostgresDB, RetrievalFilters, normalize_iso_date
+from finrag.db import (
+    ChunkRecord,
+    DocumentRecord,
+    HybridSearchRow,
+    PostgresDB,
+    RetrievalFilters,
+    SparseSearchMethod,
+    normalize_iso_date,
+)
 from finrag.llm_clients import LLMClient
 from finrag.metadata_models import ChunkMetadata, chunk_metadata_from_value
 
@@ -28,7 +36,7 @@ class CandidateTextProvider(Protocol):
 
 class PostgresHybridRetriever:
     """
-    PostgreSQL-backed hybrid retriever (pgvector + FTS).
+    PostgreSQL-backed hybrid retriever (pgvector + configurable sparse ranking).
 
     Parameters
     ----------
@@ -48,6 +56,8 @@ class PostgresHybridRetriever:
         Metadata key used for stored contextual text.
     postgres_schema : str | None, optional
         Optional PostgreSQL schema name used for table/index isolation.
+    sparse_search_method : SparseSearchMethod, optional
+        Sparse ranking strategy (`bm25` or `fts`).
     ann_hnsw_m : int | None, optional
         Optional HNSW `m` index build parameter.
     ann_hnsw_ef_construction : int | None, optional
@@ -67,6 +77,7 @@ class PostgresHybridRetriever:
         retrieval_text_key: str = "retrieval_text",
         retrieval_context_key: str = "retrieval_context",
         postgres_schema: str | None = None,
+        sparse_search_method: SparseSearchMethod = "bm25",
         ann_hnsw_m: int | None = None,
         ann_hnsw_ef_construction: int | None = None,
         auto_init_schema: bool = True,
@@ -80,6 +91,7 @@ class PostgresHybridRetriever:
         self.db = PostgresDB(
             dsn,
             postgres_schema=postgres_schema,
+            sparse_search_method=sparse_search_method,
             ann_hnsw_m=ann_hnsw_m,
             ann_hnsw_ef_construction=ann_hnsw_ef_construction,
         )
