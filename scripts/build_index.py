@@ -37,6 +37,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 class Args:
     ingest_output_dir: str
     postgres_dsn: str | None
+    postgres_schema: str | None
     llm_provider: str | None
     contextual_llm_provider: str | None
     dense_model: str
@@ -53,6 +54,7 @@ class Args:
     ann_hnsw_ef_construction: int | None
     reset_corpus: bool
     recreate_ann_index: bool
+    allow_default_schema_mutations: bool
     skip_existing_chunks: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +147,11 @@ def parse_args() -> Args:
     parser.add_argument(
         "--postgres-dsn", default=None, help="PostgreSQL DSN (defaults to POSTGRES_DSN or DATABASE_URL env vars)."
     )
+    parser.add_argument(
+        "--postgres-schema",
+        default=(os.getenv("POSTGRES_SCHEMA") or None),
+        help="Optional PostgreSQL schema name for experiment isolation (defaults to POSTGRES_SCHEMA env var).",
+    )
     parser.add_argument("--llm-provider", default=None, help="Embedding provider (defaults to env LLM_PROVIDER).")
     parser.add_argument(
         "--contextual-llm-provider",
@@ -203,6 +210,11 @@ def parse_args() -> Args:
         help="Drop and recreate ANN indexes so new HNSW settings take effect.",
     )
     parser.add_argument(
+        "--allow-default-schema-mutations",
+        action="store_true",
+        help="Allow destructive flags against the default schema (dangerous; use only intentionally).",
+    )
+    parser.add_argument(
         "--skip-existing-chunks", action="store_true", help="Skip chunk IDs that already exist in PostgreSQL."
     )
 
@@ -210,6 +222,7 @@ def parse_args() -> Args:
     return Args(
         ingest_output_dir=ns.ingest_output_dir,
         postgres_dsn=ns.postgres_dsn,
+        postgres_schema=(str(ns.postgres_schema).strip() if ns.postgres_schema is not None else None) or None,
         llm_provider=ns.llm_provider,
         contextual_llm_provider=ns.contextual_llm_provider,
         dense_model=ns.dense_model,
@@ -226,6 +239,7 @@ def parse_args() -> Args:
         ann_hnsw_ef_construction=ns.ann_hnsw_ef_construction,
         reset_corpus=bool(ns.reset_corpus),
         recreate_ann_index=bool(ns.recreate_ann_index),
+        allow_default_schema_mutations=bool(ns.allow_default_schema_mutations),
         skip_existing_chunks=bool(ns.skip_existing_chunks),
     )
 
@@ -310,6 +324,16 @@ def main() -> int:
 
     dsn = postgres_dsn_from_env(args.postgres_dsn)
 
+    if (
+        (args.reset_corpus or args.recreate_ann_index)
+        and not args.postgres_schema
+        and not args.allow_default_schema_mutations
+    ):
+        raise SystemExit(
+            "Refusing destructive operation on default schema. Set --postgres-schema for an isolated experiment "
+            "or pass --allow-default-schema-mutations to override."
+        )
+
     dense_provider = (args.llm_provider or os.getenv("LLM_PROVIDER") or "openai").strip().lower()
     dense_kwargs: dict[str, Any] = {"embed_model": args.dense_model}
     if args.dense_base_url and dense_provider == "openai":
@@ -334,6 +358,7 @@ def main() -> int:
         dsn=dsn,
         context_builder=context_builder_from_metadata(key=args.context_metadata_key),
         retrieval_context_key=args.context_metadata_key,
+        postgres_schema=args.postgres_schema,
         ann_hnsw_m=args.ann_hnsw_m,
         ann_hnsw_ef_construction=args.ann_hnsw_ef_construction,
     )

@@ -218,13 +218,18 @@ def build_retriever() -> PostgresHybridRetriever:
     """
 
     _, _, context_key = _context_config()
+    postgres_schema = (os.getenv("POSTGRES_SCHEMA") or "").strip() or None
     retriever = PostgresHybridRetriever(
         llm_client=_llm_for_embeddings(),
         dsn=postgres_dsn(),
         context_builder=context_builder_from_metadata(key=context_key),
         retrieval_context_key=context_key,
+        postgres_schema=postgres_schema,
     )
-    logger.info("Using PostgreSQL retriever")
+    if postgres_schema:
+        logger.info("Using PostgreSQL retriever (schema={})", postgres_schema)
+    else:
+        logger.info("Using PostgreSQL retriever")
     return retriever
 
 
