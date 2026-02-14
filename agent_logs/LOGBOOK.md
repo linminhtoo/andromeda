@@ -222,3 +222,409 @@
 - `experiments/20260213_validate_postgres_schema_namespacing.sh`
   - Runs pre-commit, full tests, and default-schema destructive guard check.
   - Executed successfully in this run.
+
+## 2026-02-14 - BM25 default sparse retrieval with strict method compatibility
+
+### Previous state
+- Sparse branch in hybrid retrieval used PostgreSQL FTS (`ts_rank_cd`) only.
+- There was no persistent schema-level contract tying index build sparse method to runtime retrieval method.
+- Runtime/indexing could be configured inconsistently without an explicit mismatch error.
+
+### What changed
+- Added sparse method support (`bm25`, `fts`) with **BM25 as default** across:
+  - `src/finrag/db.py`
+  - `src/finrag/retriever.py`
+  - `src/finrag/main.py`
+  - `scripts/build_index.py`
+  - `scripts/build_index.sh`
+- Added method-specific sparse SQL branching in `PostgresDB.hybrid_search()`:
+  - `bm25`: `retrieval_text <@> to_bm25query(...)`
+  - `fts`: existing `ts_rank_cd(...)` path
+- Added schema metadata table `retrieval_runtime_config` to persist indexed sparse method and enforce compatibility checks:
+  - indexing path initializes/validates method
+  - retrieval path validates method and raises clear mismatch errors
+  - `clear_all()` now clears sparse method compatibility state for intentional method switches
+- Added BM25 index bootstrap path and extension guard:
+  - BM25 mode now ensures `pg_textsearch` extension + bm25 index
+  - FTS remains available as the runtime-cost-sensitive alternative
+- Updated docs and env wiring:
+  - `.env.example` now documents `POSTGRES_SPARSE_SEARCH_METHOD`
+  - README now documents BM25 default, FTS alternative, and compatibility checks
+- Updated changelog (`CHANGELOG.md`) for behavior change
+
+### Why
+- Needed BM25 default ranking quality while preserving an explicit FTS option for users sensitive to runtime costs.
+- Required strong safety against silent index/query-method mismatches.
+
+### Additional test maintenance observed during validation
+- Existing `tests/test_context_support.py` assertions were out-of-date with current `src/finrag/context_support.py` behavior (system+user message format and neighbor-context label text).
+- Updated those assertions to match current implementation so suite remains actionable.
+
+### Validation experiments and results
+- Lint/type/format:
+  - `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass
+- AGENTS test path check:
+  - `source .venv/bin/activate && pytest src/test/`
+  - Result: fails because `src/test/` path does not exist in this repository
+- Repository test suite:
+  - `source .venv/bin/activate && pytest tests/`
+  - Result: `66 passed, 1 warning`
+- Reproducible validation script executed:
+  - `bash agent_logs/20260214_validate_bm25_default_sparse.sh`
+  - Result: pre-commit pass; `pytest src/test/` path-not-found (expected in this repo); `pytest tests/` pass (`66 passed`)
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260214_validate_bm25_default_sparse.sh`
+  - Runs pre-commit + pytest checks used in this task.
+
+## 2026-02-14 - Pyright coverage expanded to scripts/
+
+### Scope completed
+- Adopted pyright checking for both `src/` and `scripts/` after pyproject include expansion.
+- Updated pre-commit pyright file scope to `^(src/|scripts/)`.
+- Fixed script typing issues uncovered by pyright:
+  - `scripts/build_index.py`: ensure `sparse_search_method` is typed as `SparseSearchMethod`.
+  - `scripts/align_judge.py`: resolved sklearn `zero_division` typing mismatch.
+  - `scripts/inspect_collection.py`: moved to composable SQL query construction for typed `execute()` input.
+  - `scripts/test_olmocr.py`: suppressed optional import diagnostics for local-only dependency and stabilized model typing with `cast`.
+
+### Validation experiments and results
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass (including pyright on `src/` + `scripts/`).
+- `npx pyright`
+  - Result: `0 errors, 0 warnings, 0 informations`.
+- Repro script:
+  - `bash agent_logs/20260214_validate_pyright_scripts_scope.sh`
+  - Result: pass.
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260214_validate_pyright_scripts_scope.sh`
+
+## 2026-02-14 - Sampled transparent chunk logging in build_index
+
+### Scope completed
+- Added probabilistic chunk-level debug logging to `scripts/build_index.py` for indexing observability.
+- New CLI flags:
+  - `--debug-sample-rate` (0..1)
+  - `--debug-max-samples` (per run cap)
+  - `--debug-sample-seed` (deterministic sampling)
+- Added structured sampled payload logging containing:
+  - `chunk_id`, `doc_id`, headings/source/page
+  - original `text`
+  - `retrieval_text`, `retrieval_context`, `embedding_text`
+  - `embedding_dim` and first 8 embedding values preview
+  - metadata snapshot
+- Included `debug_samples_logged` in `build_index_run_info.json`.
+
+### Key implementation notes
+- Sampling happens pre-upsert and only when the random draw is below `--debug-sample-rate` and cap is not reached.
+- Embedding dimension/preview is computed by embedding the sampled chunk’s resolved embedding text once; this is intentionally extra cost for sampled diagnostics only.
+- Existing indexing flow remains unchanged when sample rate is `0.0` (default).
+
+### Validation experiments and results
+- Pending in this run: `pre-commit run --all`
+- Pending in this run: `pytest src/test/` (repository convention caveat: tests live under `tests/`)
+
+### Follow-up updates (same scope)
+- Extended `scripts/build_index.sh` to pass debug sampling flags from env:
+  - `DEBUG_SAMPLE_RATE` -> `--debug-sample-rate`
+  - `DEBUG_MAX_SAMPLES` -> `--debug-max-samples`
+  - `DEBUG_SAMPLE_SEED` -> `--debug-sample-seed`
+
+### Validation experiments and results (completed)
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest src/test/`
+  - Result: fails (`src/test/` not found).
+- `source .venv/bin/activate && pytest tests/`
+  - Result: `66 passed, 1 warning`.
+
+## 2026-02-14 - Context-situating output token cap (max_tokens=256)
+
+### Previous state
+- `situate_context()` called `llm.chat(...)` without an explicit generation cap, so provider defaults controlled output length.
+- `LLMClient.chat` did not expose a `max_tokens` argument in the shared interface.
+
+### What changed
+- Added optional `max_tokens` to `LLMClient.chat` and both provider wrappers:
+  - `src/finrag/llm_clients.py`
+- Updated context situating to set a bounded output cap by default:
+  - `src/finrag/context_support.py` now uses `max_tokens=256` for the situating call.
+- Updated test fake and assertion coverage for the new argument:
+  - `tests/fakes.py`
+  - `tests/test_context_support.py`
+- Updated changelog entry in `CHANGELOG.md`.
+
+### Why
+- Keeps retrieval-context summaries bounded and predictable for cost/latency while preserving enough room for useful context.
+
+### Validation experiments and results
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `66 passed, 1 warning`.
+- Reproducible validation script executed:
+  - `bash agent_logs/20260214_validate_context_max_tokens.sh`
+  - Result: pre-commit pass; `pytest -vvv tests/` pass (`66 passed, 1 warning`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260214_validate_context_max_tokens.sh`
+  - Runs pre-commit + full test suite used for this scope.
+
+## 2026-02-14 - CLI wiring for context max tokens in indexing
+
+### Previous state
+- `scripts/build_index.py` could not set context-situating output cap from CLI.
+- `scripts/build_index.sh` had no env passthrough for controlling context-situating max tokens.
+
+### What changed
+- Added `--context-max-tokens` (`>0`, default `CONTEXT_MAX_TOKENS` env or `256`) in `scripts/build_index.py`.
+- Added `Args.context_max_tokens` and passed it through to `apply_context_strategy(..., max_tokens=...)`.
+- Extended `apply_context_strategy()` in `src/finrag/context_support.py` with a `max_tokens` parameter and forwarded it to each `situate_context()` call.
+- Added `CONTEXT_MAX_TOKENS` passthrough support in `scripts/build_index.sh` (maps to `--context-max-tokens`).
+- Updated `CHANGELOG.md` Unreleased section.
+
+### Why
+- Lets indexing runs tune context-generation verbosity/cost without code edits.
+
+### Validation experiments and results
+- Pending in this run: `source .venv/bin/activate && pre-commit run --all`
+- Pending in this run: `source .venv/bin/activate && pytest -vvv tests/`
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260214_validate_build_index_context_max_tokens.sh`
+  - Runs pre-commit and full tests for this scope.
+
+### Validation experiments and results (completed)
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `66 passed, 1 warning`.
+- Reproducible validation script executed:
+  - `bash agent_logs/20260214_validate_build_index_context_max_tokens.sh`
+  - Result: pre-commit pass; tests pass (`66 passed, 1 warning`).
+
+## 2026-02-14 - Playwright setup + main UI compactness/citation reliability refresh
+
+### Previous state
+- No Playwright harness existed for interactive frontend verification.
+- Progress event feed was always visible, taking vertical space in the primary answer pane.
+- Draft panel summary remained visible even for modes that skip refine by default.
+- Citation linkification was effectively doc-level and did not honor `chunk=` hints in inline citations.
+- Markdown thematic breaks (`---`) were rendered as plain paragraph text.
+- Prompt guidance asked for `[doc=...]` only, despite chunk-level grounding requirements.
+
+### What changed
+- Added Playwright tooling and deterministic UI tests:
+  - `package.json` scripts: `playwright:install`, `test:ui`, `test:ui:headed`
+  - `playwright.config.ts`
+  - `tests/ui/index.spec.ts`
+- Improved main UI density and defaults:
+  - Wrapped progress feed in collapsible `#progressLogDetails` and defaulted it closed.
+  - Hid `#draftDetails` by default for non-refine modes via mode-aware logic in frontend TS.
+  - Tightened desktop layout width and answer spacing in `src/finrag/static/index.html`.
+- Fixed citation navigation robustness:
+  - Frontend citation parsing now supports `[doc=... chunk=...]` markers and stores chunk-level targets.
+  - Click-through now passes both `doc_id` and `chunk_id` and jumps to exact highlighted source chunk when available.
+  - Doc-level fallback still works when `chunk=` is missing.
+- Fixed markdown rendering:
+  - Added thematic break parsing for `---`, `***`, and `___` into `<hr />`.
+- Aligned QA prompt guidance with chunk-level grounding:
+  - `src/finrag/qa.py` now instructs model to cite as `[doc=... chunk=...]`.
+
+### Why
+- Needed stable, repeatable UI interaction checks for regressions after TS modularization.
+- Needed a more compact default layout focused on core answer/sources rather than debug surfaces.
+- Needed citation navigation to target the actual cited chunk, not a best-effort doc-level first chunk.
+
+### Surprising findings
+- Existing source-viewer span matching logic was already robust enough for chunk highlighting; the main reliability gap was citation marker parsing/target resolution, not rendering.
+
+### Validation experiments and results
+- TypeScript:
+  - `npm run -s check:ts` -> pass.
+  - `npm run -s build:ts` -> pass.
+- Playwright:
+  - `npm run -s test:ui` -> `2 passed`.
+- Lint/type/format:
+  - `source .venv/bin/activate && pre-commit run --all` -> pass.
+- Tests:
+  - `source .venv/bin/activate && pytest -vvv tests/` -> `66 passed, 1 warning`.
+- Repro script executed:
+  - `bash agent_logs/20260214_validate_playwright_ui_refresh.sh`
+  - Result: Playwright pass, pre-commit pass, `pytest -vvv tests/` pass (`66 passed, 1 warning`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260214_validate_playwright_ui_refresh.sh`
+
+## 2026-02-14 - Frontend test split: Vitest unit layer + Playwright integration layer
+
+### Previous state
+- Frontend test coverage existed only as Playwright browser-flow tests (`tests/ui/index.spec.ts`).
+- There was no fast pure-unit test layer for frontend helper modules.
+
+### What changed
+- Added Vitest tooling for fast frontend unit tests:
+  - `vitest.config.ts`
+  - npm scripts in `package.json`:
+    - `test:unit`
+    - `test:unit:watch`
+- Added focused unit suites for pure helper modules:
+  - `tests/ui-unit/markdown.spec.ts` (10 tests)
+  - `tests/ui-unit/citations.spec.ts` (11 tests)
+- Coverage includes:
+  - markdown headings, inline formatting, links, lists, tables, fenced code, thematic breaks, citation-linker invocation behavior
+  - citation metadata extraction/formatting, doc/chunk target registration and lookup precedence, marker linkification, fallback label behavior, and attribute escaping
+
+### Why
+- Keeps Playwright for high-value end-to-end UI regressions while moving pure logic checks to fast, deterministic unit tests.
+
+### Validation experiments and results
+- `npm run -s test:unit`
+  - Result: `2` files passed, `21` tests passed.
+- `npm run -s test:ui`
+  - Result: `2` tests passed.
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `66 passed, 1 warning`.
+- Reproducible validation script executed:
+  - `bash agent_logs/20260214_validate_vitest_frontend_unit_tests.sh`
+  - Result: unit tests pass, Playwright pass, pre-commit pass, Python tests pass.
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260214_validate_vitest_frontend_unit_tests.sh`
+
+## 2026-02-14 - Re-enabled on-the-fly ingestion as ticker-only background pipeline
+
+### Previous state
+- `POST /ingest` accepted uploaded files + `use_mistral_ocr` flag but runtime ingestion was hard-disabled and raised:
+  - `RuntimeError("On-the-fly ingestion is disabled for now. Use batch ingestion script.")`
+- There was no background ingestion job lifecycle API/status model for frontend polling.
+- Main UI had no ingest trigger controls; only a read-only “Ingested companies” panel.
+
+### What changed
+- Added ticker-only background ingestion orchestration in `src/finrag/ingestion_jobs.py`:
+  - pipeline: `download -> process_html_to_markdown -> chunk -> build_index`
+  - per-job run directories/logs under `data/on_the_fly_ingest/` (configurable via `FINRAG_INGEST_JOBS_ROOT`)
+  - in-memory job tracking with lifecycle states (`queued`, `running`, `succeeded`, `failed`)
+- Replaced ingestion API contract in `src/finrag/main.py`:
+  - `POST /ingest` now accepts JSON `{ticker, per_company}` only (no uploads/OCR)
+  - added `GET /ingest/{job_id}` for status polling
+- Added runtime-compatible indexing argument wiring so ingestion uses active app settings:
+  - PostgreSQL DSN/schema
+  - sparse method
+  - context strategy/window/metadata key
+  - embedding/context provider+model/base URL settings
+- Frontend updates (`src/finrag/static/index.html`, `src/finrag/static/ts/index/*`):
+  - ingest ticker input + files/company input + ingest action
+  - live status pill/message via polling
+  - automatic ingested-company panel refresh on success
+- Added/updated tests:
+  - `tests/test_ingestion_jobs.py` for ticker normalization + build-index command parity
+  - `tests/test_main_api_e2e.py` ingestion endpoint/status tests
+  - `tests/ui/index.spec.ts` ingestion UI flow test
+
+### Why
+- Needed to reintroduce on-the-fly ingestion with the simplest low-risk path (ticker-only, no upload/OCR) while preserving schema/runtime compatibility guarantees for existing PostgreSQL retrieval deployments.
+
+### Surprising findings
+- Ingestion controls are in a collapsed `<details>` block (`#ingestedDetails`), so Playwright tests must expand the section before visibility/input assertions.
+
+### Validation experiments and results
+- TypeScript build:
+  - `npm run -s build:ts`
+  - Result: pass.
+- Lint/type:
+  - `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- Python tests:
+  - `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `73 passed, 1 warning`.
+- UI e2e subset:
+  - `npm run -s test:ui -- tests/ui/index.spec.ts`
+  - Result: `3 passed`.
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/validate_ticker_ingestion_14Feb2026_203624.sh`
+  - Runs: TS build, pre-commit, full pytest suite, and the updated Playwright spec.
+  - Executed successfully in this run.
+
+## 2026-02-14 - Ingest profile persistence + multi-ticker on-the-fly ingestion hardening
+
+### Previous state
+- On-the-fly ingestion runtime config was mostly env-driven and could drift from the settings used to build an existing index/schema.
+- `scripts/build_index.sh` still hardcoded:
+  - `--context neighbors`
+  - `--context-window 1`
+- `scripts/chunk.sh` still hardcoded:
+  - `--max-tokens 1024`
+  - `--overlap-tokens 128`
+- Frontend ingestion accepted a single ticker in practice.
+
+### What changed
+- Added durable ingest profile store in `src/finrag/ingest_profile.py`:
+  - profile resolution: explicit arg -> `FINRAG_INGEST_PROFILE` -> `POSTGRES_SCHEMA` -> `default`
+  - step settings persistence to `data/ingest_profiles/<profile>.json`
+- Updated step scripts to persist their actual run settings to profile files:
+  - `scripts/download.py`
+  - `scripts/process_html_to_markdown.py`
+  - `scripts/chunk.py`
+  - `scripts/build_index.py`
+- Updated shell scripts to remove hardcoded settings:
+  - `scripts/build_index.sh` now reads context flags from env (`CONTEXT_STRATEGY`, `CONTEXT_WINDOW`, etc.)
+  - `scripts/chunk.sh` now reads chunk sizing from env (`CHUNK_MAX_TOKENS`, `CHUNK_OVERLAP_TOKENS`, etc.)
+- Reworked app ingestion config loading in `src/finrag/main.py`:
+  - load persisted profile step settings first (download/process/chunk/build_index)
+  - fallback to env defaults when profile settings are missing
+  - include chunk settings (`max_tokens`, `overlap_tokens`, chunker/doc-id strategy, etc.) in runtime job config
+- Extended ingestion job manager for multi-ticker jobs in `src/finrag/ingestion_jobs.py`.
+- Extended ingestion API + UI to support multiple tickers:
+  - API accepts `tickers` list (and still supports single `ticker`)
+  - frontend accepts comma/space-separated tickers and sends `tickers` array
+
+### Why
+- Prevent silent config drift between original index build settings and app-triggered incremental ingestion.
+- Make schema/profile-specific experimentation safer and reproducible.
+- Allow practical batch ingestion requests from UI without repeated single-ticker submissions.
+
+### Validation experiments and results
+- TypeScript build:
+  - `npm run -s build:ts`
+  - Result: pass.
+- Targeted tests:
+  - `source .venv/bin/activate && pytest -q tests/test_ingest_profile.py tests/test_ingestion_jobs.py tests/test_main_api_e2e.py`
+  - Result: `15 passed, 1 warning`.
+- UI e2e subset:
+  - `npm run -s test:ui -- tests/ui/index.spec.ts`
+  - Result: `3 passed`.
+
+### Notes
+- Existing profile files may not exist for older historical indexes; in that case runtime ingestion intentionally falls back to env defaults with warning logs.
+
+## 2026-02-14 - Generated ingest profile without running pipeline
+
+### Request
+- Generate ingest profile outputs from current shell script args and `.env` values, without executing expensive ingestion steps (especially `build_index.sh`).
+
+### What I did
+- Added and executed a helper script:
+  - `agent_logs/generate_ingest_profile_from_scripts_20260214_230715.sh`
+- Script behavior:
+  - Sources `scripts/_env.sh` and uses current `.env` values.
+  - Resolves profile name via app logic (`FINRAG_INGEST_PROFILE` -> `POSTGRES_SCHEMA` -> `default`).
+  - Writes `download`, `process_html_to_markdown`, `chunk`, and `build_index` step settings directly with `update_ingest_profile_step`.
+  - Marks each step metadata with `generated_without_execution=true`.
+
+### Output
+- Generated profile file:
+  - `data/ingest_profiles/exp_ctx_neighbors_w1_m24_ef200.json`
+
+### Validation
+- Lint:
+  - `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- Tests:
+  - `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `77 passed, 1 warning`.
