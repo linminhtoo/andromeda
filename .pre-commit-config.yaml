@@ -31,6 +31,14 @@ repos:
 
   - repo: local
     hooks:
+      - id: typescript-check
+        name: typescript check
+        entry: npm run -s check:ts
+        language: system
+        pass_filenames: false
+        always_run: true
+        files: ^(src/finrag/static/ts/.*\.ts|tsconfig\.json|package(-lock)?\.json)$
+
       # Unit tests
       - id: run-tests
         name: run tests
