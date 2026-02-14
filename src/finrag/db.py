@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Iterable, LiteralString, Sequence
+from typing import Any, Iterable, Literal, LiteralString, Sequence
 
 import psycopg
-from loguru import logger
 from psycopg.rows import dict_row
-from psycopg.sql import SQL, Composable, Identifier, Literal
+from psycopg.sql import SQL, Composable, Identifier, Literal as SqlLiteral
 from psycopg.types.json import Jsonb
+
+
+SparseSearchMethod = Literal["bm25", "fts"]
 
 
 @dataclass(frozen=True)
@@ -162,16 +164,33 @@ class PostgresDB:
         self,
         dsn: str,
         postgres_schema: str | None = None,
+        sparse_search_method: SparseSearchMethod | str = "bm25",
         embedding_dim: int | None = None,
         ann_hnsw_m: int | None = None,
         ann_hnsw_ef_construction: int | None = None,
     ):
         self.dsn = dsn
         self.postgres_schema = self.normalize_schema_name(postgres_schema)
+        self.sparse_search_method = self.normalize_sparse_search_method(sparse_search_method)
         self.embedding_dim = self.normalize_embedding_dim(embedding_dim)
         self.ann_hnsw_m = self.normalize_positive_int(ann_hnsw_m)
         self.ann_hnsw_ef_construction = self.normalize_positive_int(ann_hnsw_ef_construction)
         self._ann_index_ready = False
+        self._sparse_method_verified_for_indexing = False
+        self._sparse_method_verified_for_retrieval = False
+
+    @staticmethod
+    def normalize_sparse_search_method(value: SparseSearchMethod | str) -> SparseSearchMethod:
+        """
+        Return normalized sparse search method.
+        """
+
+        normalized = str(value).strip().lower()
+        if normalized == "bm25":
+            return "bm25"
+        if normalized == "fts":
+            return "fts"
+        raise ValueError(f"Invalid sparse search method: {value!r}. Expected one of: bm25, fts.")
 
     def connect(self) -> psycopg.Connection[Any]:
         """
@@ -262,13 +281,13 @@ class PostgresDB:
         if self._ann_index_ready:
             return
 
-        vector_type = SQL("vector({})").format(Literal(dim))
+        vector_type = SQL("vector({})").format(SqlLiteral(dim))
 
         hnsw_with_clauses: list[Composable] = []
         if self.ann_hnsw_m is not None:
-            hnsw_with_clauses.append(SQL("m = {}").format(Literal(self.ann_hnsw_m)))
+            hnsw_with_clauses.append(SQL("m = {}").format(SqlLiteral(self.ann_hnsw_m)))
         if self.ann_hnsw_ef_construction is not None:
-            hnsw_with_clauses.append(SQL("ef_construction = {}").format(Literal(self.ann_hnsw_ef_construction)))
+            hnsw_with_clauses.append(SQL("ef_construction = {}").format(SqlLiteral(self.ann_hnsw_ef_construction)))
         hnsw_with_sql = SQL("")
         if hnsw_with_clauses:
             hnsw_with_sql = SQL(" WITH (") + SQL(", ").join(hnsw_with_clauses) + SQL(")")
@@ -286,7 +305,7 @@ class PostgresDB:
                     cur.execute(hnsw_sql)
             self._ann_index_ready = True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Skipping hnsw index creation: {!r}", exc)
+            raise RuntimeError(f"Failed to create ANN index: {exc!r}") from exc
 
     def drop_ann_indexes(self) -> None:
         """
@@ -344,6 +363,13 @@ class PostgresDB:
             );
             """,
             """
+            CREATE TABLE IF NOT EXISTS retrieval_runtime_config (
+                id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                sparse_search_method TEXT NOT NULL CHECK (sparse_search_method IN ('bm25', 'fts')),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """,
+            """
             DO $$
             BEGIN
                 IF EXISTS (
@@ -386,7 +412,6 @@ class PostgresDB:
             "CREATE INDEX IF NOT EXISTS idx_documents_ticker ON documents (ticker);",
             "CREATE INDEX IF NOT EXISTS idx_documents_filing_date ON documents (filing_date);",
             "CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks (doc_id);",
-            "CREATE INDEX IF NOT EXISTS idx_chunks_search_tsv ON chunks USING GIN (search_tsv);",
         ]
 
         with self.connect() as conn:
@@ -394,8 +419,105 @@ class PostgresDB:
                 for statement in statements:
                     cur.execute(statement)
 
+        self.ensure_sparse_indexes()
         # Optional ANN index creation is isolated from schema DDL.
         self.ensure_ann_index(self.embedding_dim)
+
+    def ensure_sparse_indexes(self) -> None:
+        """
+        Ensure sparse retrieval indexes for configured method.
+        """
+
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_search_tsv ON chunks USING GIN (search_tsv);")
+
+                if self.sparse_search_method == "bm25":
+                    try:
+                        cur.execute("CREATE EXTENSION IF NOT EXISTS pg_textsearch;")
+                        cur.execute(
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_chunks_retrieval_text_bm25
+                            ON chunks USING bm25(retrieval_text) WITH (text_config='english');
+                            """
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        raise RuntimeError(
+                            "Failed to initialize BM25 sparse index. Install pg_textsearch or switch "
+                            "to POSTGRES_SPARSE_SEARCH_METHOD=fts."
+                        ) from exc
+
+    def configured_sparse_search_method(self) -> SparseSearchMethod | None:
+        """
+        Return sparse method recorded for indexed corpus.
+        """
+
+        with self.connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT sparse_search_method FROM retrieval_runtime_config WHERE id = 1;")
+                row = cur.fetchone()
+        if row is None:
+            return None
+        return self.normalize_sparse_search_method(str(row["sparse_search_method"]))
+
+    def ensure_sparse_method_for_indexing(self) -> None:
+        """
+        Persist and validate sparse method for index writes.
+        """
+
+        if self._sparse_method_verified_for_indexing:
+            return
+
+        configured = self.configured_sparse_search_method()
+        if configured is None:
+            with self.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO retrieval_runtime_config (id, sparse_search_method, updated_at)
+                        VALUES (1, %s, NOW())
+                        ON CONFLICT (id) DO UPDATE
+                        SET sparse_search_method = EXCLUDED.sparse_search_method,
+                            updated_at = NOW();
+                        """,
+                        (self.sparse_search_method,),
+                    )
+            self._sparse_method_verified_for_indexing = True
+            self._sparse_method_verified_for_retrieval = True
+            return
+
+        if configured != self.sparse_search_method:
+            raise RuntimeError(
+                "Sparse search method mismatch for indexing. "
+                f"Indexed corpus method is '{configured}', but current configuration is "
+                f"'{self.sparse_search_method}'. Use matching method for retrieval/indexing, or run a corpus reset "
+                "before rebuilding with a different sparse method."
+            )
+
+        self._sparse_method_verified_for_indexing = True
+        self._sparse_method_verified_for_retrieval = True
+
+    def ensure_sparse_method_for_retrieval(self) -> None:
+        """
+        Validate sparse method compatibility before retrieval queries.
+        """
+
+        if self._sparse_method_verified_for_retrieval:
+            return
+
+        configured = self.configured_sparse_search_method()
+        if configured is None:
+            raise RuntimeError(
+                "Sparse search method is not initialized for this schema. "
+                "Run indexing first so retrieval can validate sparse method compatibility."
+            )
+        if configured != self.sparse_search_method:
+            raise RuntimeError(
+                "Sparse search method mismatch for retrieval. "
+                f"Indexed corpus method is '{configured}', but current retrieval method is "
+                f"'{self.sparse_search_method}'."
+            )
+        self._sparse_method_verified_for_retrieval = True
 
     def upsert_documents(self, documents: Sequence[DocumentRecord]) -> None:
         """
@@ -487,6 +609,7 @@ class PostgresDB:
                 raise ValueError("Mixed embedding dimensions in chunk batch.")
 
         self.ensure_ann_index(embedding_dim)
+        self.ensure_sparse_method_for_indexing()
 
         sql = """
         INSERT INTO chunks (
@@ -605,7 +728,13 @@ class PostgresDB:
         -------
         list[HybridSearchRow]
             Typed rows for downstream conversion.
+
+        TODO's
+        ------
+        - Add ef_search parameter to control HNSW search breadth (currently uses default).
         """
+
+        self.ensure_sparse_method_for_retrieval()
 
         params: dict[str, Any] = {
             "query_text": query_text,
@@ -638,9 +767,44 @@ class PostgresDB:
         embedding_expr: Composable = SQL("embedding")
         query_vector_expr: Composable = SQL("%(query_vector)s::vector")
         if vector_dim is not None:
-            vector_type = SQL("vector({})").format(Literal(vector_dim))
+            vector_type = SQL("vector({})").format(SqlLiteral(vector_dim))
             embedding_expr = SQL("embedding::{}").format(vector_type)
             query_vector_expr = SQL("%(query_vector)s::{}").format(vector_type)
+
+        sparse_sql: Composable
+        if self.sparse_search_method == "bm25":
+            bm25_score_expr = SQL("retrieval_text <@> to_bm25query(%(query_text)s, {})").format(
+                SqlLiteral("idx_chunks_retrieval_text_bm25")
+            )
+            sparse_sql = SQL(
+                """
+        sparse AS (
+            SELECT
+                chunk_id,
+                ROW_NUMBER() OVER (ORDER BY {bm25_score_expr} ASC) AS rank_sparse
+            FROM filtered
+            WHERE {bm25_score_expr} < 0.0
+            ORDER BY {bm25_score_expr} ASC
+            LIMIT %(top_k_sparse)s
+        ),
+        """
+            ).format(bm25_score_expr=bm25_score_expr)
+        else:
+            tsquery_expr = SQL("plainto_tsquery('english', %(query_text)s)")
+            fts_score_expr = SQL("ts_rank_cd(search_tsv, {tsquery_expr})").format(tsquery_expr=tsquery_expr)
+            sparse_sql = SQL(
+                """
+        sparse AS (
+            SELECT
+                chunk_id,
+                ROW_NUMBER() OVER (ORDER BY {fts_score_expr} DESC) AS rank_sparse
+            FROM filtered
+            WHERE search_tsv @@ {tsquery_expr}
+            ORDER BY {fts_score_expr} DESC
+            LIMIT %(top_k_sparse)s
+        ),
+        """
+            ).format(fts_score_expr=fts_score_expr, tsquery_expr=tsquery_expr)
 
         query_sql = SQL(
             """
@@ -648,7 +812,8 @@ class PostgresDB:
             SELECT
                 c.chunk_id,
                 c.embedding,
-                c.search_tsv
+                c.search_tsv,
+                c.retrieval_text
             FROM chunks c
             JOIN documents d ON d.doc_id = c.doc_id
             {where_sql}
@@ -661,17 +826,7 @@ class PostgresDB:
             ORDER BY {embedding_expr} <=> {query_vector_expr}
             LIMIT %(top_k_semantic)s
         ),
-        sparse AS (
-            SELECT
-                chunk_id,
-                ROW_NUMBER() OVER (
-                    ORDER BY ts_rank_cd(search_tsv, plainto_tsquery('english', %(query_text)s)) DESC
-                ) AS rank_sparse
-            FROM filtered
-            WHERE search_tsv @@ plainto_tsquery('english', %(query_text)s)
-            ORDER BY ts_rank_cd(search_tsv, plainto_tsquery('english', %(query_text)s)) DESC
-            LIMIT %(top_k_sparse)s
-        ),
+        {sparse_sql}
         candidates AS (
             SELECT chunk_id, rank_dense, NULL::INTEGER AS rank_sparse FROM dense
             UNION ALL
@@ -703,7 +858,12 @@ class PostgresDB:
         ORDER BY f.score DESC
         LIMIT %(top_k_final)s;
         """
-        ).format(where_sql=where_sql, embedding_expr=embedding_expr, query_vector_expr=query_vector_expr)
+        ).format(
+            where_sql=where_sql,
+            embedding_expr=embedding_expr,
+            query_vector_expr=query_vector_expr,
+            sparse_sql=sparse_sql,
+        )
 
         with self.connect() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -736,12 +896,15 @@ class PostgresDB:
 
     def clear_all(self) -> None:
         """
-        Delete all corpus rows.
+        Delete all corpus rows and sparse method compatibility state.
         """
 
         with self.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("TRUNCATE TABLE chunks, documents RESTART IDENTITY CASCADE;")
+                cur.execute("DELETE FROM retrieval_runtime_config WHERE id = 1;")
+        self._sparse_method_verified_for_indexing = False
+        self._sparse_method_verified_for_retrieval = False
 
     def export_schema_snapshot(self) -> dict[str, Any]:
         """

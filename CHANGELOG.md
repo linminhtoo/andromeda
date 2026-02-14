@@ -6,12 +6,83 @@ this file.
 This format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
+
 ### Added
+
 ### Changed
+
 ### Fixed
-### Removed
+
 ### Deprecated
+
 ### Dev
+
+
+## v1.6.0 - 14 Feb 2026
+### Added
+- Sparse retrieval method selection across runtime and indexing:
+  - `POSTGRES_SPARSE_SEARCH_METHOD` env var
+  - `--sparse-search-method` in `scripts/build_index.py`
+- Probabilistic chunk-level debug logging for indexing transparency in `scripts/build_index.py`:
+  - `--debug-sample-rate` to randomly sample chunks for full payload logs
+  - `--debug-max-samples` to cap sampled logs per run
+  - `--debug-sample-seed` for deterministic sampling
+  - sampled payload includes original text, retrieval fields, embedding text, embedding dimension/preview, and metadata
+- Context-situating token budget controls for indexing:
+  - `--context-max-tokens` in `scripts/build_index.py`
+  - `CONTEXT_MAX_TOKENS` passthrough in `scripts/build_index.sh`
+- Playwright UI automation harness for the main `/` app:
+  - `playwright.config.ts`
+  - npm scripts: `test:ui`, `test:ui:headed`, `playwright:install`
+  - deterministic mocked interaction tests in `tests/ui/index.spec.ts`
+- Fast frontend unit-test layer with Vitest:
+  - `vitest.config.ts`
+  - npm scripts: `test:unit`, `test:unit:watch`
+  - focused unit suites for `markdown.ts` and `citations.ts` in `tests/ui-unit/`
+- Ticker-only on-the-fly ingestion background jobs in the API:
+  - `POST /ingest` now accepts JSON payload with one or more tickers (`{ticker, per_company}` or `{tickers, per_company}`)
+  - `GET /ingest/{job_id}` returns lifecycle status for polling
+  - new backend orchestration module `src/finrag/ingestion_jobs.py` runs:
+    `download -> process_html_to_markdown -> chunk -> build_index`
+- Durable ingest-profile storage on disk (`data/ingest_profiles/*.json`) with step-level settings capture for:
+  - `scripts/download.py`
+  - `scripts/process_html_to_markdown.py`
+  - `scripts/chunk.py`
+  - `scripts/build_index.py`
+- Main UI controls for ticker ingestion:
+  - ticker + files/company inputs
+  - ingestion status pill/message
+  - automatic status polling and ingested-company panel refresh on success
+
+### Changed
+- Default sparse ranking method is now BM25 (`pg_textsearch`) with PostgreSQL FTS as an explicit alternative.
+- Retrieval/indexing now enforce sparse-method compatibility per schema and raise clear errors on mismatches.
+- Context-situating LLM calls now apply an explicit generation cap (`max_tokens=256`) to keep summaries bounded.
+- On-the-fly ingestion now reuses active runtime settings for schema compatibility:
+  - PostgreSQL DSN/schema
+  - sparse method
+  - context strategy/window/metadata key
+  - embedding/context LLM provider + model/base URL settings
+- On-the-fly ingestion now loads settings from persisted ingest profiles first (schema/profile scoped), then falls back to env defaults.
+- Ingestion now supports multiple tickers in one job request (`tickers` array), while retaining single-`ticker` compatibility.
+- `scripts/build_index.sh` now sources `--context` and `--context-window` from env (`CONTEXT_STRATEGY`, `CONTEXT_WINDOW`) instead of hardcoded literals.
+- `scripts/chunk.sh` now sources chunk sizing from env (`CHUNK_MAX_TOKENS`, `CHUNK_OVERLAP_TOKENS`) instead of hardcoded literals.
+- Main query UI now defaults to a more compact layout:
+  - progress activity feed is collapsed by default
+  - draft panel is hidden by default for non-refine modes
+  - layout width and answer readability spacing were tightened
+- QA citation prompting now explicitly asks for chunk-level inline citations in the form `[doc=... chunk=...]`.
+
+### Fixed
+- Citation links in answers now honor `chunk=` hints (when present) and jump to the matching highlighted chunk in source viewer.
+- Markdown thematic breaks (`---`, `***`, `___`) now render as horizontal rules in answer panes.
+
+### Removed
+- Legacy upload+OCR ingestion API contract (`file` upload + `use_mistral_ocr` flag) from `/ingest`.
+
+### Dev
+- Pre-commit now runs frontend Vitest unit tests (`frontend-unit-tests`) for static UI/TypeScript changes.
+- Pre-push now runs Playwright browser-flow checks (`frontend-ui-tests`) for frontend/UI changes.
 
 
 ## v1.5.0 - 14 Feb 2026

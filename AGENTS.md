@@ -31,7 +31,7 @@ key/attribute existence, such as by typing dictionaries and class attributes pro
 * After every change, you must run the formatter and linter and ensure everything is passing.
 * First, activate the python venv by running `source .venv/bin/activate` from the repository root.
 * Then, run `pre-commit run --all`.
-* We use the pyright pre-commit hook to catch typing issues. There may be a large number of such errors. Try your best to fix them where possible, and document your findings in the `experiments/LOGBOOK.md`. If fixing a particular error is too tedious, make a judgement as to whether you should just ignore it in-line, or modify the pyright config (if applicable).
+* We use the pyright pre-commit hook to catch typing issues. There may be a large number of such errors. Try your best to fix them where possible, and document your findings in the `agent_logs/LOGBOOK.md`. If fixing a particular error is too tedious, make a judgement as to whether you should just ignore it in-line, or modify the pyright config (if applicable).
 
 
 ## Planning rules
@@ -48,19 +48,22 @@ key/attribute existence, such as by typing dictionaries and class attributes pro
 
 ## Implementation rules
 
-* Before starting a big task, you should plan and document your plan as a markdown file in the `experiments/` folder. Give your plan file a descriptive and time-stamped name, such as `refactor_10Feb2026.md`
-* Make sure to reference `experiments/LOGBOOK.md` to learn from previous lessons and avoid repeating past mistakes.
+* Before starting a big task, you should plan and document your plan as a markdown file in the `agent_logs/` folder. Give your plan file a descriptive and time-stamped name, such as `refactor_10Feb2026.md`
+* Make sure to reference `agent_logs/LOGBOOK.md` to learn from previous lessons and avoid repeating past mistakes.
 * Implement the **entire phase**, not partial work
 * Update `CHANGELOG.md` when behavior changes
 * Agents must not commit or push. Only the coordinator may commit/push after review passes.
 * Never modify repository files outside this `lrdml` git repository.
-* You must write down key learning points and observations in a `experiments/LOGBOOK.md` at this repository's root level:
+* You must write down key learning points and observations in a `agent_logs/LOGBOOK.md` at this repository's root level:
+    - IMPORTANT: When you implement a new feature or make a breaking change, you need to
+        highlight this in the `LOGBOOK.md`. State the previous state, what was changed, and why.
+        This is needed to provide a clean lineage of design decisions taken during the course of development and iteration.
     - Note down any surprising facts you discovered about the codebase or its dependencies
     - Log all experiments conducted and results/metrics observed
     - Make it easy for someone else to pick up on your work
     - Keep your notes concise, but don't sacrifice important info.
     - If a `LOGBOOK.md` file already exists, append your observations as a new entry. Never delete existing entries.
-    - IMPORTANT: you must preserve scripts you executed under the `experiments/` folder. Name each script appropriately,
+    - IMPORTANT: you must preserve scripts you executed under the `agent_logs/` folder. Name each script appropriately,
         including a timestamp and its intent (eg `run_improved_mlp_model_$now.sh`)
 * IMPORTANT CAVEAT:
     - Other agents/humans may be working on the codebase at the same time
@@ -70,6 +73,6 @@ key/attribute existence, such as by typing dictionaries and class attributes pro
 ## Testing rules
 
 * First, activate the venv by running `source .venv/bin/activate` from the repository root.
-* Then, run tests with `pytest src/test/`.
+* Then, run tests with `pytest -vvv tests/`.
 * Fix failing tests before proceeding.
 * Never bypass tests without explicit instruction.

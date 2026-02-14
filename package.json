@@ -6,9 +6,16 @@
   "scripts": {
     "check:ts": "tsc -p tsconfig.json --noEmit",
     "build:ts": "tsc -p tsconfig.json",
-    "watch:ts": "tsc -p tsconfig.json --watch"
+    "watch:ts": "tsc -p tsconfig.json --watch",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "playwright:install": "playwright install chromium",
+    "test:ui": "playwright test",
+    "test:ui:headed": "playwright test --headed"
   },
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "@playwright/test": "^1.58.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
   }
 }

@@ -31,6 +31,7 @@ from finrag.chunk_postprocess import (
 )
 from finrag.chunking import DoclingHybridChunker, MarkdownTablePreservingChunker
 from finrag.dataclasses import DocChunk
+from finrag.ingest_profile import resolve_ingest_profile_name, update_ingest_profile_step
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -39,6 +40,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 class Args:
     markdown_dir: str
     output_dir: str
+    ingest_profile: str | None
     metadata_dir: str | None
     pattern: str
     recursive: bool
@@ -73,6 +75,14 @@ def parse_args() -> Args:
         "--output-dir",
         default="outputs/chunks_docling",
         help="Directory to write chunk exports (creates `chunks/`, `doc_index.jsonl`, `run_info.json`).",
+    )
+    parser.add_argument(
+        "--ingest-profile",
+        default=None,
+        help=(
+            "Profile name for persisting chunk settings to disk "
+            "(default resolution: FINRAG_INGEST_PROFILE, then POSTGRES_SCHEMA, then `default`)."
+        ),
     )
     parser.add_argument(
         "--metadata-dir",
@@ -176,6 +186,7 @@ def parse_args() -> Args:
     return Args(
         markdown_dir=args.markdown_dir,
         output_dir=args.output_dir,
+        ingest_profile=(str(args.ingest_profile).strip() if args.ingest_profile is not None else None) or None,
         metadata_dir=args.metadata_dir,
         pattern=args.pattern,
         recursive=bool(args.recursive),
@@ -325,6 +336,7 @@ def _chunk_to_dict(chunk: DocChunk) -> dict[str, Any]:
 def main() -> int:
     args = parse_args()
     project_root = Path(__file__).resolve().parents[1]
+    profile_name = resolve_ingest_profile_name(args.ingest_profile)
     markdown_root = Path(args.markdown_dir).expanduser().resolve()
     output_root = Path(args.output_dir).expanduser().resolve()
     output_chunks_root = output_root / "chunks"
@@ -336,6 +348,7 @@ def main() -> int:
     logger.info(f"Logging to: {log_path}")
     logger.info(f"Chunker: {args.chunker}")
     logger.info(f"Metadata root: {metadata_root}")
+    logger.info("Ingest profile: {}", profile_name)
 
     md_files = [
         p for p in _iter_markdown_files(markdown_root, pattern=args.pattern, recursive=args.recursive) if p.is_file()
@@ -425,6 +438,20 @@ def main() -> int:
     }
     run_info_path.write_text(
         json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
+    )
+
+    update_ingest_profile_step(
+        project_root=project_root,
+        profile_name=profile_name,
+        step_name="chunk",
+        settings=args.to_dict(),
+        metadata={
+            "output_dir": str(output_root),
+            "doc_index_path": str(doc_index_path),
+            "errors_path": str(errors_path),
+            "processed_files": processed,
+            "total_chunks": total_chunks,
+        },
     )
 
     logger.success(f"Done. processed_files={processed} total_chunks={total_chunks}")

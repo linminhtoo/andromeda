@@ -21,6 +21,13 @@ export class GenerationModeManager {
     return this.presetByKey.has(String(mode || '').trim().toLowerCase());
   }
 
+  /** Return whether the selected mode is expected to produce a draft stage. */
+  modeUsesDraft(mode: string): boolean {
+    const preset = this.presetByKey.get(String(mode || '').trim().toLowerCase());
+    if (!preset || typeof preset !== 'object') return false;
+    return Boolean(preset.enable_refine);
+  }
+
   /** Load mode metadata from API response payload. */
   setFromPayload(payload: any): void {
     const rawPresets = Array.isArray(payload?.presets) ? payload.presets : [];
@@ -48,6 +55,8 @@ export class GenerationModeManager {
             top_k_rerank: 6,
             draft_max_tokens: 16384,
             final_max_tokens: 16384,
+            enable_rerank: false,
+            enable_refine: false,
           },
           {
             key: 'normal',
@@ -57,6 +66,8 @@ export class GenerationModeManager {
             top_k_rerank: 8,
             draft_max_tokens: 65536,
             final_max_tokens: 32768,
+            enable_rerank: true,
+            enable_refine: false,
           },
           {
             key: 'thinking',
@@ -66,6 +77,8 @@ export class GenerationModeManager {
             top_k_rerank: 12,
             draft_max_tokens: 65536,
             final_max_tokens: 45000,
+            enable_rerank: true,
+            enable_refine: true,
           },
         ],
       });

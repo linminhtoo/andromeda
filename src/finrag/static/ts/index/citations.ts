@@ -63,16 +63,34 @@ export function formatCitationLabelFromChunk(chunk: any): string {
   return '';
 }
 
-/** Manage `[doc=...]` citation targets for the active query context. */
+/** Parse one citation key value (e.g., `doc=...`, `chunk=...`) from citation marker text. */
+function citationValue(raw: unknown, key: 'doc' | 'chunk'): string {
+  const text = String(raw || '');
+  const re = new RegExp(`\\b${key}\\s*=\\s*([^\\s,\\]]+)`, 'i');
+  const value = text.match(re)?.[1] || '';
+  return String(value || '').trim();
+}
+
+/** Generate a safe fallback label when structured filing metadata is unavailable. */
+function fallbackCitationLabel(docId: string): string {
+  const doc = String(docId || '').trim();
+  if (!doc) return 'citation';
+  const short = doc.length > 14 ? `${doc.slice(0, 14)}...` : doc;
+  return `doc ${short}`;
+}
+
+/** Manage `[doc=...]`/`[doc=... chunk=...]` citation targets for active query context. */
 export class CitationManager {
   private targetsByDocId = new Map<string, CitationTarget>();
+  private targetsByChunkId = new Map<string, CitationTarget>();
 
   /** Reset all known citation targets for the current response context. */
   reset(): void {
     this.targetsByDocId = new Map();
+    this.targetsByChunkId = new Map();
   }
 
-  /** Register first valid citation target per doc from retrieved chunks. */
+  /** Register citation targets from retrieved/reranked chunks. */
   updateFromChunks(chunks: any[]): void {
     const list = Array.isArray(chunks) ? chunks : [];
     for (const chunk of list) {
@@ -80,35 +98,43 @@ export class CitationManager {
       const chunkId = String(chunk?.chunk_id || '').trim();
       const source = String(chunk?.source || '').trim();
       if (!docId || !chunkId || !source) continue;
-      if (this.targetsByDocId.has(docId)) continue;
-      const label = formatCitationLabelFromChunk(chunk);
-      if (!label) continue;
-      this.targetsByDocId.set(docId, {
+      const label = formatCitationLabelFromChunk(chunk) || fallbackCitationLabel(docId);
+      const target: CitationTarget = {
         doc_id: docId,
         chunk_id: chunkId,
         source,
         label,
-      });
+      };
+      if (!this.targetsByChunkId.has(chunkId)) this.targetsByChunkId.set(chunkId, target);
+      if (!this.targetsByDocId.has(docId)) this.targetsByDocId.set(docId, target);
     }
   }
 
-  /** Return citation metadata for a doc id, if available. */
-  get(docId: unknown): CitationTarget | null {
-    const key = String(docId || '').trim();
-    if (!key) return null;
-    return this.targetsByDocId.get(key) || null;
+  /** Return citation metadata for a chunk/doc id pair, if available. */
+  get(docId: unknown, chunkId: unknown = ''): CitationTarget | null {
+    const chunkKey = String(chunkId || '').trim();
+    if (chunkKey) {
+      const fromChunk = this.targetsByChunkId.get(chunkKey);
+      if (fromChunk) return fromChunk;
+    }
+    const docKey = String(docId || '').trim();
+    if (!docKey) return null;
+    return this.targetsByDocId.get(docKey) || null;
   }
 
-  /** Replace `[doc=...]` markers with clickable links in rendered markdown HTML. */
+  /** Replace citation markers with clickable links in rendered markdown HTML. */
   linkifyDocCitations(html: string, { enable = false }: { enable?: boolean } = {}): string {
     if (!enable) return html;
-    const re = /\[(?:[^\]]*?)\bdoc\s*=\s*([^\]\s]+)(?:[^\]]*?)\]/gi;
-    return String(html ?? '').replace(re, (match: string, docIdRaw: string) => {
-      const docId = String(docIdRaw || '').trim();
+    const re = /\[([^\]]*?\bdoc\s*=\s*[^\]]+?)\]/gi;
+    return String(html ?? '').replace(re, (match: string, bodyRaw: string) => {
+      const body = String(bodyRaw || '');
+      const docId = citationValue(body, 'doc');
+      const citedChunkId = citationValue(body, 'chunk');
       if (!docId) return match;
-      const target = this.targetsByDocId.get(docId);
+      const target = this.get(docId, citedChunkId);
       if (!target?.label) return match;
-      return `<a href="#" class="citationLink" data-doc-id="${escapeHtmlAttr(docId)}" title="${escapeHtmlAttr(docId)}">${safeText(target.label)}</a>`;
+      const chunkId = citedChunkId || target.chunk_id;
+      return `<a href="#" class="citationLink" data-doc-id="${escapeHtmlAttr(docId)}" data-chunk-id="${escapeHtmlAttr(chunkId)}" title="${escapeHtmlAttr(match)}">${safeText(target.label)}</a>`;
     });
   }
 }

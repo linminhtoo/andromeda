@@ -66,20 +66,20 @@ def select_rows(
     filing_date_to: date | None,
     limit: int,
 ) -> list[dict[str, Any]]:
-    where: list[str] = []
+    where: list[SQL] = []
     params: dict[str, Any] = {}
 
     if chunk_id:
-        where.append("c.chunk_id = %(chunk_id)s")
+        where.append(SQL("c.chunk_id = %(chunk_id)s"))
         params["chunk_id"] = chunk_id
     if ticker:
-        where.append("d.ticker = %(ticker)s")
+        where.append(SQL("d.ticker = %(ticker)s"))
         params["ticker"] = ticker.strip().upper()
     if filing_date_from is not None:
-        where.append("d.filing_date >= %(filing_date_from)s")
+        where.append(SQL("d.filing_date >= %(filing_date_from)s"))
         params["filing_date_from"] = filing_date_from
     if filing_date_to is not None:
-        where.append("d.filing_date <= %(filing_date_to)s")
+        where.append(SQL("d.filing_date <= %(filing_date_to)s"))
         params["filing_date_to"] = filing_date_to
 
     if chunk_id:
@@ -88,11 +88,12 @@ def select_rows(
         row_limit = max(1, int(limit))
     params["limit"] = row_limit
 
-    where_sql = ""
+    where_sql = SQL("")
     if where:
-        where_sql = "WHERE " + " AND ".join(where)
+        where_sql = SQL("WHERE ") + SQL(" AND ").join(where)
 
-    raw_sql = f"""
+    raw_sql = SQL(
+        """
         SELECT
             c.chunk_id,
             c.doc_id,
@@ -113,10 +114,11 @@ def select_rows(
         ORDER BY d.filing_date DESC NULLS LAST, c.doc_id, c.chunk_index
         LIMIT %(limit)s;
     """
+    ).format(where_sql=where_sql)
 
     with psycopg.connect(dsn) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(SQL(raw_sql), params)
+            cur.execute(raw_sql, params)
             rows = cur.fetchall()
     return [dict(row) for row in rows]
 

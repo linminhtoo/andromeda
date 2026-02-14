@@ -6,7 +6,7 @@ Expected input is a chunk export directory containing:
   - chunks/ (per-document JSONL files)
 
 This script embeds chunk text and upserts corpus rows into PostgreSQL.
-Retrieval is later done with pgvector (dense) + PostgreSQL FTS (sparse).
+Retrieval is later done with pgvector (dense) + sparse ranking (`bm25` by default, `fts` optional).
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
 import sys
 import time
@@ -27,6 +28,8 @@ from tqdm import tqdm
 
 from finrag.context_support import apply_context_strategy, context_builder_from_metadata
 from finrag.dataclasses import DocChunk
+from finrag.db import PostgresDB, SparseSearchMethod
+from finrag.ingest_profile import resolve_ingest_profile_name, update_ingest_profile_step
 from finrag.llm_clients import get_llm_client
 from finrag.retriever import PostgresHybridRetriever
 
@@ -36,6 +39,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 @dataclass
 class Args:
     ingest_output_dir: str
+    ingest_profile: str | None
     postgres_dsn: str | None
     postgres_schema: str | None
     llm_provider: str | None
@@ -49,9 +53,14 @@ class Args:
     context: str
     context_window: int
     context_metadata_key: str
+    context_max_tokens: int
     context_max_concurrency: int
     ann_hnsw_m: int | None
     ann_hnsw_ef_construction: int | None
+    sparse_search_method: SparseSearchMethod
+    debug_sample_rate: float
+    debug_max_samples: int
+    debug_sample_seed: int | None
     reset_corpus: bool
     recreate_ann_index: bool
     allow_default_schema_mutations: bool
@@ -138,11 +147,28 @@ def parse_args() -> Args:
             raise argparse.ArgumentTypeError("must be > 0")
         return parsed
 
+    def sparse_search_method(value: str) -> SparseSearchMethod:
+        return PostgresDB.normalize_sparse_search_method(value)
+
+    def probability(value: str) -> float:
+        parsed = float(value)
+        if parsed < 0.0 or parsed > 1.0:
+            raise argparse.ArgumentTypeError("must be in [0.0, 1.0]")
+        return parsed
+
     parser = argparse.ArgumentParser(description="Build PostgreSQL retrieval index from chunk exports.")
     parser.add_argument(
         "--ingest-output-dir",
         required=True,
         help="Directory produced by scripts/chunk.py (must contain doc_index.jsonl and chunks/).",
+    )
+    parser.add_argument(
+        "--ingest-profile",
+        default=None,
+        help=(
+            "Profile name for persisting build-index settings to disk "
+            "(default resolution: FINRAG_INGEST_PROFILE, then POSTGRES_SCHEMA, then `default`)."
+        ),
     )
     parser.add_argument(
         "--postgres-dsn", default=None, help="PostgreSQL DSN (defaults to POSTGRES_DSN or DATABASE_URL env vars)."
@@ -180,6 +206,12 @@ def parse_args() -> Args:
     )
     parser.add_argument("--context-window", type=int, default=2, help="Neighbor window size when --context=neighbors.")
     parser.add_argument(
+        "--context-max-tokens",
+        type=positive_int,
+        default=int((os.getenv("CONTEXT_MAX_TOKENS") or "256").strip()),
+        help="Max output tokens for each LLM context-situating call (default: 256).",
+    )
+    parser.add_argument(
         "--context-max-concurrency", type=int, default=32, help="Max concurrent context-generation calls."
     )
     parser.add_argument(
@@ -196,6 +228,35 @@ def parse_args() -> Args:
         type=positive_int,
         default=None,
         help="Optional HNSW index parameter ef_construction (higher can improve recall at higher build cost).",
+    )
+    parser.add_argument(
+        "--sparse-search-method",
+        default=(os.getenv("POSTGRES_SPARSE_SEARCH_METHOD") or os.getenv("SPARSE_SEARCH_METHOD") or "bm25")
+        .strip()
+        .lower(),
+        choices=["bm25", "fts"],
+        help="Sparse ranking method used by retrieval compatibility checks (default: bm25).",
+    )
+    parser.add_argument(
+        "--debug-sample-rate",
+        type=probability,
+        default=0.02,
+        help=(
+            "Probability in [0,1] of logging a full indexed chunk payload (original/retrieval text, "
+            "retrieval_context, embedding dimensions, metadata). Default: 0.02 (off)."
+        ),
+    )
+    parser.add_argument(
+        "--debug-max-samples",
+        type=positive_int,
+        default=100,
+        help="Maximum sampled chunks to log per indexing run when --debug-sample-rate > 0. Default: 100.",
+    )
+    parser.add_argument(
+        "--debug-sample-seed",
+        type=int,
+        default=42,
+        help="Optional RNG seed for deterministic sampling of debug chunk logs. Default: 42.",
     )
     parser.add_argument(
         "--reset-corpus",
@@ -221,6 +282,7 @@ def parse_args() -> Args:
     ns = parser.parse_args()
     return Args(
         ingest_output_dir=ns.ingest_output_dir,
+        ingest_profile=(str(ns.ingest_profile).strip() if ns.ingest_profile is not None else None) or None,
         postgres_dsn=ns.postgres_dsn,
         postgres_schema=(str(ns.postgres_schema).strip() if ns.postgres_schema is not None else None) or None,
         llm_provider=ns.llm_provider,
@@ -234,9 +296,14 @@ def parse_args() -> Args:
         context=ns.context,
         context_window=ns.context_window,
         context_metadata_key=ns.context_metadata_key,
+        context_max_tokens=ns.context_max_tokens,
         context_max_concurrency=ns.context_max_concurrency,
         ann_hnsw_m=ns.ann_hnsw_m,
         ann_hnsw_ef_construction=ns.ann_hnsw_ef_construction,
+        sparse_search_method=sparse_search_method(str(ns.sparse_search_method)),
+        debug_sample_rate=float(ns.debug_sample_rate),
+        debug_max_samples=int(ns.debug_max_samples),
+        debug_sample_seed=(int(ns.debug_sample_seed) if ns.debug_sample_seed is not None else None),
         reset_corpus=bool(ns.reset_corpus),
         recreate_ann_index=bool(ns.recreate_ann_index),
         allow_default_schema_mutations=bool(ns.allow_default_schema_mutations),
@@ -310,8 +377,52 @@ def postgres_dsn_from_env(args_dsn: str | None) -> str:
     return dsn
 
 
+def maybe_log_indexed_chunk_sample(
+    *,
+    rng: random.Random,
+    sample_rate: float,
+    sampled_count: int,
+    max_samples: int,
+    retriever: PostgresHybridRetriever,
+    llm_client: Any,
+    chunk: DocChunk,
+    doc_position: int,
+    doc_total: int,
+) -> int:
+    """
+    Log full chunk indexing payload for a sampled chunk.
+
+    This is intentionally verbose and designed for observability/debugging only.
+    """
+
+    if sample_rate <= 0.0 or sampled_count >= max_samples:
+        return sampled_count
+    if rng.random() >= sample_rate:
+        return sampled_count
+
+    retrieval_text, retrieval_context, embedding_text = retriever.resolve_retrieval_content(chunk, use_builder=True)
+    logger.info(
+        "Sampled indexed chunk:\n"
+        "doc_position={}/{} chunk_id={}\n\nretrieval_text={}\n\nretrieval_context={}\n\nembedding_text={}",
+        doc_position,
+        doc_total,
+        chunk.id,
+        str(retrieval_text),
+        str(retrieval_context),
+        str(embedding_text),
+    )
+    payload = {
+        "event": "indexed_chunk_sample",
+        "doc_progress": {"index": doc_position, "total": doc_total},
+        "payload": chunk.as_payload(),
+    }
+    logger.info("{}", json.dumps(payload, ensure_ascii=False, default=json_default))
+    return sampled_count + 1
+
+
 def main() -> int:
     args = parse_args()
+    profile_name = resolve_ingest_profile_name(args.ingest_profile)
 
     ingest_out = Path(args.ingest_output_dir).expanduser().resolve()
     doc_index_path = ingest_out / "doc_index.jsonl"
@@ -321,6 +432,8 @@ def main() -> int:
     project_root = Path(__file__).resolve().parents[1]
     log_path = setup_logging(project_root)
     logger.info(f"Logging to: {log_path}")
+    logger.info(f"Parsed args: {args.to_dict()}")
+    logger.info("Ingest profile: {}", profile_name)
 
     dsn = postgres_dsn_from_env(args.postgres_dsn)
 
@@ -334,6 +447,7 @@ def main() -> int:
             "or pass --allow-default-schema-mutations to override."
         )
 
+    # TODO: rename to embedding_provider ? and use embedding instead of dense in variables
     dense_provider = (args.llm_provider or os.getenv("LLM_PROVIDER") or "openai").strip().lower()
     dense_kwargs: dict[str, Any] = {"embed_model": args.dense_model}
     if args.dense_base_url and dense_provider == "openai":
@@ -359,9 +473,11 @@ def main() -> int:
         context_builder=context_builder_from_metadata(key=args.context_metadata_key),
         retrieval_context_key=args.context_metadata_key,
         postgres_schema=args.postgres_schema,
+        sparse_search_method=args.sparse_search_method,
         ann_hnsw_m=args.ann_hnsw_m,
         ann_hnsw_ef_construction=args.ann_hnsw_ef_construction,
     )
+    logger.info("Using sparse_search_method={}", args.sparse_search_method)
 
     if args.reset_corpus:
         logger.warning("Truncating existing PostgreSQL corpus rows")
@@ -381,9 +497,18 @@ def main() -> int:
     started_at = time.time()
     total_docs = 0
     total_chunks = 0
+    debug_samples_logged = 0
     skipped_docs = 0
     skipped_chunks = 0
     had_error = False
+    debug_rng = random.Random(args.debug_sample_seed)
+    if args.debug_sample_rate > 0.0:
+        logger.warning(
+            "Debug chunk sampling enabled: rate={} max_samples={} seed={}",
+            args.debug_sample_rate,
+            args.debug_max_samples,
+            args.debug_sample_seed,
+        )
 
     def handle_signal(signum, _frame):
         raise KeyboardInterrupt(f"Received signal {signum}")
@@ -392,7 +517,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, handle_signal)
 
     try:
-        for doc in tqdm(docs, desc="indexing docs"):
+        for doc_idx, doc in enumerate(tqdm(docs, desc="indexing docs"), start=1):
             chunks_path = resolve_chunks_path(doc, ingest_out)
             if not chunks_path.exists():
                 logger.warning(f"Missing chunk file, skipping: {chunks_path}")
@@ -401,16 +526,6 @@ def main() -> int:
             doc_chunks = [chunk_from_dict(ChunkJsonRow.from_mapping(item)) for item in iter_jsonl(chunks_path)]
             if not doc_chunks:
                 continue
-
-            if args.context in {"document", "neighbors", "metadata"}:
-                apply_context_strategy(
-                    doc_chunks,
-                    strategy=args.context,
-                    neighbor_window=args.context_window,
-                    metadata_key=args.context_metadata_key,
-                    max_concurrency=args.context_max_concurrency,
-                    llm_for_context=llm_for_context,
-                )
 
             chunks_to_index = doc_chunks
             if args.skip_existing_chunks:
@@ -422,7 +537,30 @@ def main() -> int:
                     skipped_docs += 1
                     continue
 
+            if args.context in {"document", "neighbors", "metadata"}:
+                apply_context_strategy(
+                    doc_chunks,
+                    strategy=args.context,
+                    neighbor_window=args.context_window,
+                    metadata_key=args.context_metadata_key,
+                    max_tokens=args.context_max_tokens,
+                    max_concurrency=args.context_max_concurrency,
+                    llm_for_context=llm_for_context,
+                )
+
             logger.debug(f"Indexing doc_id={doc_chunks[0].doc_id} chunks={len(chunks_to_index)}")
+            for chunk in chunks_to_index:
+                debug_samples_logged = maybe_log_indexed_chunk_sample(
+                    rng=debug_rng,
+                    sample_rate=args.debug_sample_rate,
+                    sampled_count=debug_samples_logged,
+                    max_samples=args.debug_max_samples,
+                    retriever=retriever,
+                    llm_client=llm_for_dense,
+                    chunk=chunk,
+                    doc_position=doc_idx,
+                    doc_total=len(docs),
+                )
             for batch in batched(chunks_to_index, batch_size=args.batch_size):
                 retriever.index(batch)
 
@@ -442,12 +580,27 @@ def main() -> int:
         "indexed_chunks": total_chunks,
         "skipped_docs": skipped_docs,
         "skipped_chunks": skipped_chunks,
+        "debug_samples_logged": debug_samples_logged,
         "had_error": had_error,
         "database": snapshot,
     }
 
     run_info_path = ingest_out / "build_index_run_info.json"
     run_info_path.write_text(json.dumps(run_info, ensure_ascii=False, indent=2, default=json_default), encoding="utf-8")
+
+    update_ingest_profile_step(
+        project_root=project_root,
+        profile_name=profile_name,
+        step_name="build_index",
+        settings=args.to_dict(),
+        metadata={
+            "run_info_path": str(run_info_path),
+            "had_error": had_error,
+            "indexed_docs": total_docs,
+            "indexed_chunks": total_chunks,
+            "schema_snapshot": snapshot,
+        },
+    )
 
     if had_error:
         logger.warning(f"Indexing stopped early. indexed_docs={total_docs} indexed_chunks={total_chunks}")

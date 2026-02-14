@@ -65,3 +65,70 @@ def test_cancel_endpoint_not_found_by_default() -> None:
     resp = client.post("/cancel", json={"request_id": "does-not-exist"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "not_found"
+
+
+def test_ingest_endpoint_starts_ticker_job(monkeypatch) -> None:
+    calls: list[tuple[list[str], int]] = []
+
+    def fake_start_ticker_ingestion_job(*, tickers: list[str], per_company: int) -> mainmod.TickerIngestJobStatus:
+        calls.append((list(tickers), per_company))
+        return mainmod.TickerIngestJobStatus(
+            job_id="job-123",
+            tickers=["AMD", "NVDA"],
+            per_company=3,
+            status="queued",
+            stage="queued",
+            message="Job queued",
+            created_at="2026-02-14T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(mainmod, "start_ticker_ingestion_job", fake_start_ticker_ingestion_job)
+
+    client = TestClient(mainmod.app)
+    resp = client.post("/ingest", json={"tickers": ["amd", "nvda"], "per_company": 3})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["job_id"] == "job-123"
+    assert payload["status"] == "queued"
+    assert payload["tickers"] == ["AMD", "NVDA"]
+    assert calls == [(["amd", "nvda"], 3)]
+
+
+def test_ingest_endpoint_returns_400_on_validation_error(monkeypatch) -> None:
+    def fake_start_ticker_ingestion_job(*, tickers: list[str], per_company: int) -> mainmod.TickerIngestJobStatus:
+        _ = tickers, per_company
+        raise ValueError("Ticker is invalid")
+
+    monkeypatch.setattr(mainmod, "start_ticker_ingestion_job", fake_start_ticker_ingestion_job)
+
+    client = TestClient(mainmod.app)
+    resp = client.post("/ingest", json={"ticker": "bad", "per_company": 1})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Ticker is invalid"
+
+
+def test_ingest_status_endpoint_uses_job_manager(monkeypatch) -> None:
+    def fake_get_ticker_ingestion_job_status(job_id: str) -> mainmod.TickerIngestJobStatus | None:
+        if job_id == "missing":
+            return None
+        return mainmod.TickerIngestJobStatus(
+            job_id=job_id,
+            tickers=["NVDA"],
+            per_company=2,
+            status="running",
+            stage="chunk",
+            message="Chunking markdown filings",
+            created_at="2026-02-14T00:00:00+00:00",
+            started_at="2026-02-14T00:00:01+00:00",
+        )
+
+    monkeypatch.setattr(mainmod, "get_ticker_ingestion_job_status", fake_get_ticker_ingestion_job_status)
+
+    client = TestClient(mainmod.app)
+
+    ok_resp = client.get("/ingest/job-abc")
+    assert ok_resp.status_code == 200
+    assert ok_resp.json()["stage"] == "chunk"
+
+    missing_resp = client.get("/ingest/missing")
+    assert missing_resp.status_code == 404

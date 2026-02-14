@@ -96,6 +96,13 @@ export function renderMarkdown(md: string, opts?: MarkdownRenderOptions): string
       continue;
     }
 
+    const thematicBreak = line.trim().match(/^([-*_])(?:\s*\1){2,}$/);
+    if (thematicBreak) {
+      closeList();
+      html += '<hr />';
+      continue;
+    }
+
     const maybeHeader = parseMdTableRow(line);
     const aligns = parseMdTableAlign(lines[i + 1]);
     if (maybeHeader && aligns) {

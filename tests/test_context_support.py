@@ -17,14 +17,16 @@ def test_situate_context_returns_empty_when_missing_inputs() -> None:
 def test_situate_context_truncates_and_calls_llm() -> None:
     def chat_fn(messages, temperature, response_model):
         _ = temperature, response_model
-        assert len(messages) == 1
-        prompt = messages[0]["content"]
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        prompt = messages[1]["content"]
         assert "[TRUNCATED]" in prompt
         return "  situated  "
 
     llm = RecordingLLM(chat_fn=chat_fn)
     out = cs.situate_context(llm, context="c" * 50, chunk="k" * 50, max_context_chars=10, max_chunk_chars=10)
     assert out == "situated"
+    assert llm.chat_calls[0]["max_tokens"] == 256
 
 
 def test_apply_context_strategy_neighbors_sets_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,7 +62,7 @@ def test_apply_context_strategy_neighbors_sets_metadata(monkeypatch: pytest.Monk
     assert {c["chunk"] for c in calls} == {"t1", "t3"}
     # Neighbor context for c1 includes next chunk.
     ctx_by_chunk = {c["chunk"]: c["context"] for c in calls}
-    assert "Next chunks:" in ctx_by_chunk["t1"]
+    assert "AFTER this chunk:" in ctx_by_chunk["t1"]
     assert "t2" in ctx_by_chunk["t1"]
 
 

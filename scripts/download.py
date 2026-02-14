@@ -10,6 +10,8 @@ import requests
 from loguru import logger
 from tqdm import tqdm
 
+from finrag.ingest_profile import resolve_ingest_profile_name, update_ingest_profile_step
+
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # required by SEC policies
@@ -117,12 +119,35 @@ if __name__ == "__main__":
     parser.add_argument("--per-company", type=int, default=8, help="Number of filings to download per company")
     parser.add_argument("--delay", type=float, default=0.2, help="Delay between requests to SEC")
     parser.add_argument("--skip-existing", action="store_true", help="Skip downloads when output files already exist")
+    parser.add_argument(
+        "--ingest-profile",
+        default=None,
+        help=(
+            "Profile name for persisting download settings to disk "
+            "(default resolution: FINRAG_INGEST_PROFILE, then POSTGRES_SCHEMA, then `default`)."
+        ),
+    )
     args = parser.parse_args()
 
+    project_root = Path(__file__).resolve().parents[1]
+    profile_name = resolve_ingest_profile_name(args.ingest_profile)
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    tickers = [str(t or "").strip().upper() for t in (args.tickers or []) if str(t or "").strip()]
+
     fetch_10ks_for_tickers(
-        args.tickers,
-        output_dir=args.output_dir,
-        per_company=args.per_company,
-        delay=args.delay,
-        skip_existing=args.skip_existing,
+        tickers, output_dir=output_dir, per_company=args.per_company, delay=args.delay, skip_existing=args.skip_existing
+    )
+
+    update_ingest_profile_step(
+        project_root=project_root,
+        profile_name=profile_name,
+        step_name="download",
+        settings={
+            "tickers": tickers,
+            "output_dir": str(output_dir),
+            "per_company": int(args.per_company),
+            "delay": float(args.delay),
+            "skip_existing": bool(args.skip_existing),
+        },
+        metadata={"raw_html_dir": str(output_dir / "raw_htmls"), "meta_dir": str(output_dir / "meta")},
     )

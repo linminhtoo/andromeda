@@ -1,5 +1,4 @@
 import os
-import tempfile
 import uuid
 import mimetypes
 import json
@@ -12,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
@@ -20,18 +19,19 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel, Field
 
-# from finrag.chunking import DoclingHybridChunker
+from finrag.context_support import context_builder_from_metadata
 from finrag.dataclasses import TopChunk
-from finrag.db import RetrievalFilters
+from finrag.db import RetrievalFilters, SparseSearchMethod
 from finrag.generation_controls import (
     GenerationSettings,
     default_mode,
     list_generation_presets,
     resolve_generation_settings,
 )
+from finrag.ingest_profile import ingest_profile_step_settings, load_ingest_profile, resolve_ingest_profile_name
+from finrag.ingestion_jobs import TickerIngestionJobManager, TickerIngestionRuntimeConfig, normalize_ticker
 from finrag.llm_clients import get_llm_client
 from finrag.metadata_models import chunk_metadata_from_value
-from finrag.context_support import apply_context_strategy, context_builder_from_metadata
 from finrag.qa import build_draft_prompt, build_refine_prompt
 from finrag.retriever import CrossEncoderReranker, PostgresHybridRetriever
 from finrag.streaming import (
@@ -76,6 +76,42 @@ class QueryResponse(BaseModel):
     final_answer: str
     top_chunks: list[TopChunk]
     retrieved_chunks: list[TopChunk] | None = None
+
+
+class TickerIngestRequest(BaseModel):
+    ticker: str | None = None
+    tickers: list[str] | None = None
+    per_company: int = Field(default=8, ge=1, le=25)
+
+    def requested_tickers(self) -> list[str]:
+        """
+        Return user-requested ticker symbols in insertion order.
+        """
+
+        out: list[str] = []
+        if self.ticker is not None and self.ticker.strip():
+            out.append(self.ticker)
+        if self.tickers is not None:
+            for item in self.tickers:
+                text = str(item or "").strip()
+                if text:
+                    out.append(text)
+        return out
+
+
+class TickerIngestJobStatus(BaseModel):
+    job_id: str
+    tickers: list[str]
+    per_company: int
+    status: str
+    stage: str
+    message: str
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    run_root: str | None = None
+    log_path: str | None = None
+    doc_index_path: str | None = None
 
 
 def _resolve_generation(req: QueryRequest) -> GenerationSettings:
@@ -192,6 +228,20 @@ def _context_config() -> tuple[str, int, str]:
     return strategy, window, metadata_key
 
 
+def _sparse_search_method() -> SparseSearchMethod:
+    """
+    Resolve sparse retrieval method from environment.
+    """
+
+    raw_value = (os.getenv("POSTGRES_SPARSE_SEARCH_METHOD") or os.getenv("SPARSE_SEARCH_METHOD") or "bm25").strip()
+    normalized = raw_value.lower()
+    if normalized == "bm25":
+        return "bm25"
+    if normalized == "fts":
+        return "fts"
+    raise RuntimeError("POSTGRES_SPARSE_SEARCH_METHOD must be one of: bm25, fts")
+
+
 def postgres_dsn() -> str:
     """
     Resolve PostgreSQL connection string from environment.
@@ -208,6 +258,270 @@ def postgres_dsn() -> str:
     return dsn
 
 
+def _env_positive_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} must be > 0")
+    return value
+
+
+def _coerce_positive_int(value: object, default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        parsed = int(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return default
+        try:
+            parsed = int(text)
+        except ValueError:
+            return default
+    if parsed <= 0:
+        return default
+    return parsed
+
+
+def _coerce_non_negative_float(value: object, default: float) -> float:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, float):
+        parsed = value
+    elif isinstance(value, int):
+        parsed = float(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return default
+        try:
+            parsed = float(text)
+        except ValueError:
+            return default
+    if parsed < 0.0:
+        return default
+    return parsed
+
+
+def _coerce_bool(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _coerce_text(value: object, default: str) -> str:
+    if value is None:
+        return default
+    text = str(value).strip()
+    if not text:
+        return default
+    return text
+
+
+def _coerce_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
+
+
+def _coerce_sparse_search_method(value: object, default: SparseSearchMethod) -> SparseSearchMethod:
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text == "bm25":
+        return "bm25"
+    if text == "fts":
+        return "fts"
+    return default
+
+
+def build_ticker_ingestion_config() -> TickerIngestionRuntimeConfig:
+    """
+    Build ingestion settings from persisted profile with env fallback.
+    """
+
+    strategy_default, window_default, context_key_default = _context_config()
+    profile_name = resolve_ingest_profile_name((os.getenv("FINRAG_INGEST_PROFILE") or "").strip() or None)
+    profile = load_ingest_profile(project_root=project_root, profile_name=profile_name)
+    download_settings = ingest_profile_step_settings(profile, "download")
+    process_settings = ingest_profile_step_settings(profile, "process_html_to_markdown")
+    chunk_settings = ingest_profile_step_settings(profile, "chunk")
+    build_settings = ingest_profile_step_settings(profile, "build_index")
+
+    if profile:
+        logger.info("Loaded ingest profile `{}` for on-the-fly ingestion.", profile_name)
+    else:
+        logger.warning("Ingest profile `{}` not found; falling back to environment defaults.", profile_name)
+
+    provider = _coerce_optional_text(build_settings["llm_provider"] if "llm_provider" in build_settings else None)
+    if provider is None:
+        provider = (os.getenv("LLM_PROVIDER") or "").strip() or None
+    provider_name = (provider or _llm_provider_name() or "openai").strip().lower()
+
+    dense_model = _coerce_text(
+        build_settings["dense_model"] if "dense_model" in build_settings else None,
+        _llm_embed_model() or "text-embedding-3-large",
+    )
+    dense_base_url = _coerce_optional_text(
+        build_settings["dense_base_url"] if "dense_base_url" in build_settings else None
+    )
+    if dense_base_url is None:
+        dense_base_url = (os.getenv("OPENAI_EMBED_BASE_URL") or "").strip() or None
+
+    contextual_model = _coerce_optional_text(
+        build_settings["contextual_model"] if "contextual_model" in build_settings else None
+    )
+    if contextual_model is None:
+        contextual_model = _llm_chat_model()
+
+    contextual_provider = _coerce_optional_text(
+        build_settings["contextual_llm_provider"] if "contextual_llm_provider" in build_settings else None
+    )
+    if contextual_provider is None:
+        contextual_provider = provider
+
+    context_base_url = _coerce_optional_text(
+        build_settings["contextual_base_url"] if "contextual_base_url" in build_settings else None
+    )
+    if context_base_url is None:
+        context_base_url = (
+            os.getenv("OPENAI_CONTEXT_BASE_URL") or os.getenv("OPENAI_CHAT_BASE_URL") or ""
+        ).strip() or None
+
+    postgres_schema = _coerce_optional_text(
+        build_settings["postgres_schema"] if "postgres_schema" in build_settings else None
+    )
+    if postgres_schema is None:
+        postgres_schema = (os.getenv("POSTGRES_SCHEMA") or "").strip() or None
+
+    sparse_default = _sparse_search_method()
+    sparse_method = _coerce_sparse_search_method(
+        build_settings["sparse_search_method"] if "sparse_search_method" in build_settings else None, sparse_default
+    )
+
+    context_strategy = _coerce_text(
+        build_settings["context"] if "context" in build_settings else None, strategy_default
+    )
+    context_window = _coerce_positive_int(
+        build_settings["context_window"] if "context_window" in build_settings else None, window_default
+    )
+    context_metadata_key = _coerce_text(
+        build_settings["context_metadata_key"] if "context_metadata_key" in build_settings else None,
+        context_key_default,
+    )
+    context_max_tokens = _coerce_positive_int(
+        build_settings["context_max_tokens"] if "context_max_tokens" in build_settings else None,
+        _env_positive_int("CONTEXT_MAX_TOKENS", 256),
+    )
+    context_max_concurrency = _coerce_positive_int(
+        build_settings["context_max_concurrency"] if "context_max_concurrency" in build_settings else None,
+        _env_positive_int("CONTEXT_MAX_CONCURRENCY", 64),
+    )
+    batch_size = _coerce_positive_int(
+        build_settings["batch_size"] if "batch_size" in build_settings else None,
+        _env_positive_int("FINRAG_INGEST_BATCH_SIZE", 256),
+    )
+
+    download_delay = _coerce_non_negative_float(
+        download_settings["delay"] if "delay" in download_settings else None,
+        _coerce_non_negative_float(os.getenv("FINRAG_INGEST_DOWNLOAD_DELAY"), 0.2),
+    )
+    download_skip_existing = _coerce_bool(
+        download_settings["skip_existing"] if "skip_existing" in download_settings else None,
+        _env_bool("FINRAG_INGEST_DOWNLOAD_SKIP_EXISTING", default=True),
+    )
+
+    process_parser_mode = _coerce_text(
+        process_settings["parser_mode"] if "parser_mode" in process_settings else None,
+        (os.getenv("FINRAG_PROCESS_PARSER_MODE") or "auto").strip() or "auto",
+    )
+    process_recursive = _coerce_bool(
+        process_settings["recursive"] if "recursive" in process_settings else None,
+        _env_bool("FINRAG_PROCESS_RECURSIVE", default=True),
+    )
+    process_continue_on_error = _coerce_bool(
+        process_settings["continue_on_error"] if "continue_on_error" in process_settings else None,
+        _env_bool("FINRAG_PROCESS_CONTINUE_ON_ERROR", default=True),
+    )
+
+    chunker = _coerce_text(
+        chunk_settings["chunker"] if "chunker" in chunk_settings else None,
+        (os.getenv("CHUNKER_NAME") or "markdown_table_preserving").strip() or "markdown_table_preserving",
+    )
+    chunk_max_tokens = _coerce_positive_int(
+        chunk_settings["max_tokens"] if "max_tokens" in chunk_settings else None,
+        _env_positive_int("CHUNK_MAX_TOKENS", 1024),
+    )
+    chunk_overlap_tokens = _coerce_positive_int(
+        chunk_settings["overlap_tokens"] if "overlap_tokens" in chunk_settings else None,
+        _env_positive_int("CHUNK_OVERLAP_TOKENS", 128),
+    )
+    chunk_recursive = _coerce_bool(
+        chunk_settings["recursive"] if "recursive" in chunk_settings else None,
+        _env_bool("FINRAG_CHUNK_RECURSIVE", default=True),
+    )
+    chunk_doc_id_strategy = _coerce_text(
+        chunk_settings["doc_id_strategy"] if "doc_id_strategy" in chunk_settings else None,
+        (os.getenv("FINRAG_CHUNK_DOC_ID_STRATEGY") or "sha1_relpath").strip() or "sha1_relpath",
+    )
+    chunk_split_markdown_tables = _coerce_bool(
+        chunk_settings["split_markdown_tables"] if "split_markdown_tables" in chunk_settings else None,
+        _env_bool("FINRAG_CHUNK_SPLIT_MARKDOWN_TABLES", default=False),
+    )
+
+    return TickerIngestionRuntimeConfig(
+        postgres_dsn=postgres_dsn(),
+        postgres_schema=postgres_schema,
+        sparse_search_method=sparse_method,
+        llm_provider=provider,
+        dense_model=dense_model,
+        dense_base_url=(dense_base_url if provider_name == "openai" else None),
+        contextual_llm_provider=contextual_provider,
+        contextual_model=contextual_model,
+        contextual_base_url=(context_base_url if provider_name == "openai" else None),
+        context_strategy=context_strategy,
+        context_window=context_window,
+        context_metadata_key=context_metadata_key,
+        context_max_tokens=context_max_tokens,
+        context_max_concurrency=context_max_concurrency,
+        batch_size=batch_size,
+        ingest_profile=profile_name,
+        download_delay=download_delay,
+        download_skip_existing=download_skip_existing,
+        process_parser_mode=process_parser_mode,
+        process_recursive=process_recursive,
+        process_continue_on_error=process_continue_on_error,
+        chunker=chunker,
+        chunk_max_tokens=chunk_max_tokens,
+        chunk_overlap_tokens=chunk_overlap_tokens,
+        chunk_recursive=chunk_recursive,
+        chunk_doc_id_strategy=chunk_doc_id_strategy,
+        chunk_split_markdown_tables=chunk_split_markdown_tables,
+    )
+
+
 def build_retriever() -> PostgresHybridRetriever:
     """
     Build PostgreSQL retriever from environment configuration.
@@ -220,17 +534,21 @@ def build_retriever() -> PostgresHybridRetriever:
 
     _, _, context_key = _context_config()
     postgres_schema = (os.getenv("POSTGRES_SCHEMA") or "").strip() or None
+    sparse_search_method = _sparse_search_method()
     retriever = PostgresHybridRetriever(
         llm_client=_llm_for_embeddings(),
         dsn=postgres_dsn(),
         context_builder=context_builder_from_metadata(key=context_key),
         retrieval_context_key=context_key,
         postgres_schema=postgres_schema,
+        sparse_search_method=sparse_search_method,
     )
     if postgres_schema:
-        logger.info("Using PostgreSQL retriever (schema={})", postgres_schema)
+        logger.info(
+            "Using PostgreSQL retriever (schema={}, sparse_search_method={})", postgres_schema, sparse_search_method
+        )
     else:
-        logger.info("Using PostgreSQL retriever")
+        logger.info("Using PostgreSQL retriever (sparse_search_method={})", sparse_search_method)
     return retriever
 
 
@@ -246,11 +564,7 @@ class RAGService:
         logger.info(f"Using LLM chat model: {self.llm.chat_model}")
         self.retriever = build_retriever()
         self.reranker = build_reranker()
-        self._context_strategy, self._context_window, self._context_key = _context_config()
-
-        # Two chunkers: with and without Mistral OCR
-        # self.chunker_ocr = DoclingHybridChunker(use_mistral_ocr=True)
-        # self.chunker_pdf = DoclingHybridChunker(use_mistral_ocr=False)
+        _, _, self._context_key = _context_config()
 
     @staticmethod
     def _chunk_metadata_for_ui(meta: object) -> dict | None:
@@ -309,32 +623,6 @@ class RAGService:
                 )
             )
         return out
-
-    def ingest_document(self, path: str, use_mistral_ocr: bool) -> str:
-        """
-        FIXME: docstring is outdated.
-
-        Ingest a single PDF at `path` using either:
-        - Mistral OCR -> Markdown -> Docling -> HybridChunker
-        - Direct Docling PDF parsing -> HybridChunker
-        """
-        raise RuntimeError("On-the-fly ingestion is disabled for now. Use batch ingestion script.")
-
-        doc_id = str(uuid.uuid4())
-        chunker = self.chunker_ocr if use_mistral_ocr else self.chunker_pdf
-
-        # TODO: add logic from `process_html_to_markdown.py`
-
-        docling_chunks = chunker.chunk_document(path, doc_id=doc_id)
-        apply_context_strategy(
-            docling_chunks,
-            strategy=self._context_strategy,
-            neighbor_window=self._context_window,
-            metadata_key=self._context_key,
-            llm_for_context=self.llm,
-        )
-        self.retriever.index(docling_chunks)
-        return doc_id
 
     def answer_question(
         self,
@@ -455,6 +743,65 @@ def get_rag_service() -> "RAGService":
         return _RAG_SERVICE
 
 
+_INGESTION_JOB_MANAGER_LOCK = threading.Lock()
+_INGESTION_JOB_MANAGER: "TickerIngestionJobManager | None" = None
+
+
+def get_ticker_ingestion_job_manager() -> TickerIngestionJobManager:
+    """
+    Lazily construct the ticker ingestion job manager.
+    """
+
+    global _INGESTION_JOB_MANAGER
+    if _INGESTION_JOB_MANAGER is not None:
+        return _INGESTION_JOB_MANAGER
+    with _INGESTION_JOB_MANAGER_LOCK:
+        if _INGESTION_JOB_MANAGER is None:
+            configured_root = (os.getenv("FINRAG_INGEST_JOBS_ROOT") or "").strip()
+            jobs_root = None
+            if configured_root:
+                root_path = Path(os.path.expanduser(configured_root))
+                jobs_root = (root_path if root_path.is_absolute() else (project_root / root_path)).resolve()
+            _INGESTION_JOB_MANAGER = TickerIngestionJobManager(project_root=project_root, jobs_root=jobs_root)
+        return _INGESTION_JOB_MANAGER
+
+
+def start_ticker_ingestion_job(*, tickers: list[str], per_company: int) -> TickerIngestJobStatus:
+    """
+    Validate request payload and enqueue ticker ingestion background job.
+    """
+
+    normalized_tickers: list[str] = []
+    seen: set[str] = set()
+    for ticker in tickers:
+        normalized = normalize_ticker(ticker)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_tickers.append(normalized)
+    if not normalized_tickers:
+        raise ValueError("At least one ticker is required.")
+    if per_company <= 0:
+        raise ValueError("per_company must be > 0")
+
+    cfg = build_ticker_ingestion_config()
+    payload = get_ticker_ingestion_job_manager().start_job(
+        tickers=normalized_tickers, per_company=per_company, config=cfg
+    )
+    return TickerIngestJobStatus.model_validate(payload)
+
+
+def get_ticker_ingestion_job_status(job_id: str) -> TickerIngestJobStatus | None:
+    """
+    Fetch a ticker ingestion background job snapshot.
+    """
+
+    payload = get_ticker_ingestion_job_manager().get_job(job_id=job_id)
+    if payload is None:
+        return None
+    return TickerIngestJobStatus.model_validate(payload)
+
+
 _CANCEL_LOCK = threading.Lock()
 _CANCEL_EVENTS: dict[str, threading.Event] = {}
 
@@ -497,27 +844,32 @@ def generation_presets():
 
 
 @app.post("/ingest")
-async def ingest_pdf(file: UploadFile = File(...), use_mistral_ocr: bool = Form(False)):
-    # Save uploaded file to a temp path
-    filename = file.filename
-    if filename is None:
-        raise ValueError("Uploaded file must have a filename")
-    suffix = os.path.splitext(filename)[-1] or ".pdf"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        contents = await file.read()
-        tmp.write(contents)
-        tmp_path = tmp.name
+def ingest_ticker(req: TickerIngestRequest):
+    """
+    Start ticker-based ingestion pipeline as a background job.
+    """
 
     try:
-        doc_id = get_rag_service().ingest_document(tmp_path, use_mistral_ocr=use_mistral_ocr)
-    finally:
-        # optional: keep PDFs for audit; for now, delete
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
+        status = start_ticker_ingestion_job(tickers=req.requested_tickers(), per_company=req.per_company)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return status.model_dump()
 
-    return {"doc_id": doc_id}
+
+@app.get("/ingest/{job_id}")
+def ingest_ticker_status(job_id: str):
+    """
+    Return status snapshot for a ticker ingestion background job.
+    """
+
+    status = get_ticker_ingestion_job_status(job_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"Ingestion job not found: {job_id}")
+    if status.status == "succeeded" and status.doc_index_path:
+        os.environ["FINRAG_DOC_INDEX_PATH"] = status.doc_index_path
+    return status.model_dump()
 
 
 @app.post("/query")
@@ -945,7 +1297,7 @@ _YAHOO_COMPANY_RESOLVER: object | None = None
 
 
 def _doc_index_path() -> Path | None:
-    raw = os.getenv("FINRAG_DOC_INDEX_PATH") or os.getenv("DOC_INDEX_PATH") or ""
+    raw = os.getenv("FINRAG_DOC_INDEX_PATH") or ""
     raw = raw.strip()
     if not raw:
         return None
@@ -1133,7 +1485,7 @@ def ingested_companies():
     """
     Return the set of tickers (and best-effort company names) available in the currently ingested dataset.
 
-    Configure by setting FINRAG_DOC_INDEX_PATH (preferred) or DOC_INDEX_PATH.
+    Configure by setting FINRAG_DOC_INDEX_PATH.
     """
 
     path = _doc_index_path()
@@ -1302,7 +1654,7 @@ def clear_history():
 
 
 # -------------------------------------------------------------------
-# Simple HTML frontend
+# TypeScript frontend (HTML is just a very thin wrapper)
 # -------------------------------------------------------------------
 
 HTML_PATH = Path(__file__).parent / "static" / "index.html"
