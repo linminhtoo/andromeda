@@ -8,8 +8,15 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
+- Standalone vLLM/OpenAI tool-calling probe script: `scripts/test_vllm_tool_call_openai.py`.
 
 ### Changed
+- Reduced query-pipeline duplication in `src/finrag/main.py` by introducing shared `RAGService` helpers for:
+  - retrieval filters
+  - retrieval and reranking
+  - draft/final prompt construction
+  - response assembly
+- Refactored `/query_stream` to reuse the same `RAGService` query helpers used by `answer_question()`, and consolidated repeated draft/final token streaming loops into one local stage helper.
 
 ### Fixed
 

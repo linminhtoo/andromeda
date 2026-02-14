@@ -658,3 +658,98 @@
 
 ### Scripts preserved under `agent_logs/`
 - `agent_logs/20260214_validate_precommit_frontend_hooks.sh`
+
+## 2026-02-15 - Standalone OpenAI-client vLLM tool-calling probe
+
+### Previous state
+- The repo had OpenAI-compatible client wrappers in `src/finrag/llm_clients.py` but no dedicated standalone script for directly probing tool/function calling behavior against the configured vLLM endpoint.
+
+### What changed
+- Added standalone probe script:
+  - `scripts/test_vllm_tool_call_openai.py`
+- Added concise plan doc for the task:
+  - `agent_logs/refactor_15Feb2026_004617_vllm_tool_call_probe.md`
+- Added validation script and executed it:
+  - `agent_logs/20260215_validate_vllm_tool_probe.sh`
+- Updated changelog unreleased section:
+  - `CHANGELOG.md`
+
+### Why
+- Needed a minimal, isolated validation path to test whether the served model (`Qwen/Qwen3-VL-32B-Instruct-FP8`) supports OpenAI-style tool calls end-to-end without modifying runtime code in `src/finrag`.
+
+### Key implementation notes
+- Probe script mirrors existing OpenAI setup conventions:
+  - `.env` loading from repo root
+  - `OpenAI(api_key=..., base_url=...)`
+  - env resolution order for base URL: `OPENAI_CHAT_BASE_URL` -> `OPENAI_BASE_URL`
+  - model from `OPENAI_CHAT_MODEL`
+- Probe performs a full two-step tool flow:
+  - first completion with `tools`
+  - local mock function execution (`lookup_quote`)
+  - tool message sent back for final assistant response
+- Added explicit bad-request handling to print actionable vLLM flag hints instead of raw traceback.
+
+### Surprising findings
+- With current remote vLLM serve args, tool-calling requests are explicitly rejected by server-side validation:
+  - `"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set`
+  - `tool_choice="required" requires --tool-call-parser to be set`
+
+### Validation experiments and results
+- Full lint/format/type + tests (scripted):
+  - `bash agent_logs/20260215_validate_vllm_tool_probe.sh`
+  - Result: pre-commit pass, `pytest -vvv tests/` pass (`77 passed, 1 warning`).
+- Probe runtime check (`tool_choice=auto`):
+  - `source .venv/bin/activate && python scripts/test_vllm_tool_call_openai.py --max-tokens 128`
+  - Result: fails with HTTP 400 from vLLM requiring tool-calling flags.
+- Probe runtime check (`tool_choice=required`):
+  - `source .venv/bin/activate && python scripts/test_vllm_tool_call_openai.py --tool-choice required --max-tokens 128`
+  - Result: fails with HTTP 400 requiring `--tool-call-parser`.
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_validate_vllm_tool_probe.sh`
+
+## 2026-02-15 - Shared query pipeline helpers for sync + streaming paths
+
+### Previous state
+- `RAGService.answer_question()` and `/query_stream` in `src/finrag/main.py` duplicated core query pipeline logic:
+  - retrieval filter construction
+  - hybrid retrieval
+  - rerank branching
+  - draft/final prompt branching
+- `/query_stream` also duplicated token-streaming loops for draft/final stages.
+
+### What changed
+- Added shared `RAGService` helper methods in `src/finrag/main.py`:
+  - `build_retrieval_filters`
+  - `retrieve_chunks`
+  - `rerank_chunks`
+  - `draft_prompt`
+  - `final_prompt`
+  - `generate_answers`
+  - `build_query_response`
+- Updated `answer_question()` to use the shared helpers end-to-end.
+- Updated `/query_stream` to reuse the same retrieval/rerank/prompt/response helpers used by `answer_question()`.
+- Added `StreamStageResult` and one local `stream_stage(...)` async helper in `/query_stream` so draft/final streaming loops share the same batching/cancel/disconnect flow.
+- Added planning artifact:
+  - `agent_logs/refactor_15Feb2026_005223_query_pipeline_dedup.md`
+
+### Why
+- Reduce maintenance risk while upcoming answer-logic branch overhauls are in flight.
+- Ensure behavior changes in the core answer pipeline can be implemented in one place and reused by both sync and streaming APIs.
+
+### Surprising findings
+- Prompt builders (`build_draft_prompt` / `build_refine_prompt`) return `list[ChatMessage]`, so pyright required explicit typing/casting at the streaming bridge boundary (`iter_chat_deltas` currently expects `list[dict[str, Any]]`).
+
+### Validation experiments and results
+- Lint/format/type:
+  - `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- Tests:
+  - `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `77 passed, 1 warning`.
+- Reproducible validation script executed:
+  - `bash agent_logs/20260215_validate_query_pipeline_dedup.sh`
+  - Result: pass (`pre-commit` + full `pytest -vvv tests/`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_validate_query_pipeline_dedup.sh`

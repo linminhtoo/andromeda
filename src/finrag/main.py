@@ -7,9 +7,11 @@ import asyncio
 import threading
 import time
 import math
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -20,7 +22,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from finrag.context_support import context_builder_from_metadata
-from finrag.dataclasses import TopChunk
+from finrag.dataclasses import ScoredChunk, TopChunk
 from finrag.db import RetrievalFilters, SparseSearchMethod
 from finrag.generation_controls import (
     GenerationSettings,
@@ -30,7 +32,7 @@ from finrag.generation_controls import (
 )
 from finrag.ingest_profile import ingest_profile_step_settings, load_ingest_profile, resolve_ingest_profile_name
 from finrag.ingestion_jobs import TickerIngestionJobManager, TickerIngestionRuntimeConfig, normalize_ticker
-from finrag.llm_clients import get_llm_client
+from finrag.llm_clients import ChatMessage, get_llm_client
 from finrag.metadata_models import chunk_metadata_from_value
 from finrag.qa import build_draft_prompt, build_refine_prompt
 from finrag.retriever import CrossEncoderReranker, PostgresHybridRetriever
@@ -76,6 +78,16 @@ class QueryResponse(BaseModel):
     final_answer: str
     top_chunks: list[TopChunk]
     retrieved_chunks: list[TopChunk] | None = None
+
+
+@dataclass
+class StreamStageResult:
+    """
+    Mutable state container for one streamed generation stage.
+    """
+
+    text: str = ""
+    step_ms: float = 0.0
 
 
 class TickerIngestRequest(BaseModel):
@@ -624,6 +636,117 @@ class RAGService:
             )
         return out
 
+    def build_retrieval_filters(
+        self, *, tickers: list[str] | None, filing_date_from: str | None, filing_date_to: str | None
+    ) -> RetrievalFilters:
+        """
+        Build validated retrieval filters for a query request.
+        """
+
+        return self.retriever.build_filters(
+            tickers=tickers, filing_date_from=filing_date_from, filing_date_to=filing_date_to
+        )
+
+    def retrieve_chunks(
+        self, question: str, settings: GenerationSettings, *, filters: RetrievalFilters
+    ) -> list[ScoredChunk]:
+        """
+        Retrieve hybrid candidates for a question.
+        """
+
+        return self.retriever.retrieve_hybrid(
+            question,
+            top_k_semantic=settings.top_k_retrieve,
+            top_k_bm25=settings.top_k_retrieve,
+            top_k_final=settings.top_k_retrieve,
+            filters=filters,
+        )
+
+    def rerank_chunks(
+        self, question: str, settings: GenerationSettings, hybrid: list[ScoredChunk]
+    ) -> list[ScoredChunk]:
+        """
+        Optionally rerank retrieved chunks according to generation settings.
+        """
+
+        if not settings.enable_rerank:
+            return hybrid[: settings.top_k_rerank]
+        return self.reranker.rerank(
+            question, hybrid, top_k=settings.top_k_rerank, candidate_text_provider=self.retriever.text_for_rerank
+        )
+
+    def draft_prompt(
+        self, question: str, settings: GenerationSettings, reranked: list[ScoredChunk]
+    ) -> list[ChatMessage]:
+        """
+        Build the first-stage prompt used for draft generation.
+        """
+
+        return build_draft_prompt(
+            question, reranked, draft_max_tokens=settings.draft_max_tokens, answer_style=settings.answer_style
+        )
+
+    def final_prompt(
+        self,
+        question: str,
+        settings: GenerationSettings,
+        reranked: list[ScoredChunk],
+        *,
+        draft_answer: str | None = None,
+    ) -> list[ChatMessage]:
+        """
+        Build the final-stage prompt for the current settings.
+        """
+
+        if not settings.enable_refine:
+            return self.draft_prompt(question, settings, reranked)
+        if draft_answer is None:
+            raise ValueError("draft_answer is required when refinement is enabled")
+        return build_refine_prompt(
+            question,
+            draft_answer,
+            reranked,
+            final_max_tokens=settings.final_max_tokens,
+            answer_style=settings.answer_style,
+        )
+
+    def generate_answers(
+        self, question: str, settings: GenerationSettings, reranked: list[ScoredChunk]
+    ) -> tuple[str, str]:
+        """
+        Generate draft/final answers from reranked chunks.
+        """
+
+        draft = self.llm.chat(self.draft_prompt(question, settings, reranked), temperature=settings.draft_temperature)
+        if not settings.enable_refine:
+            return draft, draft
+        final = self.llm.chat(self.final_prompt(question, settings, reranked, draft_answer=draft), temperature=0.0)
+        return draft, final
+
+    def build_query_response(
+        self,
+        *,
+        draft_answer: str,
+        final_answer: str,
+        reranked: list[ScoredChunk],
+        include_retrieved_chunks: bool = False,
+        hybrid: list[ScoredChunk] | None = None,
+    ) -> QueryResponse:
+        """
+        Build API response payload from generated answers and chunk state.
+        """
+
+        top_chunks = self._serialize_top_chunks(reranked)
+        retrieved_chunks = (
+            self._serialize_top_chunks(hybrid) if include_retrieved_chunks and hybrid is not None else None
+        )
+        return QueryResponse(
+            draft_answer=draft_answer,
+            final_answer=final_answer,
+            top_chunks=top_chunks,
+            retrieved_chunks=retrieved_chunks,
+        )
+
     def answer_question(
         self,
         question: str,
@@ -648,45 +771,18 @@ class RAGService:
             * question is out of scope / harmful (DONE)
             * final chunks do not contain required context (DONE)
         """
-        filters: RetrievalFilters = self.retriever.build_filters(
+        filters = self.build_retrieval_filters(
             tickers=tickers, filing_date_from=filing_date_from, filing_date_to=filing_date_to
         )
-
-        hybrid = self.retriever.retrieve_hybrid(
-            question,
-            top_k_semantic=settings.top_k_retrieve,
-            top_k_bm25=settings.top_k_retrieve,
-            top_k_final=settings.top_k_retrieve,
-            filters=filters,
-        )
-
-        if settings.enable_rerank:
-            reranked = self.reranker.rerank(
-                question, hybrid, top_k=settings.top_k_rerank, candidate_text_provider=self.retriever.text_for_rerank
-            )
-        else:
-            reranked = hybrid[: settings.top_k_rerank]
-
-        draft_prompt = build_draft_prompt(
-            question, reranked, draft_max_tokens=settings.draft_max_tokens, answer_style=settings.answer_style
-        )
-        draft = self.llm.chat(draft_prompt, temperature=settings.draft_temperature)  # type: ignore[arg-type]
-
-        final = draft
-        if settings.enable_refine:
-            refine_prompt = build_refine_prompt(
-                question,
-                draft,
-                reranked,
-                final_max_tokens=settings.final_max_tokens,
-                answer_style=settings.answer_style,
-            )
-            final = self.llm.chat(refine_prompt, temperature=0.0)  # type: ignore[arg-type]
-
-        top_chunks = self._serialize_top_chunks(reranked)
-        retrieved_chunks = self._serialize_top_chunks(hybrid) if include_retrieved_chunks else None
-        return QueryResponse(
-            draft_answer=draft, final_answer=final, top_chunks=top_chunks, retrieved_chunks=retrieved_chunks
+        hybrid = self.retrieve_chunks(question, settings, filters=filters)
+        reranked = self.rerank_chunks(question, settings, hybrid)
+        draft, final = self.generate_answers(question, settings, reranked)
+        return self.build_query_response(
+            draft_answer=draft,
+            final_answer=final,
+            reranked=reranked,
+            include_retrieved_chunks=include_retrieved_chunks,
+            hybrid=hybrid,
         )
 
 
@@ -913,10 +1009,10 @@ def cancel(req: CancelRequest):
     return {"status": "ok" if ok else "not_found"}
 
 
-# TODO: duplicate logic with non-streaming / rethink structure
-# everytime we make a change to the answering logic, we need to update both places, not good
 @app.post("/query_stream")
 async def query_docs_stream(req: QueryStreamRequest, request: Request):
+    # TODO: store question/answer pairs into postgresDB for analysis
+
     rag_service = get_rag_service()
     request_id = (req.request_id or "").strip() or str(uuid.uuid4())
     base_req = QueryRequest(**req.model_dump(exclude={"request_id"}))
@@ -924,7 +1020,7 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
     req_resolved = _request_with_resolved_settings(base_req, settings)
     cancel_evt = _register_cancel_event(request_id)
     started_ms = int(time.time() * 1000)
-    filters: RetrievalFilters = rag_service.retriever.build_filters(
+    filters = rag_service.build_retrieval_filters(
         tickers=req.tickers, filing_date_from=req.filing_date_from, filing_date_to=req.filing_date_to
     )
 
@@ -951,19 +1047,50 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
         def set_cancelled() -> None:
             cancel_evt.set()
 
+        async def stream_stage(
+            *,
+            prompt: list[ChatMessage],
+            temperature: float,
+            delta_type: str,
+            allow_stream: bool,
+            result: StreamStageResult,
+        ) -> AsyncIterator[bytes]:
+            full_text = ""
+            t0 = time.monotonic()
+
+            if allow_stream:
+                stream_messages = cast(list[dict[str, Any]], prompt)
+                batcher = TextDeltaBatcher.from_env()
+                async for delta in iter_chat_deltas(
+                    rag_service.llm,
+                    stream_messages,
+                    temperature=temperature,
+                    is_cancelled=is_cancelled,
+                    set_cancelled=set_cancelled,
+                    is_disconnected=request.is_disconnected,
+                ):
+                    full_text += delta
+                    batcher.add(delta)
+                    out = batcher.pop_ready()
+                    if out:
+                        yield ndjson_bytes({"type": delta_type, "delta": out})
+                    if is_cancelled():
+                        break
+                out = batcher.pop_all()
+                if out:
+                    yield ndjson_bytes({"type": delta_type, "delta": out})
+            else:
+                full_text = await asyncio.to_thread(rag_service.llm.chat, prompt, temperature)
+
+            result.text = full_text
+            result.step_ms = (time.monotonic() - t0) * 1000.0
+
         try:
             yield ndjson_bytes({"type": "start", "request_id": request_id})
 
             yield ndjson_bytes({"type": "status", "step": "retrieve", "message": "Retrieving chunks…"})
             t0 = time.perf_counter()
-            hybrid = await asyncio.to_thread(
-                rag_service.retriever.retrieve_hybrid,
-                req.question,
-                top_k_semantic=settings.top_k_retrieve,
-                top_k_bm25=settings.top_k_retrieve,
-                top_k_final=settings.top_k_retrieve,
-                filters=filters,
-            )
+            hybrid = await asyncio.to_thread(rag_service.retrieve_chunks, req.question, settings, filters=filters)
             retrieve_step_ms = (time.perf_counter() - t0) * 1000.0
 
             if await request.is_disconnected():
@@ -999,16 +1126,7 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 }
             )
             t0 = time.perf_counter()
-            if settings.enable_rerank:
-                reranked = await asyncio.to_thread(
-                    rag_service.reranker.rerank,
-                    req.question,
-                    hybrid,
-                    top_k=settings.top_k_rerank,
-                    candidate_text_provider=rag_service.retriever.text_for_rerank,
-                )
-            else:
-                reranked = hybrid[: settings.top_k_rerank]
+            reranked = await asyncio.to_thread(rag_service.rerank_chunks, req.question, settings, hybrid)
             rerank_step_ms = (time.perf_counter() - t0) * 1000.0
 
             if await request.is_disconnected():
@@ -1034,41 +1152,21 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 }
             )
 
-            # TODO: simplify this if-else. duplicated code for the draft answer streaming.
             if settings.enable_refine:
                 yield ndjson_bytes(
                     {"type": "status", "step": "draft", "message": "Generating draft…", "is_draft": True}
                 )
-                draft_prompt = build_draft_prompt(
-                    req.question,
-                    reranked,
-                    draft_max_tokens=settings.draft_max_tokens,
-                    answer_style=settings.answer_style,
-                )
-                t0 = time.monotonic()
-                if stream_draft_enabled():
-                    batcher = TextDeltaBatcher.from_env()
-                    async for delta in iter_chat_deltas(
-                        rag_service.llm,
-                        draft_prompt,  # type: ignore[arg-type]
-                        temperature=settings.draft_temperature,
-                        is_cancelled=is_cancelled,
-                        set_cancelled=set_cancelled,
-                        is_disconnected=request.is_disconnected,
-                    ):
-                        full_draft += delta
-                        batcher.add(delta)
-                        out = batcher.pop_ready()
-                        if out:
-                            yield ndjson_bytes({"type": "draft_delta", "delta": out})
-                        if is_cancelled():
-                            break
-                    out = batcher.pop_all()
-                    if out:
-                        yield ndjson_bytes({"type": "draft_delta", "delta": out})
-                else:
-                    full_draft = await asyncio.to_thread(rag_service.llm.chat, draft_prompt, settings.draft_temperature)
-                draft_step_ms = (time.monotonic() - t0) * 1000.0
+                draft_result = StreamStageResult()
+                async for payload in stream_stage(
+                    prompt=rag_service.draft_prompt(req.question, settings, reranked),
+                    temperature=settings.draft_temperature,
+                    delta_type="draft_delta",
+                    allow_stream=stream_draft_enabled(),
+                    result=draft_result,
+                ):
+                    yield payload
+                full_draft = draft_result.text
+                draft_step_ms = draft_result.step_ms
 
                 if draft_step_ms is not None:
                     timing_ms["draft_ms"] = draft_step_ms
@@ -1096,63 +1194,30 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 yield ndjson_bytes(
                     {"type": "status", "step": "final", "message": "Generating final answer…", "is_draft": False}
                 )
-                refine_prompt = build_refine_prompt(
-                    req.question,
-                    full_draft,
-                    reranked,
-                    final_max_tokens=settings.final_max_tokens,
-                    answer_style=settings.answer_style,
-                )
-                t0 = time.monotonic()
-                batcher = TextDeltaBatcher.from_env()
-                async for delta in iter_chat_deltas(
-                    rag_service.llm,
-                    refine_prompt,  # type: ignore[arg-type]
+                final_result = StreamStageResult()
+                async for payload in stream_stage(
+                    prompt=rag_service.final_prompt(req.question, settings, reranked, draft_answer=full_draft),
                     temperature=0.0,
-                    is_cancelled=is_cancelled,
-                    set_cancelled=set_cancelled,
-                    is_disconnected=request.is_disconnected,
+                    delta_type="final_delta",
+                    allow_stream=True,
+                    result=final_result,
                 ):
-                    full_final += delta
-                    batcher.add(delta)
-                    out = batcher.pop_ready()
-                    if out:
-                        yield ndjson_bytes({"type": "final_delta", "delta": out})
-                    if is_cancelled():
-                        break
-                out = batcher.pop_all()
-                if out:
-                    yield ndjson_bytes({"type": "final_delta", "delta": out})
-                final_step_ms = (time.monotonic() - t0) * 1000.0
+                    yield payload
+                full_final = final_result.text
+                final_step_ms = final_result.step_ms
             else:
                 yield ndjson_bytes({"type": "status", "step": "final", "message": "Generating answer…"})
-                answer_prompt = build_draft_prompt(
-                    req.question,
-                    reranked,
-                    draft_max_tokens=settings.draft_max_tokens,
-                    answer_style=settings.answer_style,
-                )
-                batcher = TextDeltaBatcher.from_env()
-                t0 = time.monotonic()
-                async for delta in iter_chat_deltas(
-                    rag_service.llm,
-                    answer_prompt,  # type: ignore[arg-type]
+                final_result = StreamStageResult()
+                async for payload in stream_stage(
+                    prompt=rag_service.final_prompt(req.question, settings, reranked),
                     temperature=settings.draft_temperature,
-                    is_cancelled=is_cancelled,
-                    set_cancelled=set_cancelled,
-                    is_disconnected=request.is_disconnected,
+                    delta_type="final_delta",
+                    allow_stream=True,
+                    result=final_result,
                 ):
-                    full_final += delta
-                    batcher.add(delta)
-                    out = batcher.pop_ready()
-                    if out:
-                        yield ndjson_bytes({"type": "final_delta", "delta": out})
-                    if is_cancelled():
-                        break
-                out = batcher.pop_all()
-                if out:
-                    yield ndjson_bytes({"type": "final_delta", "delta": out})
-                final_step_ms = (time.monotonic() - t0) * 1000.0
+                    yield payload
+                full_final = final_result.text
+                final_step_ms = final_result.step_ms
                 full_draft = full_final
 
             if await request.is_disconnected():
@@ -1169,10 +1234,8 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 )
                 return
 
-            res = QueryResponse(
-                draft_answer=full_draft,
-                final_answer=(full_final if full_final else full_draft),
-                top_chunks=rag_service._serialize_top_chunks(reranked),
+            res = rag_service.build_query_response(
+                draft_answer=full_draft, final_answer=(full_final if full_final else full_draft), reranked=reranked
             )
 
             if final_step_ms is not None:
