@@ -1,7 +1,7 @@
 [project]
 name = "finrag"
-version = "1.5.0"
-description = "Add your description here"
+version = "1.6.0"
+description = "A financial Question-Answering assistant grounded on SEC filings"
 requires-python = ">=3.12"
 # TODO: clean up this dependencies list
 dependencies = [
