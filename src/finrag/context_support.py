@@ -15,6 +15,7 @@ def situate_context(
     context: str,
     chunk: str,
     temperature: float = 0.0,
+    max_tokens: int = 256,
     max_context_chars: int = 24_000,
     max_chunk_chars: int = 12_000,
 ) -> str:
@@ -77,6 +78,7 @@ def apply_context_strategy(
     metadata_key: str = "retrieval_context",
     llm_for_context: LLMClient | None = None,
     temperature: float = 0.0,
+    max_tokens: int = 256,
     max_concurrency: int = 64,
     skip_if_exists: bool = True,
 ) -> None:
@@ -104,6 +106,8 @@ def apply_context_strategy(
         LLM client used to generate situated context.
     temperature : float, optional
         LLM temperature for the situating call (default: 0.0).
+    max_tokens : int, optional
+        Max output tokens for each situating LLM call (default: 256).
     max_concurrency : int, optional
         Max parallel LLM calls for context generation (default: 32).
     skip_if_exists : bool, optional
@@ -139,7 +143,9 @@ def apply_context_strategy(
                 if doc_text is None:
                     raise ValueError("doc_text is None in _run_item")
                 idx, ch = item
-                situated = situate_context(llm_for_context, context=doc_text, chunk=ch.text, temperature=temperature)
+                situated = situate_context(
+                    llm_for_context, context=doc_text, chunk=ch.text, temperature=temperature, max_tokens=max_tokens
+                )
                 return idx, situated
 
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -189,7 +195,11 @@ def apply_context_strategy(
             def _run_item(item: tuple[int, DocChunk, str]) -> tuple[int, str]:
                 idx, ch, neighbor_context = item
                 situated = situate_context(
-                    llm_for_context, context=neighbor_context, chunk=ch.text, temperature=temperature
+                    llm_for_context,
+                    context=neighbor_context,
+                    chunk=ch.text,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
                 )
                 return idx, situated
 
