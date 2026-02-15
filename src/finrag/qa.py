@@ -47,9 +47,12 @@ _STYLE_GUIDANCE: dict[AnswerStyle, str] = {
 }
 
 _CITATION_GUIDANCE = (
-    "For each claim made, cite sources (chunks) in-line (NOT AT THE END) using [doc=... chunk=...], "
+    "For each claim made, cite sources (chunks) in-line IMMEDIATELY FOLLOWING the claim "
+    "using [doc=... chunk=...], "
     "where doc is the source doc_id and chunk is the unique chunk_id. "
-    "Use only the provided context. Remember to ignore irrelevant chunks."
+    "Use only the provided context. Remember to ignore irrelevant chunks. "
+    "Of course, at the very end of your response, please resummarize the sources cited "
+    "with a 'Cited Sources' section."
 )
 
 
