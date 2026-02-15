@@ -1,6 +1,6 @@
 import { safeText } from '../shared/html.js';
-import { formatDuration } from '../shared/time.js';
-import { renderHistoryList } from './history.js';
+import { fmtDate, formatDuration } from '../shared/time.js';
+import { ConversationHistoryGroup, groupHistoryByConversation, renderHistoryList } from './history.js';
 import { renderChunks } from './chunks.js';
 import { CitationManager, extractDocMeta, formatCitationLabelFromChunk, formatDocMetaLine } from './citations.js';
 import { els, DEFAULT_ANSWER_PANE_PCT, DEFAULT_SOURCES_PANE_WIDTH_PX, STEP_ORDER } from './dom.js';
@@ -13,11 +13,14 @@ import { readLocalHistory, readSettings, readUi, writeLocalHistory, writeSetting
 import { buildChunksBySource, isMarkdownSource, SourceViewer } from './source-viewer.js';
 
 let historyItems: any[] = [];
+let historyGroups: ConversationHistoryGroup[] = [];
 let activeEntry: any = null;
 let lastQueryResponse: any = null;
 let lastRerankedChunks: any[] = [];
 let lastRetrievedChunks: any[] = [];
 let activeStream: { controller: AbortController; requestId: string | null } | null = null;
+let activeConversationId: string | null = null;
+let activeConversationKey: string | null = null;
 let activeIngestJobId: string | null = null;
 let activeIngestPollHandle: number | null = null;
 
@@ -144,18 +147,16 @@ async function checkHealth(): Promise<void> {
 
 /** Render history sidebar from current in-memory history cache. */
 function renderHistory(): void {
+  historyGroups = groupHistoryByConversation(historyItems);
   renderHistoryList({
-    items: historyItems,
+    groups: historyGroups,
     filterValue: String(els.historyFilter?.value || ''),
-    activeEntryId: activeEntry?.id || null,
+    activeConversationKey,
     historyCountEl: els.historyCount,
     historyListEl: els.historyList,
     steps: STEP_ORDER,
-    onSelect: (entry) => {
-      activeEntry = entry;
-      els.activeEntryPill.textContent = entry.id ? `selected: ${entry.id.slice(0, 8)}` : 'selected';
-      renderHistory();
-      showEntry(entry);
+    onSelect: (group) => {
+      showConversation(group);
     },
   });
 }
@@ -184,9 +185,85 @@ function renderChunkList(
   });
 }
 
-/** Display a selected history entry in the main answer/debug panes. */
-function showEntry(entry: any): void {
-  if (!entry) return;
+/** Build one HTML block with all turns from a selected conversation. */
+function renderConversationThread(entriesNewestFirst: any[]): string {
+  const ordered = [...entriesNewestFirst].reverse();
+  const html = ordered.map((entry, idx) => {
+    const turn = idx + 1;
+    const createdAt = String(entry?.created_at || '').trim();
+    const question = String(entry?.request?.question || '').trim() || '(missing question)';
+    const res = entry?.response || {};
+    const status = String(res?.status || 'answered').trim().toLowerCase();
+    let answerText = String(res?.final_answer || '').trim();
+    if (status === 'clarification_required' && !answerText) {
+      answerText = String(res?.clarifying_question || '').trim();
+    }
+    if (status === 'refused' && !answerText) {
+      answerText = 'The request was refused.';
+    }
+    if (!answerText) answerText = '(empty answer)';
+
+    const statusClass = status === 'answered' ? 'ok' : status === 'refused' ? 'bad' : '';
+    const answerHtml = renderAnswerMarkdown(answerText, { citations: true });
+    return `
+      <article class="turnCard" data-turn-index="${turn}">
+        <div class="turnMeta">
+          <span class="pill">turn ${turn}</span>
+          ${status ? `<span class="pill ${statusClass}">${safeText(status)}</span>` : ''}
+          ${createdAt ? `<span class="pill">${safeText(fmtDate(createdAt))}</span>` : ''}
+        </div>
+        <div class="turnQuestion">${safeText(question)}</div>
+        <div class="turnAnswer markdown">${answerHtml}</div>
+      </article>
+    `;
+  });
+  return `<section class="conversationThread">${html.join('')}</section>`;
+}
+
+/** Return the active group object by its stable list key. */
+function groupByKey(key: string | null): ConversationHistoryGroup | null {
+  if (!key) return null;
+  const found = historyGroups.find((group) => group.key === key);
+  return found || null;
+}
+
+/** Return the active group object by conversation id. */
+function groupByConversationId(conversationId: string | null): ConversationHistoryGroup | null {
+  const cid = String(conversationId || '').trim();
+  if (!cid) return null;
+  const found = historyGroups.find((group) => group.conversation_id === cid);
+  return found || null;
+}
+
+/** Keep active conversation selection stable after history refreshes. */
+function syncActiveConversationAfterHistoryRefresh(): void {
+  const fromConversationId = groupByConversationId(activeConversationId);
+  if (fromConversationId) {
+    showConversation(fromConversationId);
+    return;
+  }
+  const fromKey = groupByKey(activeConversationKey);
+  if (fromKey) {
+    showConversation(fromKey);
+    return;
+  }
+  if (!activeConversationKey && historyGroups.length) return;
+  activeConversationKey = null;
+  activeEntry = null;
+}
+
+/** Display a selected conversation in the main answer/debug panes. */
+function showConversation(group: ConversationHistoryGroup, opts: { rerenderHistory?: boolean } = {}): void {
+  const entry = group?.latest;
+  if (!group || !entry) return;
+
+  activeConversationKey = group.key;
+  activeEntry = entry;
+  activeConversationId = group.conversation_id;
+  els.activeEntryPill.textContent = group.conversation_id
+    ? `${group.conversation_id.slice(0, 8)} · ${group.entries.length} turn${group.entries.length === 1 ? '' : 's'}`
+    : `entry · ${group.entries.length} turn${group.entries.length === 1 ? '' : 's'}`;
+  if (opts.rerenderHistory !== false) renderHistory();
 
   const res = entry.response || {};
   const draft = String(res.draft_answer ?? '');
@@ -216,7 +293,7 @@ function showEntry(entry: any): void {
   } else {
     els.draftAnswer.innerHTML = '';
   }
-  els.finalAnswer.innerHTML = renderAnswerMarkdown(final, { citations: true });
+  els.finalAnswer.innerHTML = renderConversationThread(group.entries);
 
   renderChunkList(chunks);
 
@@ -231,6 +308,8 @@ function showEntry(entry: any): void {
 /** Reset interactive query view to idle/new-chat state. */
 function resetChatView({ clearQuestion = true, resetAnswerSplit = false }: { clearQuestion?: boolean; resetAnswerSplit?: boolean } = {}): void {
   activeEntry = null;
+  activeConversationId = null;
+  activeConversationKey = null;
   lastQueryResponse = null;
   citationManager.reset();
   lastRerankedChunks = [];
@@ -282,6 +361,7 @@ async function loadHistoryFromServer(): Promise<any[]> {
   if (data.path && els.historyPath) els.historyPath.textContent = data.path;
   writeLocalHistory(items);
   renderHistory();
+  syncActiveConversationAfterHistoryRefresh();
   return items;
 }
 
@@ -595,7 +675,7 @@ async function doQuery(question: string): Promise<void> {
     const res = await fetch('/query_stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, ...settings }),
+      body: JSON.stringify({ question, conversation_id: activeConversationId, ...settings }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -644,6 +724,8 @@ async function doQuery(question: string): Promise<void> {
 
         if (type === 'start') {
           streamState.requestId = String(evt?.request_id || '');
+          const streamConversationId = String(evt?.conversation_id || '').trim();
+          if (streamConversationId) activeConversationId = streamConversationId;
           els.requestIdPill.textContent = streamState.requestId ? 'req ' + streamState.requestId.slice(0, 8) : 'req';
           progressUi.setSummary('running');
           progressUi.append('Started ' + els.requestIdPill.textContent);
@@ -755,10 +837,19 @@ async function doQuery(question: string): Promise<void> {
 
         if (type === 'done') {
           const data = evt?.response || {};
+          const responseStatus = String(data?.status || 'answered').trim().toLowerCase();
+          const responseConversationId = String(data?.conversation_id || '').trim();
+          if (responseConversationId) activeConversationId = responseConversationId;
           lastQueryResponse = data;
-          els.queryStatus.textContent = '';
+          if (responseStatus === 'clarification_required') {
+            els.queryStatus.textContent = 'Clarification required.';
+          } else if (responseStatus === 'refused') {
+            els.queryStatus.textContent = 'Request refused.';
+          } else {
+            els.queryStatus.textContent = '';
+          }
 
-          const showDraftResult = showDraft || sawDraftStage;
+          const showDraftResult = responseStatus === 'answered' && (showDraft || sawDraftStage);
           setDraftPanelVisibility(showDraftResult);
           els.draftStatePill.textContent = showDraftResult ? 'done' : 'disabled';
           draftText = String(data.draft_answer ?? draftText);
@@ -787,9 +878,15 @@ async function doQuery(question: string): Promise<void> {
           await loadHistoryFromServer();
 
           const timing = evt?.timing_ms && typeof evt.timing_ms === 'object' ? evt.timing_ms : {};
-          finishStep('final', evt?.final_ms ?? timing?.final_ms);
-          if (Object.keys(timing).length) {
-            progressUi.applyTimingMs(timing);
+          if (responseStatus === 'answered') {
+            finishStep('final', evt?.final_ms ?? timing?.final_ms);
+            if (Object.keys(timing).length) {
+              progressUi.applyTimingMs(timing);
+            } else {
+              for (const step of STEP_ORDER) {
+                if (!stepDurations.has(step)) progressUi.setStep(step, 'skipped', null);
+              }
+            }
           } else {
             for (const step of STEP_ORDER) {
               if (!stepDurations.has(step)) progressUi.setStep(step, 'skipped', null);
@@ -805,7 +902,13 @@ async function doQuery(question: string): Promise<void> {
                 ? totalMs
                 : performance.now() - queryT0;
 
-          progressUi.setSummary(`total ${formatDuration(total)}`, 'ok');
+          if (responseStatus === 'clarification_required') {
+            progressUi.setSummary(`clarification ${formatDuration(total)}`);
+          } else if (responseStatus === 'refused') {
+            progressUi.setSummary(`refused ${formatDuration(total)}`, 'bad');
+          } else {
+            progressUi.setSummary(`total ${formatDuration(total)}`, 'ok');
+          }
           const summary = stepSummary();
           progressUi.append(`Done in ${formatDuration(total)}${summary ? ' · ' + summary : ''}`);
           break;
@@ -953,6 +1056,7 @@ els.copyAnswerBtn.addEventListener('click', async () => {
 els.copyDebugBtn.addEventListener('click', async () => {
   const payload = {
     question: String(els.question.value || ''),
+    conversation_id: activeConversationId,
     settings: currentSettings(),
     response: lastQueryResponse,
     selected_history_entry: activeEntry,

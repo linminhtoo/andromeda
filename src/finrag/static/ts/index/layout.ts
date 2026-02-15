@@ -14,8 +14,8 @@ export function createLayoutController(opts: {
     if (!Number.isFinite(n)) return defaultSourcesPaneWidthPx;
     const rect = els.qaSplit?.getBoundingClientRect?.();
     const containerWidth = rect?.width || 0;
-    const min = 320;
-    const max = containerWidth ? Math.max(min, Math.floor(containerWidth * 0.7)) : 900;
+    const min = 300;
+    const max = containerWidth ? Math.max(min, Math.floor(containerWidth * 0.62)) : 900;
     return Math.min(max, Math.max(min, Math.round(n)));
   };
 
@@ -26,7 +26,7 @@ export function createLayoutController(opts: {
     els.qaSplit.style.setProperty('--sourcesPaneWidth', `${w}px`);
     if (els.qaSplitter) {
       els.qaSplitter.setAttribute('aria-valuenow', String(w));
-      els.qaSplitter.setAttribute('aria-valuemin', '320');
+      els.qaSplitter.setAttribute('aria-valuemin', '300');
     }
     return w;
   };
@@ -55,7 +55,7 @@ export function createLayoutController(opts: {
     const applied = setSourcesPaneWidth(Number(w) || defaultSourcesPaneWidthPx);
     if (els.qaSplitter && applied) {
       const rect = els.qaSplit.getBoundingClientRect();
-      const max = rect?.width ? Math.max(320, Math.floor(rect.width * 0.7)) : 900;
+      const max = rect?.width ? Math.max(300, Math.floor(rect.width * 0.62)) : 900;
       els.qaSplitter.setAttribute('aria-valuemax', String(max));
     }
 
@@ -86,7 +86,7 @@ export function createLayoutController(opts: {
       const rawWidth = rect.right - clientX;
       const applied = setSourcesPaneWidth(rawWidth);
       if (typeof applied === 'number') lastAppliedWidth = applied;
-      els.qaSplitter.setAttribute('aria-valuemax', String(Math.max(320, Math.floor(rect.width * 0.7))));
+      els.qaSplitter.setAttribute('aria-valuemax', String(Math.max(300, Math.floor(rect.width * 0.62))));
     };
 
     const endDrag = (): void => {

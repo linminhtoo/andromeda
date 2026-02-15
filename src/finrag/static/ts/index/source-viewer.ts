@@ -115,6 +115,36 @@ function makeSpanFinder(text: string): (snippet: string) => { start: number; end
   };
 }
 
+/** Parse a 1-based positive line number from unknown metadata value. */
+function parsePositiveLineNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+/** Map 1-based line span to source-text character offsets. */
+function spanFromLineRange(text: string, lineStart: number, lineEnd: number): { start: number; end: number } | null {
+  const src = String(text ?? '');
+  if (!src || !Number.isInteger(lineStart) || !Number.isInteger(lineEnd) || lineStart <= 0 || lineEnd < lineStart) {
+    return null;
+  }
+
+  const lineStarts: number[] = [0];
+  for (let i = 0; i < src.length; i += 1) {
+    if (src[i] === '\n') lineStarts.push(i + 1);
+  }
+
+  if (lineStart > lineStarts.length) return null;
+  const boundedEndLine = Math.min(lineEnd, lineStarts.length);
+  const start = lineStarts[lineStart - 1];
+  const end = boundedEndLine < lineStarts.length ? lineStarts[boundedEndLine] : src.length;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return { start, end };
+}
+
 /** Render raw source text with `<mark>` spans for matched chunk snippets. */
 function renderTextWithMarks(
   text: string,
@@ -302,13 +332,30 @@ export class SourceViewer {
 
       const findSpan = makeSpanFinder(text);
       const spans: Array<{ start: number; end: number; chunk_id: string }> = [];
+      let lineSpanMatches = 0;
+      let textSpanMatches = 0;
       for (const chunk of chunks) {
         const chunkId = String(chunk?.chunk_id || '');
-        const snippet = String(chunk?.text || chunk?.preview || '').trim();
-        if (!chunkId || !snippet) continue;
-        const span = findSpan(snippet);
-        if (!span) continue;
-        spans.push({ ...span, chunk_id: chunkId });
+        if (!chunkId) continue;
+
+        const metadata = chunk && typeof chunk.metadata === 'object' ? chunk.metadata : null;
+        const lineStart = parsePositiveLineNumber(metadata?.line_start);
+        const lineEnd = parsePositiveLineNumber(metadata?.line_end);
+        if (lineStart !== null && lineEnd !== null) {
+          const lineSpan = spanFromLineRange(text, lineStart, lineEnd);
+          if (lineSpan) {
+            spans.push({ ...lineSpan, chunk_id: chunkId });
+            lineSpanMatches += 1;
+            continue;
+          }
+        }
+
+        const snippet = String(chunk?.source_text || chunk?.text || chunk?.preview || '').trim();
+        if (!snippet) continue;
+        const textSpan = findSpan(snippet);
+        if (!textSpan) continue;
+        spans.push({ ...textSpan, chunk_id: chunkId });
+        textSpanMatches += 1;
       }
 
       if (this.sourceMode === 'rendered') {
@@ -320,7 +367,9 @@ export class SourceViewer {
         els.sourceModePill.textContent = 'raw';
         els.sourceContent.classList.remove('markdown');
         els.sourceContent.innerHTML = renderTextWithMarks(text, spans, activeChunkId);
-        els.sourceStatus.textContent = spans.length ? `Highlighted ${spans.length} matches` : 'No matches found';
+        els.sourceStatus.textContent = spans.length
+          ? `Highlighted ${spans.length} matches (${lineSpanMatches} line, ${textSpanMatches} text)`
+          : 'No matches found';
 
         if (activeChunkId) {
           const selector = `mark[data-chunk-id="${CSS.escape(activeChunkId)}"]`;
