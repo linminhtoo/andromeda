@@ -61,5 +61,6 @@ class TopChunk:
     preview: str  # first N chars of text
     source: str  # original file/URL
     text: str | None = None  # optional full chunk text (can be large)
+    source_text: str | None = None  # optional original source chunk text for in-doc highlighting
     context: str | None = None  # optional situated/enriched context text
     metadata: dict[str, Any] | None = None  # optional metadata (company, ticker, filing_date, summary, ...)
