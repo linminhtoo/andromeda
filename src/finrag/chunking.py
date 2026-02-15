@@ -207,10 +207,32 @@ class MarkdownTablePreservingChunker:
     _PAGE_SPAN_RE = re.compile(r'<span\s+id="page-(\d+)-(\d+)"\s*></span>', re.IGNORECASE)
     _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
 
-    def __init__(self, *, max_tokens: int = 512, overlap_tokens: int = 64, split_tables: bool = False):
+    def __init__(
+        self,
+        *,
+        max_tokens: int = 512,
+        overlap_tokens: int = 64,
+        split_tables: bool = False,
+        tokenizer_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        tokenizer_kwargs: dict[str, Any] | None = None,
+    ):
+        """
+        Initialize the markdown chunker.
+
+        Args:
+            max_tokens: Maximum tokens allowed per emitted chunk.
+            overlap_tokens: Token overlap carried into the next text chunk.
+            split_tables: Whether to split oversized tables into multiple chunks.
+            tokenizer_model: Hugging Face tokenizer model used for token accounting.
+            tokenizer_kwargs: Extra keyword args for tokenizer initialization.
+        """
         self.max_tokens = max_tokens
         self.overlap_tokens = overlap_tokens
         self.split_tables = split_tables
+        self.tokenizer = HuggingFaceTokenizer.from_pretrained(
+            model_name=tokenizer_model, max_tokens=max_tokens, **(tokenizer_kwargs or {})
+        )
+        self.hf_tokenizer = self.tokenizer.get_tokenizer()
 
     # --- Metadata helpers -------------------------------------------------
 
@@ -254,16 +276,16 @@ class MarkdownTablePreservingChunker:
     # --- Markdown parsing -------------------------------------------------
 
     def _count_tokens(self, text: str) -> int:
-        # Conservative + dependency-free: approximate tokens by whitespace-separated terms.
-        return len(re.findall(r"\S+", text))
+        return self.tokenizer.count_tokens(text)
 
     def _tail_overlap(self, text: str) -> str:
         if self.overlap_tokens <= 0:
             return ""
-        words = re.findall(r"\S+", text)
-        if not words:
+        token_ids = self.hf_tokenizer.encode(text, add_special_tokens=False)
+        if not token_ids:
             return ""
-        return " ".join(words[-self.overlap_tokens :])
+        tail_token_ids = token_ids[-self.overlap_tokens :]
+        return self.hf_tokenizer.decode(tail_token_ids, skip_special_tokens=True).strip()
 
     def _split_long_text_block(self, text: str) -> list[str]:
         """
@@ -303,17 +325,17 @@ class MarkdownTablePreservingChunker:
 
             # The sentence itself is too long. Flush current context first.
             flush_cur()
-            words = re.findall(r"\S+", sentence)
-            if not words:
+            sentence_token_ids = self.hf_tokenizer.encode(sentence, add_special_tokens=False)
+            if not sentence_token_ids:
                 continue
             step = max(1, self.max_tokens - max(0, self.overlap_tokens))
             start = 0
-            while start < len(words):
-                window = words[start : start + self.max_tokens]
+            while start < len(sentence_token_ids):
+                window = sentence_token_ids[start : start + self.max_tokens]
                 if not window:
                     break
-                parts.append(" ".join(window).strip())
-                if start + self.max_tokens >= len(words):
+                parts.append(self.hf_tokenizer.decode(window, skip_special_tokens=True).strip())
+                if start + self.max_tokens >= len(sentence_token_ids):
                     break
                 start += step
 
@@ -342,9 +364,9 @@ class MarkdownTablePreservingChunker:
             if m_page:
                 page_no = int(m_page.group(1))
                 rest = self._PAGE_SPAN_RE.sub("", line).strip()
-                yield {"kind": "page", "page_no": page_no}
+                yield {"kind": "page", "page_no": page_no, "line_start": i + 1, "line_end": i + 1}
                 if rest:
-                    yield {"kind": "text", "text": rest}
+                    yield {"kind": "text", "text": rest, "line_start": i + 1, "line_end": i + 1}
                 i += 1
                 continue
 
@@ -353,7 +375,7 @@ class MarkdownTablePreservingChunker:
             if m_head:
                 level = len(m_head.group(1))
                 title = m_head.group(2).strip()
-                yield {"kind": "heading", "level": level, "title": title}
+                yield {"kind": "heading", "level": level, "title": title, "line_start": i + 1, "line_end": i + 1}
                 i += 1
                 continue
 
@@ -364,7 +386,7 @@ class MarkdownTablePreservingChunker:
                 while i < len(lines) and lines[i].strip() and ("|" in lines[i]):
                     i += 1
                 table_text = "\n".join(lines[start:i]).strip()
-                yield {"kind": "table", "text": table_text}
+                yield {"kind": "table", "text": table_text, "line_start": start + 1, "line_end": i}
                 continue
 
             # Blank
@@ -388,11 +410,12 @@ class MarkdownTablePreservingChunker:
                 i += 1
             text = "\n".join(lines[start:i]).strip()
             if text:
-                yield {"kind": "text", "text": text}
+                yield {"kind": "text", "text": text, "line_start": start + 1, "line_end": i}
 
     def _split_table_if_needed(self, table_text: str) -> list[str]:
         if not self.split_tables:
             return [table_text]
+
         lines = table_text.splitlines()
         if len(lines) <= 2:
             return [table_text]
@@ -433,18 +456,27 @@ class MarkdownTablePreservingChunker:
         chunks: list[DocChunk] = []
         buf_parts: list[str] = []
         buf_tokens = 0
+        buf_line_start: int | None = None
+        buf_line_end: int | None = None
         carry = ""
 
         def flush_buffer():
-            nonlocal buf_parts, buf_tokens, carry
+            nonlocal buf_parts, buf_tokens, buf_line_start, buf_line_end, carry
             if not buf_parts:
                 return
             text = "\n\n".join(p.strip() for p in buf_parts if p.strip()).strip()
             if not text:
                 buf_parts = []
                 buf_tokens = 0
+                buf_line_start = None
+                buf_line_end = None
                 carry = ""
                 return
+            metadata: dict[str, Any] = {"source_format": "markdown", "block_type": "text"}
+            if buf_line_start is not None and buf_line_start > 0:
+                metadata["line_start"] = buf_line_start
+            if buf_line_end is not None and buf_line_end > 0:
+                metadata["line_end"] = buf_line_end
             chunks.append(
                 DocChunk(
                     id=f"{doc_id}_{len(chunks)}",
@@ -453,15 +485,19 @@ class MarkdownTablePreservingChunker:
                     page_no=current_page,
                     headings=list(headings_stack),
                     source=str(md_path),
-                    metadata={"source_format": "markdown", "block_type": "text"},
+                    metadata=metadata,
                 )
             )
             carry = self._tail_overlap(text)
             buf_parts = []
             buf_tokens = 0
+            buf_line_start = None
+            buf_line_end = None
 
         for block in self._iter_blocks(markdown):
             kind = block["kind"]
+            block_line_start = int(block["line_start"]) if "line_start" in block else None
+            block_line_end = int(block["line_end"]) if "line_end" in block else None
 
             if kind == "page":
                 current_page = int(block["page_no"])
@@ -487,6 +523,11 @@ class MarkdownTablePreservingChunker:
                 flush_buffer()
                 table_text = str(block["text"]).strip()
                 for table_part in self._split_table_if_needed(table_text):
+                    metadata: dict[str, Any] = {"source_format": "markdown", "block_type": "table"}
+                    if block_line_start is not None and block_line_start > 0:
+                        metadata["line_start"] = block_line_start
+                    if block_line_end is not None and block_line_end > 0:
+                        metadata["line_end"] = block_line_end
                     chunks.append(
                         DocChunk(
                             id=f"{doc_id}_{len(chunks)}",
@@ -495,7 +536,7 @@ class MarkdownTablePreservingChunker:
                             page_no=current_page,
                             headings=list(headings_stack),
                             source=str(md_path),
-                            metadata={"source_format": "markdown", "block_type": "table"},
+                            metadata=metadata,
                         )
                     )
                 carry = ""  # don't overlap tables into subsequent chunks
@@ -522,6 +563,10 @@ class MarkdownTablePreservingChunker:
                             carry = ""
                     buf_parts.append(text_part)
                     buf_tokens += text_tokens
+                    if block_line_start is not None and (buf_line_start is None or block_line_start < buf_line_start):
+                        buf_line_start = block_line_start
+                    if block_line_end is not None and (buf_line_end is None or block_line_end > buf_line_end):
+                        buf_line_end = block_line_end
                 continue
 
         flush_buffer()
