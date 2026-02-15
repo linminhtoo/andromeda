@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from finrag.dataclasses import DocChunk
-from finrag.db import ChunkRecord, DocumentRecord, HybridSearchRow, PostgresDB, RetrievalFilters
+from finrag.db import ChunkRecord, DocumentRecord, HybridSearchRow, IngestedCompanyRow, PostgresDB, RetrievalFilters
 from finrag.retriever import PostgresHybridRetriever
 from tests.fakes import RecordingLLM
 
@@ -18,6 +18,7 @@ class FakeDB:
     documents: list[DocumentRecord]
     chunks: list[ChunkRecord]
     query_rows: list[HybridSearchRow]
+    ingested_companies: list[IngestedCompanyRow] = field(default_factory=list)
     last_hybrid_args: dict[str, Any] | None = None
 
     def upsert_documents(self, documents: list[DocumentRecord]) -> None:
@@ -33,6 +34,9 @@ class FakeDB:
     def hybrid_search(self, **kwargs) -> list[HybridSearchRow]:
         self.last_hybrid_args = kwargs
         return list(self.query_rows)
+
+    def list_ingested_companies(self) -> list[IngestedCompanyRow]:
+        return list(self.ingested_companies)
 
 
 def test_index_stores_retrieval_text_and_context_separately() -> None:
@@ -138,3 +142,26 @@ def test_retriever_accepts_sparse_search_method_override() -> None:
         llm_client=llm, dsn="postgresql://user:pass@localhost/db", sparse_search_method="fts", auto_init_schema=False
     )
     assert retriever.db.sparse_search_method == "fts"
+
+
+def test_retriever_lists_ingested_companies() -> None:
+    llm = RecordingLLM()
+    retriever = PostgresHybridRetriever(
+        llm_client=llm, dsn="postgresql://user:pass@localhost/db", auto_init_schema=False
+    )
+    fake_db = FakeDB(
+        documents=[],
+        chunks=[],
+        query_rows=[],
+        ingested_companies=[
+            IngestedCompanyRow(ticker="AAPL", company="Apple Inc."),
+            IngestedCompanyRow(ticker="NVDA", company=None),
+        ],
+    )
+    retriever.db = fake_db
+
+    rows = retriever.list_ingested_companies()
+    assert rows[0].ticker == "AAPL"
+    assert rows[0].company == "Apple Inc."
+    assert rows[1].ticker == "NVDA"
+    assert rows[1].company is None
