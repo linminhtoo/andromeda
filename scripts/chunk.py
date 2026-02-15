@@ -31,15 +31,15 @@ from finrag.chunk_postprocess import (
 )
 from finrag.chunking import DoclingHybridChunker, MarkdownTablePreservingChunker
 from finrag.dataclasses import DocChunk
-from finrag.ingest_profile import resolve_ingest_profile_name, update_ingest_profile_step
+from finrag.ingest_profile import ingest_profile_layout, resolve_ingest_profile_name, update_ingest_profile_step
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 @dataclass
 class Args:
-    markdown_dir: str
-    output_dir: str
+    markdown_dir: str | None
+    output_dir: str | None
     ingest_profile: str | None
     metadata_dir: str | None
     pattern: str
@@ -68,13 +68,19 @@ def parse_args() -> Args:
     parser = argparse.ArgumentParser(description="Chunk a directory of Markdown files.")
     parser.add_argument(
         "--markdown-dir",
-        required=True,
-        help="Directory containing Markdown files to chunk (e.g. data/sec_filings/processed_markdown).",
+        default=None,
+        help=(
+            "Directory containing Markdown files to chunk "
+            "(default: profile-scoped `.../sec_filings_md_secparser/processed_markdown`)."
+        ),
     )
     parser.add_argument(
         "--output-dir",
-        default="outputs/chunks_docling",
-        help="Directory to write chunk exports (creates `chunks/`, `doc_index.jsonl`, `run_info.json`).",
+        default=None,
+        help=(
+            "Directory to write chunk exports (creates `chunks/`, `doc_index.jsonl`, `run_info.json`). "
+            "Defaults to profile-scoped `.../sec_filings_md_secparser/chunked_<max>_<overlap>`."
+        ),
     )
     parser.add_argument(
         "--ingest-profile",
@@ -337,8 +343,19 @@ def main() -> int:
     args = parse_args()
     project_root = Path(__file__).resolve().parents[1]
     profile_name = resolve_ingest_profile_name(args.ingest_profile)
-    markdown_root = Path(args.markdown_dir).expanduser().resolve()
-    output_root = Path(args.output_dir).expanduser().resolve()
+    profile_layout = ingest_profile_layout(project_root=project_root, profile_name=profile_name)
+    markdown_root = (
+        Path(args.markdown_dir).expanduser().resolve()
+        if args.markdown_dir is not None
+        else profile_layout.sec_filings_md_processed_dir
+    )
+    output_root = (
+        Path(args.output_dir).expanduser().resolve()
+        if args.output_dir is not None
+        else profile_layout.chunk_output_dir(max_tokens=args.max_tokens, overlap_tokens=args.overlap_tokens)
+    )
+    args.markdown_dir = str(markdown_root)
+    args.output_dir = str(output_root)
     output_chunks_root = output_root / "chunks"
     output_chunks_root.mkdir(parents=True, exist_ok=True)
     metadata_root = _resolve_metadata_root(markdown_root, args.metadata_dir)

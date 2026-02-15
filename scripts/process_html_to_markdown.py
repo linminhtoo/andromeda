@@ -28,7 +28,7 @@ from tqdm import tqdm
 
 import sec_parser as sp
 
-from finrag.ingest_profile import resolve_ingest_profile_name, update_ingest_profile_step
+from finrag.ingest_profile import ingest_profile_layout, resolve_ingest_profile_name, update_ingest_profile_step
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -40,7 +40,7 @@ _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?
 @dataclass
 class Args:
     html_dir: str
-    output_dir: str
+    output_dir: str | None
     ingest_profile: str | None
     meta_dir: str | None
     pattern: str
@@ -90,8 +90,11 @@ def parse_args() -> Args:
     parser.add_argument("--html-dir", required=True, help="Directory containing SEC HTML files.")
     parser.add_argument(
         "--output-dir",
-        default="outputs/sec_markdown",
-        help="Output root directory (writes `processed_markdown/` and `debug/`).",
+        default=None,
+        help=(
+            "Output root directory (writes `processed_markdown/` and `debug/`). "
+            "Defaults to profile-scoped `data/ingest_profiles/<profile>/sec_filings_md_secparser`."
+        ),
     )
     parser.add_argument(
         "--ingest-profile",
@@ -545,16 +548,22 @@ def _process_one_file(
 
 def main() -> int:
     args = parse_args()
-    profile_name = resolve_ingest_profile_name(args.ingest_profile)
-
     project_root = Path(__file__).resolve().parents[1]
+    profile_name = resolve_ingest_profile_name(args.ingest_profile)
+    profile_layout = ingest_profile_layout(project_root=project_root, profile_name=profile_name)
+
     log_path = _setup_logging(project_root)
 
     html_root = Path(args.html_dir).expanduser().resolve()
     if not html_root.exists() or not html_root.is_dir():
         raise RuntimeError(f"--html-dir must be an existing directory: {html_root}")
 
-    output_root = Path(args.output_dir).expanduser().resolve()
+    output_root = (
+        Path(args.output_dir).expanduser().resolve()
+        if args.output_dir is not None
+        else profile_layout.sec_filings_md_root
+    )
+    args.output_dir = str(output_root)
     markdown_root = output_root / "processed_markdown"
     debug_root = output_root / "debug"
     markdown_root.mkdir(parents=True, exist_ok=True)

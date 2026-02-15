@@ -74,6 +74,14 @@ fi
 
 ingest_profile_name="${FINRAG_INGEST_PROFILE:-${POSTGRES_SCHEMA:-default}}"
 ingest_profile_args+=(--ingest-profile "$ingest_profile_name")
+# this is inentional, it allows --postgres-schema a fallback value when user did not set $POSTGRES_SCHEMA.
+# if the user did set POSTGRES_SCHEMA, it will be loaded during build_index.py from the env.
+if [[ -z "${POSTGRES_SCHEMA:-}" ]]; then
+  schema_args+=(--postgres-schema "$ingest_profile_name")
+fi
+
+sec_filings_md_root="${SEC_FILINGS_MD_ROOT:-./data/ingest_profiles/${ingest_profile_name}/sec_filings_md_secparser}"
+chunk_output_dir="${CHUNK_OUTPUT_DIR:-${sec_filings_md_root}/chunked_${CHUNK_MAX_TOKENS:-1024}_${CHUNK_OVERLAP_TOKENS:-128}}"
 
 context_strategy="${CONTEXT_STRATEGY:-neighbors}"
 context_window="${CONTEXT_WINDOW:-1}"
@@ -95,8 +103,10 @@ fi
 
 # REMEMBER TO CHANGE --ingest-output-dir
 # NOTE: set --skip-existing-chunks if desired
+
+# without LLM contextualization, only 1-2 sec per document (vs 20-30 sec)
 python3 -m scripts.build_index \
-  --ingest-output-dir ./data/sec_filings_md_secparser/chunked_1024_128 \
+  --ingest-output-dir "$chunk_output_dir" \
   --postgres-dsn "${POSTGRES_DSN:-${DATABASE_URL:-}}" \
   --llm-provider openai \
   --dense-model BAAI/bge-m3 \
