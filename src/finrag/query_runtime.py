@@ -23,6 +23,7 @@ from finrag.qa import build_draft_prompt, build_refine_prompt
 from finrag.retriever import CrossEncoderReranker, PostgresHybridRetriever
 from finrag.streaming import TextDeltaBatcher, iter_chat_deltas, ndjson_bytes
 
+
 class QueryStatus(str, Enum):
     ANSWERED = "answered"
     CLARIFICATION_REQUIRED = "clarification_required"
@@ -175,12 +176,7 @@ class RAGService:
     """
 
     def __init__(
-        self,
-        *,
-        llm: LLMClient,
-        retriever: PostgresHybridRetriever,
-        reranker: CrossEncoderReranker,
-        context_key: str,
+        self, *, llm: LLMClient, retriever: PostgresHybridRetriever, reranker: CrossEncoderReranker, context_key: str
     ):
         self.llm = llm
         self.retriever = retriever
@@ -332,15 +328,7 @@ class RAGService:
     @staticmethod
     def _question_mentions_comparison(question: str) -> bool:
         lowered = question.lower()
-        tokens = (
-            " compare ",
-            " versus ",
-            " vs ",
-            " relative to ",
-            " better investment ",
-            " which is better ",
-            " or ",
-        )
+        tokens = (" compare ", " versus ", " vs ", " relative to ", " better investment ", " which is better ", " or ")
         padded = f" {lowered} "
         return any(token in padded for token in tokens)
 
@@ -506,17 +494,21 @@ class RAGService:
         )
         if decision is None:
             # this happens when the planner LLM fails to produce valid output
-            # we fall back to a simple deterministic planner that infers tickers 
+            # we fall back to a simple deterministic planner that infers tickers
             # from the question and ignores date filters, but still allows refusal if no tickers can be inferred
             inferred = self._infer_tickers_from_question(question, companies)
             action = QueryStatus.ANSWERED if explicit_tickers or inferred else QueryStatus.CLARIFICATION_REQUIRED
             decision = PlannerDecision(
-                action=(PlannerAction.ANSWER if action == QueryStatus.ANSWERED else PlannerAction.CLARIFICATION_REQUIRED),
+                action=(
+                    PlannerAction.ANSWER if action == QueryStatus.ANSWERED else PlannerAction.CLARIFICATION_REQUIRED
+                ),
                 tickers=(explicit_tickers if explicit_tickers else inferred),
                 clarifying_question=(
                     self.default_clarifying_question() if action == QueryStatus.CLARIFICATION_REQUIRED else None
                 ),
-                use_per_ticker_retrieval=(True if len(explicit_tickers if explicit_tickers else inferred) > 1 else None),
+                use_per_ticker_retrieval=(
+                    True if len(explicit_tickers if explicit_tickers else inferred) > 1 else None
+                ),
             )
             trace.append(
                 self._tool_event(
@@ -567,11 +559,7 @@ class RAGService:
                 + ("Indexed tickers include: " + available_sample + "." if available_sample else "")
             )
             trace.append(
-                self._tool_event(
-                    "validate_ticker_coverage",
-                    args={"missing_tickers": missing_tickers},
-                    result=reason,
-                )
+                self._tool_event("validate_ticker_coverage", args={"missing_tickers": missing_tickers}, result=reason)
             )
             return PlannedQuery(
                 status=QueryStatus.REFUSED,
@@ -590,9 +578,7 @@ class RAGService:
             )
             trace.append(
                 self._tool_event(
-                    "request_clarification",
-                    args={"detected_tickers": planned_tickers},
-                    result=clarifying_question,
+                    "request_clarification", args={"detected_tickers": planned_tickers}, result=clarifying_question
                 )
             )
             return PlannedQuery(
@@ -607,9 +593,7 @@ class RAGService:
         resolved_filing_date_from = filing_date_from if filing_date_from is not None else decision.filing_date_from
         resolved_filing_date_to = filing_date_to if filing_date_to is not None else decision.filing_date_to
         filters = self.build_retrieval_filters(
-            tickers=planned_tickers,
-            filing_date_from=resolved_filing_date_from,
-            filing_date_to=resolved_filing_date_to,
+            tickers=planned_tickers, filing_date_from=resolved_filing_date_from, filing_date_to=resolved_filing_date_to
         )
         use_per_ticker = (
             bool(decision.use_per_ticker_retrieval)
@@ -658,12 +642,7 @@ class RAGService:
         return out
 
     def _enforce_ticker_coverage(
-        self,
-        *,
-        primary: list[ScoredChunk],
-        fallback: list[ScoredChunk],
-        tickers: list[str],
-        limit: int,
+        self, *, primary: list[ScoredChunk], fallback: list[ScoredChunk], tickers: list[str], limit: int
     ) -> list[ScoredChunk]:
         selected: list[ScoredChunk] = []
         selected_ids: set[str] = set()
@@ -843,10 +822,7 @@ class RAGService:
         plan_step_ms = (time.perf_counter() - plan_t0) * 1000.0
 
         execution = QueryPipelineExecution(
-            question=question,
-            planned=planned,
-            tool_trace=list(planned.tool_trace),
-            plan_step_ms=plan_step_ms,
+            question=question, planned=planned, tool_trace=list(planned.tool_trace), plan_step_ms=plan_step_ms
         )
         if planned.status != QueryStatus.ANSWERED:
             return execution

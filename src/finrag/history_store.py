@@ -34,13 +34,7 @@ class QueryHistoryStore:
             return Path(os.path.expanduser(raw.strip())).resolve()
         return (self.project_root / "data" / "qa_history.jsonl").resolve()
 
-    def append(
-        self,
-        *,
-        req: QueryRequest,
-        res: QueryResponse,
-        timing_ms: dict[str, float] | None = None,
-    ) -> None:
+    def append(self, *, req: QueryRequest, res: QueryResponse, timing_ms: dict[str, float] | None = None) -> None:
         if self._env_bool("DISABLE_HISTORY", default=False):
             return
 

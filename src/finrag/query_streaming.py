@@ -110,7 +110,9 @@ async def run_query_stream(
     - store question/answer pairs into postgresDB for analysis
     """
 
-    effective_question, conversation_id, pre_tool_trace = resolve_conversation_question(req.conversation_id, req.question)
+    effective_question, conversation_id, pre_tool_trace = resolve_conversation_question(
+        req.conversation_id, req.question
+    )
     base_req = QueryRequest(**(req.model_dump(exclude={"request_id"}) | {"conversation_id": conversation_id}))
     settings = resolve_generation(base_req)
     req_resolved = request_with_resolved_settings(base_req, settings)
@@ -153,10 +155,7 @@ async def run_query_stream(
 
         if pipeline.planned.status != QueryStatus.ANSWERED:
             response = rag_service.response_from_pipeline(
-                pipeline=pipeline,
-                settings=settings,
-                conversation_id=conversation_id,
-                include_retrieved_chunks=False,
+                pipeline=pipeline, settings=settings, conversation_id=conversation_id, include_retrieved_chunks=False
             )
             update_conversation_after_query(conversation_id, effective_question, response)
             total_ms = (time.time() * 1000) - started_ms
@@ -265,12 +264,7 @@ async def run_query_stream(
     except Exception as exc:  # noqa: BLE001
         logger.exception("Streaming query failed: %r", exc)
         yield ndjson_bytes(
-            {
-                "type": "error",
-                "request_id": request_id,
-                "error": str(exc),
-                "elapsed_ms": _elapsed(started_ms),
-            }
+            {"type": "error", "request_id": request_id, "error": str(exc), "elapsed_ms": _elapsed(started_ms)}
         )
 
 
@@ -285,7 +279,6 @@ async def stream_answer_text(
     timing_ms: dict[str, float],
     answer: StreamAnswerAccumulator,
 ) -> AsyncIterator[bytes]:
-
     if settings.enable_refine:
         yield ndjson_bytes({"type": "status", "step": "draft", "message": "Generating draft…", "is_draft": True})
         draft_result = StreamStageResult()
@@ -317,7 +310,9 @@ async def stream_answer_text(
         if cancel_evt.is_set():
             return
 
-        yield ndjson_bytes({"type": "status", "step": "final", "message": "Generating final answer…", "is_draft": False})
+        yield ndjson_bytes(
+            {"type": "status", "step": "final", "message": "Generating final answer…", "is_draft": False}
+        )
         final_result = StreamStageResult()
         async for payload in stream_text_stage(
             llm=rag_service.llm,

@@ -257,7 +257,9 @@ def build_ticker_ingestion_config(*, project_root: Path) -> TickerIngestionRunti
         build_settings["dense_model"] if "dense_model" in build_settings else None,
         llm_embed_model() or "text-embedding-3-large",
     )
-    dense_base_url = coerce_optional_text(build_settings["dense_base_url"] if "dense_base_url" in build_settings else None)
+    dense_base_url = coerce_optional_text(
+        build_settings["dense_base_url"] if "dense_base_url" in build_settings else None
+    )
     if dense_base_url is None:
         dense_base_url = (os.getenv("OPENAI_EMBED_BASE_URL") or "").strip() or None
 
@@ -277,9 +279,13 @@ def build_ticker_ingestion_config(*, project_root: Path) -> TickerIngestionRunti
         build_settings["contextual_base_url"] if "contextual_base_url" in build_settings else None
     )
     if context_base_url is None:
-        context_base_url = (os.getenv("OPENAI_CONTEXT_BASE_URL") or os.getenv("OPENAI_CHAT_BASE_URL") or "").strip() or None
+        context_base_url = (
+            os.getenv("OPENAI_CONTEXT_BASE_URL") or os.getenv("OPENAI_CHAT_BASE_URL") or ""
+        ).strip() or None
 
-    postgres_schema = coerce_optional_text(build_settings["postgres_schema"] if "postgres_schema" in build_settings else None)
+    postgres_schema = coerce_optional_text(
+        build_settings["postgres_schema"] if "postgres_schema" in build_settings else None
+    )
     if postgres_schema is None:
         postgres_schema = (os.getenv("POSTGRES_SCHEMA") or "").strip() or None
     if postgres_schema is None:

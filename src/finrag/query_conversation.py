@@ -56,11 +56,7 @@ class ConversationStore:
         return effective_question, state.conversation_id, traces
 
     def update_after_response(
-        self,
-        *,
-        conversation_id: str | None,
-        effective_question: str,
-        response: QueryResponse,
+        self, *, conversation_id: str | None, effective_question: str, response: QueryResponse
     ) -> None:
         cid = (conversation_id or "").strip()
         if not cid:

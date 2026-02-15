@@ -40,9 +40,7 @@ def resolve_local_source(*, path: str, project_root: Path) -> Path:
     if not any(local_path == root or local_path.is_relative_to(root) for root in allowlisted_roots):
         raise HTTPException(
             status_code=403,
-            detail=(
-                "Path is outside SOURCE_ROOTS; set SOURCE_ROOTS to a colon-separated allowlist of directories."
-            ),
+            detail=("Path is outside SOURCE_ROOTS; set SOURCE_ROOTS to a colon-separated allowlist of directories."),
         )
 
     return local_path
