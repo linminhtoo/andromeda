@@ -17,9 +17,10 @@ there is already precedence (existing code) in the specific file in the codebase
 * Adhere to SOLID principles, especially the Single Responsibility Principle.
 * Always import directly from the source module. Never re-export.
 * After each change, you must run the linter. See instructions under "Lint Instructions".
-* Unless absolutely necessary, avoid the use of ugly dict.get(query_key, None) or
-getattr(self, query_attr, None). Instead, prefer explicit code that guarantees
-key/attribute existence, such as by typing dictionaries and class attributes properly.
+* Unless absolutely necessary, avoid the use of ugly `dict.get(query_key, None)` or
+`getattr(self, query_attr, None)`. Instead, prefer explicit code that guarantees
+key/attribute existence, such as by using `dataclass`, `TypedDict` and class attributes which are properly typed.
+* Favor `Enum` over `Literal`.
 
 
 ## Environment Instructions
@@ -51,6 +52,7 @@ key/attribute existence, such as by typing dictionaries and class attributes pro
 * Before starting a big task, you should plan and document your plan as a markdown file in the `agent_logs/` folder. Give your plan file a descriptive and time-stamped name, such as `refactor_10Feb2026.md`
 * Make sure to reference `agent_logs/LOGBOOK.md` to learn from previous lessons and avoid repeating past mistakes.
 * Implement the **entire phase**, not partial work
+* During refactors/migrations,  when removing existing comments especially TODO, which is not relevant to the current task, you must ensure those comments continue to exist in the new/migrated function/code.
 * Update `CHANGELOG.md` when behavior changes
 * Agents must not commit or push. Only the coordinator may commit/push after review passes.
 * Never modify repository files outside this `lrdml` git repository.
