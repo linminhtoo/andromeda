@@ -75,16 +75,22 @@ def test_build_draft_and_refine_prompts_include_question_and_context() -> None:
         )
     ]
 
-    draft = build_draft_prompt("Q?", reranked, draft_max_tokens=100, answer_style="concise", system_extra="EXTRA")
+    draft = build_draft_prompt(
+        "Q?", reranked, draft_max_tokens=100, answer_style="concise", system_extra="EXTRA", tool_context="TOOL SNAPSHOT"
+    )
     assert [m["role"] for m in draft] == ["system", "user"]
     assert "EXTRA" in draft[0]["content"]
     assert "Question:\nQ?" in draft[1]["content"]
+    assert "Tool Context:\nTOOL SNAPSHOT" in draft[1]["content"]
     assert "Context:\n" in draft[1]["content"]
 
-    refine = build_refine_prompt("Q?", "DRAFT", reranked, final_max_tokens=100, answer_style="normal")
+    refine = build_refine_prompt(
+        "Q?", "DRAFT", reranked, final_max_tokens=100, answer_style="normal", tool_context="TOOL SNAPSHOT"
+    )
     assert [m["role"] for m in refine] == ["system", "user"]
     assert "User question:\nQ?" in refine[1]["content"]
     assert "Draft answer:\nDRAFT" in refine[1]["content"]
+    assert "Tool Context:\nTOOL SNAPSHOT" in refine[1]["content"]
 
 
 def test_answer_question_two_stage_calls_llm_twice() -> None:
