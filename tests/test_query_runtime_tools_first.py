@@ -28,13 +28,7 @@ class FakeRetriever:
         return RetrievalFilters(tickers=tuple(tickers))
 
     def retrieve_hybrid(
-        self,
-        _question: str,
-        *,
-        top_k_semantic: int,
-        top_k_bm25: int,
-        top_k_final: int,
-        filters: RetrievalFilters,
+        self, _question: str, *, top_k_semantic: int, top_k_bm25: int, top_k_final: int, filters: RetrievalFilters
     ) -> list[ScoredChunk]:
         _ = top_k_semantic, top_k_bm25, top_k_final, filters
         self.retrieve_calls += 1
@@ -60,12 +54,7 @@ class FakeRetriever:
 
 class FakeReranker:
     def rerank(
-        self,
-        _question: str,
-        hybrid: list[ScoredChunk],
-        *,
-        top_k: int,
-        candidate_text_provider,
+        self, _question: str, hybrid: list[ScoredChunk], *, top_k: int, candidate_text_provider
     ) -> list[ScoredChunk]:
         _ = candidate_text_provider
         return hybrid[:top_k]
@@ -118,11 +107,7 @@ def test_tools_only_plan_skips_rag_and_still_answers(monkeypatch) -> None:
         service,
         "_planner_decision_from_llm",
         lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER,
-            tickers=["AAPL"],
-            use_rag=False,
-            use_yfinance=True,
-            use_edgar_financials=True,
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_yfinance=True, use_edgar_financials=True
         ),
     )
 
@@ -152,16 +137,14 @@ def test_tools_plus_rag_runs_retrieval(monkeypatch) -> None:
         service,
         "_planner_decision_from_llm",
         lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER,
-            tickers=["AAPL"],
-            use_rag=True,
-            use_yfinance=True,
-            use_edgar_financials=False,
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=True, use_edgar_financials=False
         ),
     )
 
     settings = resolve_generation_settings(mode="quick")
-    pipeline = service.execute_query_pipeline(question="Compare AAPL filing context and market moves", settings=settings)
+    pipeline = service.execute_query_pipeline(
+        question="Compare AAPL filing context and market moves", settings=settings
+    )
 
     assert pipeline.planned.status == QueryStatus.ANSWERED
     assert pipeline.planned.use_rag is True

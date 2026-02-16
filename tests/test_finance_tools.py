@@ -127,7 +127,9 @@ def test_tool_context_text_is_bounded() -> None:
         tools.fetch_yfinance_info(ticker="AAPL", ticker_obj=SimpleNamespace(info={"longName": "Apple"})),
         tools.fetch_yfinance_news(ticker="AAPL", ticker_obj=SimpleNamespace(get_news=lambda: [{"title": "A"}])),
     ]
-    results.append(FinanceToolResult(tool="manual", ticker="AAPL", status=FinanceToolStatus.OK, summary="ok", payload=payload))
+    results.append(
+        FinanceToolResult(tool="manual", ticker="AAPL", status=FinanceToolStatus.OK, summary="ok", payload=payload)
+    )
 
     text = tools.tool_context_text(results, max_chars=2000)
     assert "[tool=yfinance_get_ticker_info" in text
