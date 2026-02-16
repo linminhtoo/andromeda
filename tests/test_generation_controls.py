@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from finrag.generation_controls import default_mode, get_preset, list_generation_presets, resolve_generation_settings
+from finrag.generation_controls import (
+    AnsweringEffort,
+    default_mode,
+    get_preset,
+    list_generation_presets,
+    resolve_generation_settings,
+)
 
 
 def test_list_generation_presets_contains_expected_modes() -> None:
@@ -41,3 +47,9 @@ def test_resolve_generation_settings_allows_boolean_overrides() -> None:
     s = resolve_generation_settings(mode="quick", enable_rerank=True, enable_refine=True)
     assert s.enable_rerank is True
     assert s.enable_refine is True
+
+
+def test_resolve_generation_settings_parses_effort_and_brief_budget() -> None:
+    s = resolve_generation_settings(mode="normal", brief_max_tokens=7777, answering_effort="high")
+    assert s.brief_max_tokens == 7777
+    assert s.answering_effort == AnsweringEffort.HIGH

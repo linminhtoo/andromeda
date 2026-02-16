@@ -21,6 +21,8 @@ export const els = {
   topKRerank: byId('topKRerank'),
   draftMaxTokens: byId('draftMaxTokens'),
   finalMaxTokens: byId('finalMaxTokens'),
+  briefMaxTokens: byId('briefMaxTokens'),
+  answeringEffort: byId('answeringEffort'),
   queryBtn: byId('queryBtn'),
   stopBtn: byId('stopBtn'),
   queryStatus: byId('queryStatus'),
@@ -42,6 +44,10 @@ export const els = {
   toolResultsCountPill: byId('toolResultsCountPill'),
   toolResultsStatus: byId('toolResultsStatus'),
   toolResults: byId('toolResults'),
+  briefsDetails: byId('briefsDetails'),
+  briefsCountPill: byId('briefsCountPill'),
+  briefsStatus: byId('briefsStatus'),
+  briefsContainer: byId('briefsContainer'),
   finalAnswer: byId('finalAnswer'),
   retrievedDetails: byId('retrievedDetails'),
   retrievedCountPill: byId('retrievedCountPill'),
@@ -85,4 +91,4 @@ export const LS_UI = 'finrag_ui_v1';
 export const DEFAULT_SOURCES_PANE_WIDTH_PX = 460;
 export const DEFAULT_ANSWER_PANE_PCT = 85;
 
-export const STEP_ORDER = ['retrieve', 'rerank', 'draft', 'final'];
+export const STEP_ORDER = ['retrieve', 'rerank', 'draft', 'briefs', 'final'];

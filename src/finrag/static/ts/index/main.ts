@@ -267,6 +267,37 @@ function renderToolResults(results: any[]): void {
   els.toolResults.innerHTML = cards.join('');
 }
 
+/** Render streamed per-ticker briefs in dedicated cards. */
+function renderPerTickerBriefs(briefs: Record<string, string>): void {
+  const entries = Object.entries(briefs || {});
+  if (els.briefsCountPill) els.briefsCountPill.textContent = String(entries.length);
+  if (els.briefsStatus) {
+    els.briefsStatus.textContent = entries.length
+      ? `Showing ${entries.length} ticker brief${entries.length === 1 ? '' : 's'}.`
+      : 'No per-ticker briefs yet.';
+  }
+  if (!els.briefsContainer) return;
+  if (!entries.length) {
+    els.briefsContainer.innerHTML = '';
+    return;
+  }
+  const cards = entries
+    .map(([ticker, text]) => {
+      const body = String(text || '').trim();
+      return `
+        <article class="toolCard" style="margin-bottom: 0.6rem;">
+          <div class="toolCardHead">
+            <span class="toolCardTitle">${safeText(ticker)} brief</span>
+            <span class="pill">${safeText(String(body.length))} chars</span>
+          </div>
+          <div class="answer markdown">${renderAnswerMarkdown(body, { citations: true })}</div>
+        </article>
+      `;
+    })
+    .join('');
+  els.briefsContainer.innerHTML = cards;
+}
+
 /** Read current generation controls into API request settings payload. */
 function currentSettings(): any {
   const toInt = (v: unknown, fallback: number): number => {
@@ -283,6 +314,8 @@ function currentSettings(): any {
     top_k_rerank: toInt(els.topKRerank.value, 8),
     draft_max_tokens: toInt(els.draftMaxTokens.value, 65536),
     final_max_tokens: toInt(els.finalMaxTokens.value, 32768),
+    brief_max_tokens: toInt(els.briefMaxTokens.value, 8000),
+    answering_effort: String(els.answeringEffort?.value || 'medium').trim().toLowerCase() || 'medium',
   };
 }
 
@@ -301,6 +334,13 @@ function applySettings(settings: any): void {
   if (settings.top_k_rerank) els.topKRerank.value = settings.top_k_rerank;
   if (settings.draft_max_tokens) els.draftMaxTokens.value = settings.draft_max_tokens;
   if (settings.final_max_tokens) els.finalMaxTokens.value = settings.final_max_tokens;
+  if (settings.brief_max_tokens) els.briefMaxTokens.value = settings.brief_max_tokens;
+  if (els.answeringEffort) {
+    const effort = String(settings.answering_effort || '').trim().toLowerCase();
+    if (effort === 'low' || effort === 'medium' || effort === 'high') {
+      els.answeringEffort.value = effort;
+    }
+  }
   if (els.enableRefine) {
     const hasExplicit = settings.enable_refine !== undefined && settings.enable_refine !== null;
     if (hasExplicit) els.enableRefine.checked = Boolean(settings.enable_refine);
@@ -802,9 +842,15 @@ async function doQuery(question: string): Promise<void> {
   lastRerankedChunks = [];
   lastRetrievedChunks = [];
   renderToolResults([]);
+  renderPerTickerBriefs({});
+  if (els.briefsDetails) {
+    els.briefsDetails.hidden = true;
+    els.briefsDetails.open = false;
+  }
 
   let draftText = '';
   let finalText = '';
+  const tickerBriefs: Record<string, string> = {};
   let sawDraftStage = false;
   let draftRenderTimer: number | null = null;
   let finalRenderTimer: number | null = null;
@@ -997,6 +1043,43 @@ async function doQuery(question: string): Promise<void> {
           continue;
         }
 
+        if (type === 'briefs_start') {
+          startStep('briefs');
+          if (els.briefsDetails) {
+            els.briefsDetails.hidden = false;
+            els.briefsDetails.open = true;
+          }
+          renderPerTickerBriefs(tickerBriefs);
+          continue;
+        }
+
+        if (type === 'ticker_brief_delta') {
+          const ticker = String(evt?.ticker || '').trim().toUpperCase();
+          const delta = String(evt?.delta || '');
+          if (ticker && delta) {
+            tickerBriefs[ticker] = String(tickerBriefs[ticker] || '') + delta;
+            renderPerTickerBriefs(tickerBriefs);
+          }
+          continue;
+        }
+
+        if (type === 'ticker_brief_done') {
+          const ticker = String(evt?.ticker || '').trim().toUpperCase();
+          if (ticker && !tickerBriefs[ticker]) {
+            tickerBriefs[ticker] = '';
+          }
+          renderPerTickerBriefs(tickerBriefs);
+          continue;
+        }
+
+        if (type === 'briefs_done') {
+          const ms = finishStep('briefs', evt?.step_ms ?? evt?.brief_ms);
+          const dur = formatDuration(ms, { empty: '' });
+          const count = String(evt?.count ?? Object.keys(tickerBriefs).length);
+          progressUi.append(dur ? `briefs: ${dur} · ${count} briefs` : `Generated ${count} briefs`);
+          continue;
+        }
+
         if (type === 'final_delta') {
           const delta = String(evt?.delta || '');
           if (delta) {
@@ -1047,6 +1130,7 @@ async function doQuery(question: string): Promise<void> {
           draftText = String(data.draft_answer ?? draftText);
           finalText = String(data.final_answer ?? finalText);
           renderToolResults(data.tool_results || []);
+          renderPerTickerBriefs(tickerBriefs);
           citationManager.updateFromChunks(data.top_chunks || []);
 
           if (showDraftResult) {
@@ -1282,6 +1366,8 @@ els.genMode?.addEventListener('change', () => {
     topKRerank: els.topKRerank,
     draftMaxTokens: els.draftMaxTokens,
     finalMaxTokens: els.finalMaxTokens,
+    briefMaxTokens: els.briefMaxTokens,
+    answeringEffort: els.answeringEffort,
   });
   generationModes.updateModeHelp(mode, els.genModeHelp);
   if (els.enableRefine) els.enableRefine.checked = generationModes.modeUsesDraft(mode);
@@ -1297,6 +1383,18 @@ els.enableRefine?.addEventListener('change', () => {
   if (!showDraft) els.draftAnswer.innerHTML = '';
   if (!activeStream) els.draftStatePill.textContent = showDraft ? 'waiting' : 'disabled';
   writeSettings(currentSettings());
+});
+[
+  els.topKRetrieve,
+  els.topKRerank,
+  els.draftMaxTokens,
+  els.finalMaxTokens,
+  els.briefMaxTokens,
+  els.answeringEffort,
+].forEach((node) => {
+  node?.addEventListener('change', () => {
+    writeSettings(currentSettings());
+  });
 });
 
 els.ingestedFilter?.addEventListener('input', () => {
@@ -1328,6 +1426,8 @@ els.ingestTicker?.addEventListener('keydown', (e: KeyboardEvent) => {
       topKRerank: els.topKRerank,
       draftMaxTokens: els.draftMaxTokens,
       finalMaxTokens: els.finalMaxTokens,
+      briefMaxTokens: els.briefMaxTokens,
+      answeringEffort: els.answeringEffort,
     },
     { overwriteAdvanced: true },
   );

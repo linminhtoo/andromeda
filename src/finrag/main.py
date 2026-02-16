@@ -80,6 +80,8 @@ def _resolve_generation(req: QueryRequest) -> GenerationSettings:
         top_k_rerank=req.top_k_rerank,
         draft_max_tokens=req.draft_max_tokens,
         final_max_tokens=req.final_max_tokens,
+        brief_max_tokens=req.brief_max_tokens,
+        answering_effort=req.answering_effort,
         enable_rerank=req.enable_rerank,
         enable_refine=req.enable_refine,
     )
@@ -97,6 +99,8 @@ def _request_with_resolved_settings(req: QueryRequest, settings: GenerationSetti
         top_k_rerank=settings.top_k_rerank,
         draft_max_tokens=settings.draft_max_tokens,
         final_max_tokens=settings.final_max_tokens,
+        brief_max_tokens=settings.brief_max_tokens,
+        answering_effort=settings.answering_effort,
         enable_rerank=settings.enable_rerank,
         enable_refine=settings.enable_refine,
     )

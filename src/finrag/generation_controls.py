@@ -2,9 +2,20 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal
 
 AnswerStyle = Literal["concise", "normal", "detailed"]
+
+
+class AnsweringEffort(str, Enum):
+    """
+    Controls how much synthesis effort to spend in multi-ticker final answering.
+    """
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
 
 
 @dataclass(frozen=True)
@@ -16,9 +27,11 @@ class GenerationPreset:
     top_k_rerank: int
     draft_max_tokens: int
     final_max_tokens: int
+    brief_max_tokens: int
     enable_rerank: bool
     enable_refine: bool
     answer_style: AnswerStyle
+    answering_effort: AnsweringEffort = AnsweringEffort.MEDIUM
     draft_temperature: float = 0.1
 
     def to_public_dict(self) -> dict[str, object]:
@@ -30,9 +43,11 @@ class GenerationPreset:
             "top_k_rerank": self.top_k_rerank,
             "draft_max_tokens": self.draft_max_tokens,
             "final_max_tokens": self.final_max_tokens,
+            "brief_max_tokens": self.brief_max_tokens,
             "enable_rerank": self.enable_rerank,
             "enable_refine": self.enable_refine,
             "answer_style": self.answer_style,
+            "answering_effort": self.answering_effort.value,
             "draft_temperature": self.draft_temperature,
         }
 
@@ -44,9 +59,11 @@ class GenerationSettings:
     top_k_rerank: int
     draft_max_tokens: int
     final_max_tokens: int
+    brief_max_tokens: int
     enable_rerank: bool
     enable_refine: bool
     answer_style: AnswerStyle
+    answering_effort: AnsweringEffort
     draft_temperature: float
 
 
@@ -59,9 +76,11 @@ _PRESETS: dict[str, GenerationPreset] = {
         top_k_rerank=10,
         draft_max_tokens=16_384,
         final_max_tokens=16_384,
+        brief_max_tokens=6_000,
         enable_rerank=False,
         enable_refine=False,
         answer_style="concise",
+        answering_effort=AnsweringEffort.LOW,
         draft_temperature=0.1,
     ),
     "normal": GenerationPreset(
@@ -72,9 +91,11 @@ _PRESETS: dict[str, GenerationPreset] = {
         top_k_rerank=25,
         draft_max_tokens=65_536,
         final_max_tokens=32_768,
+        brief_max_tokens=8_000,
         enable_rerank=True,
         enable_refine=False,
         answer_style="normal",
+        answering_effort=AnsweringEffort.MEDIUM,
         draft_temperature=0.1,
     ),
     "thinking": GenerationPreset(
@@ -85,9 +106,11 @@ _PRESETS: dict[str, GenerationPreset] = {
         top_k_rerank=35,
         draft_max_tokens=65_536,
         final_max_tokens=45_000,
+        brief_max_tokens=12_000,
         enable_rerank=True,
         enable_refine=False,
         answer_style="detailed",
+        answering_effort=AnsweringEffort.HIGH,
         draft_temperature=0.1,
     ),
 }
@@ -125,9 +148,11 @@ def resolve_generation_settings(
     top_k_rerank: int | None = None,
     draft_max_tokens: int | None = None,
     final_max_tokens: int | None = None,
+    brief_max_tokens: int | None = None,
     enable_rerank: bool | None = None,
     enable_refine: bool | None = None,
     answer_style: AnswerStyle | None = None,
+    answering_effort: AnsweringEffort | str | None = None,
     draft_temperature: float | None = None,
 ) -> GenerationSettings:
     preset = get_preset(mode)
@@ -138,11 +163,24 @@ def resolve_generation_settings(
 
     resolved_draft_max_tokens = _pos_int(draft_max_tokens, preset.draft_max_tokens)
     resolved_final_max_tokens = _pos_int(final_max_tokens, preset.final_max_tokens)
+    resolved_brief_max_tokens = _pos_int(brief_max_tokens, preset.brief_max_tokens)
 
     resolved_enable_rerank = preset.enable_rerank if enable_rerank is None else bool(enable_rerank)
     resolved_enable_refine = preset.enable_refine if enable_refine is None else bool(enable_refine)
 
     resolved_style: AnswerStyle = preset.answer_style if answer_style is None else answer_style
+    if answering_effort is None:
+        resolved_effort = preset.answering_effort
+    elif isinstance(answering_effort, AnsweringEffort):
+        resolved_effort = answering_effort
+    else:
+        lowered = str(answering_effort).strip().lower()
+        if lowered == AnsweringEffort.LOW.value:
+            resolved_effort = AnsweringEffort.LOW
+        elif lowered == AnsweringEffort.HIGH.value:
+            resolved_effort = AnsweringEffort.HIGH
+        else:
+            resolved_effort = AnsweringEffort.MEDIUM
     resolved_temp = preset.draft_temperature if draft_temperature is None else float(draft_temperature)
 
     return GenerationSettings(
@@ -151,8 +189,10 @@ def resolve_generation_settings(
         top_k_rerank=resolved_top_k_rerank,
         draft_max_tokens=resolved_draft_max_tokens,
         final_max_tokens=resolved_final_max_tokens,
+        brief_max_tokens=resolved_brief_max_tokens,
         enable_rerank=resolved_enable_rerank,
         enable_refine=resolved_enable_refine,
         answer_style=resolved_style,
+        answering_effort=resolved_effort,
         draft_temperature=resolved_temp,
     )

@@ -261,7 +261,7 @@
     }
     .progressPipeline {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 0.55rem;
       margin-bottom: 0.8rem;
     }
@@ -727,6 +727,18 @@
 	                        <label class="muted" for="finalMaxTokens">final_max_tokens</label>
 	                        <input id="finalMaxTokens" type="number" min="1" step="1" value="32768" />
 	                      </div>
+                        <div>
+                          <label class="muted" for="briefMaxTokens">brief_max_tokens</label>
+                          <input id="briefMaxTokens" type="number" min="1" step="1" value="8000" />
+                        </div>
+                        <div>
+                          <label class="muted" for="answeringEffort">answering_effort</label>
+                          <select id="answeringEffort">
+                            <option value="low">low</option>
+                            <option value="medium" selected>medium</option>
+                            <option value="high">high</option>
+                          </select>
+                        </div>
 	                    </div>
 	                  </div>
 	                </details>
@@ -797,6 +809,11 @@
                         <div class="progressStepState">waiting</div>
                         <div class="progressStepTime">—</div>
                       </div>
+                      <div class="progressStep" data-step="briefs" data-state="pending">
+                        <div class="progressStepName">Briefs</div>
+                        <div class="progressStepState">waiting</div>
+                        <div class="progressStepTime">—</div>
+                      </div>
                       <div class="progressStep" data-step="final" data-state="pending">
                         <div class="progressStepName">Final</div>
                         <div class="progressStepState">waiting</div>
@@ -843,6 +860,20 @@
                           <div class="help" id="toolResultsStatus">No tool results yet.</div>
                           <div class="toolResultsGrid" id="toolResults"></div>
                         </div>
+                      </div>
+                    </details>
+
+                    <details id="briefsDetails" hidden style="margin-bottom: 0.9rem;">
+                      <summary>
+                        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                          <strong>Per-ticker briefs</strong>
+                          <span class="pill" id="briefsCountPill">0</span>
+                        </div>
+                        <div class="muted" style="font-size: 0.86rem;">toggle</div>
+                      </summary>
+                      <div class="chunkBody">
+                        <div class="help" id="briefsStatus">No per-ticker briefs yet.</div>
+                        <div id="briefsContainer"></div>
                       </div>
                     </details>
 
