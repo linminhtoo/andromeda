@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from finrag.dataclasses import ScoredChunk, TopChunk
 from finrag.db import RetrievalFilters
+from finrag.finance_tools import FinanceToolResult, FinanceToolStatus, FinanceTools
 from finrag.generation_controls import GenerationSettings
 from finrag.ingestion_jobs import normalize_ticker
 from finrag.llm_clients import ChatMessage, LLMClient
@@ -63,11 +64,20 @@ class ToolTraceEvent(BaseModel):
     result: str
 
 
+class FinanceToolResultPayload(BaseModel):
+    tool: str
+    ticker: str | None = None
+    status: FinanceToolStatus
+    summary: str
+    payload: object | None = None
+
+
 class QueryResponse(BaseModel):
     status: QueryStatus = QueryStatus.ANSWERED
     conversation_id: str | None = None
     clarifying_question: str | None = None
     tool_trace: list[ToolTraceEvent] = Field(default_factory=list)
+    tool_results: list[FinanceToolResultPayload] = Field(default_factory=list)
     draft_answer: str
     final_answer: str
     top_chunks: list[TopChunk]
@@ -144,6 +154,9 @@ class PlannerDecision(BaseModel):
     clarifying_question: str | None = None
     refusal_reason: str | None = None
     use_per_ticker_retrieval: bool | None = None
+    use_rag: bool | None = None
+    use_yfinance: bool | None = None
+    use_edgar_financials: bool | None = None
 
 
 @dataclass
@@ -155,6 +168,9 @@ class PlannedQuery:
     clarifying_question: str | None = None
     refusal_message: str | None = None
     use_per_ticker_retrieval: bool = False
+    use_rag: bool = True
+    use_yfinance: bool = False
+    use_edgar_financials: bool = False
     tool_trace: list[ToolTraceEvent] = field(default_factory=list)
 
 
@@ -163,9 +179,11 @@ class QueryPipelineExecution:
     question: str
     planned: PlannedQuery
     tool_trace: list[ToolTraceEvent] = field(default_factory=list)
+    tool_results: list[FinanceToolResult] = field(default_factory=list)
     hybrid: list[ScoredChunk] = field(default_factory=list)
     reranked: list[ScoredChunk] = field(default_factory=list)
     plan_step_ms: float | None = None
+    tools_step_ms: float | None = None
     retrieve_step_ms: float | None = None
     rerank_step_ms: float | None = None
 
@@ -176,12 +194,19 @@ class RAGService:
     """
 
     def __init__(
-        self, *, llm: LLMClient, retriever: PostgresHybridRetriever, reranker: CrossEncoderReranker, context_key: str
+        self,
+        *,
+        llm: LLMClient,
+        retriever: PostgresHybridRetriever,
+        reranker: CrossEncoderReranker,
+        context_key: str,
+        finance_tools: FinanceTools | None = None,
     ):
         self.llm = llm
         self.retriever = retriever
         self.reranker = reranker
         self._context_key = context_key
+        self.finance_tools = finance_tools if finance_tools is not None else FinanceTools()
 
     @staticmethod
     def _tool_event(tool: str, *, args: dict[str, object] | None = None, result: str) -> ToolTraceEvent:
@@ -251,6 +276,21 @@ class RAGService:
                     source_text=source_text,
                     context=context_value,
                     metadata=self._chunk_metadata_for_ui(parsed.to_dict()),
+                )
+            )
+        return out
+
+    @staticmethod
+    def serialize_finance_tool_results(results: list[FinanceToolResult]) -> list[FinanceToolResultPayload]:
+        """
+        Convert internal finance tool results to API payload models.
+        """
+
+        out: list[FinanceToolResultPayload] = []
+        for item in results:
+            out.append(
+                FinanceToolResultPayload(
+                    tool=item.tool, ticker=item.ticker, status=item.status, summary=item.summary, payload=item.payload
                 )
             )
         return out
@@ -332,6 +372,93 @@ class RAGService:
         padded = f" {lowered} "
         return any(token in padded for token in tokens)
 
+    @staticmethod
+    def _question_mentions_market_data(question: str) -> bool:
+        lowered = f" {question.lower()} "
+        tokens = (
+            " stock price ",
+            " price ",
+            " chart ",
+            " valuation ",
+            " market cap ",
+            " news ",
+            " return ",
+            " performance ",
+            " volume ",
+            " pe ratio ",
+            " p/e ",
+            " dividend ",
+        )
+        return any(token in lowered for token in tokens)
+
+    @staticmethod
+    def _question_mentions_financial_metrics(question: str) -> bool:
+        lowered = f" {question.lower()} "
+        tokens = (
+            " revenue ",
+            " net income ",
+            " gross margin ",
+            " operating margin ",
+            " eps ",
+            " balance sheet ",
+            " cash flow ",
+            " free cash flow ",
+            " assets ",
+            " liabilities ",
+            " equity ",
+            " ratio ",
+            " debt ",
+        )
+        return any(token in lowered for token in tokens)
+
+    @staticmethod
+    def _question_mentions_filing_narrative(question: str) -> bool:
+        lowered = f" {question.lower()} "
+        tokens = (
+            " risk factor ",
+            " management discussion ",
+            " md&a ",
+            " discuss ",
+            " explain ",
+            " guidance ",
+            " outlook ",
+            " strategy ",
+            " segment ",
+            " why ",
+        )
+        return any(token in lowered for token in tokens)
+
+    def resolve_tool_usage_from_decision(self, *, question: str, decision: PlannerDecision) -> tuple[bool, bool, bool]:
+        """
+        Resolve planner tool flags into effective `use_rag`, `use_yfinance`, and `use_edgar_financials`.
+        """
+
+        use_yfinance = (
+            bool(decision.use_yfinance)
+            if decision.use_yfinance is not None
+            else self._question_mentions_market_data(question)
+        )
+        use_edgar_financials = (
+            bool(decision.use_edgar_financials)
+            if decision.use_edgar_financials is not None
+            else self._question_mentions_financial_metrics(question)
+        )
+
+        if decision.use_rag is not None:
+            use_rag = bool(decision.use_rag)
+        else:
+            narrative_query = self._question_mentions_filing_narrative(question)
+            if narrative_query:
+                use_rag = True
+            elif use_yfinance or use_edgar_financials:
+                use_rag = False
+            else:
+                use_rag = True
+
+        if not use_rag and not use_yfinance and not use_edgar_financials:
+            use_rag = True
+        return use_rag, use_yfinance, use_edgar_financials
+
     def _infer_tickers_from_question(self, question: str, companies: list[dict[str, str]]) -> list[str]:
         inferred: list[str] = []
         seen: set[str] = set()
@@ -394,12 +521,17 @@ class RAGService:
                     "3) If the query is out-of-scope for SEC filing analysis, choose refused.\n"
                     "4) For comparisons across multiple entities, include all required tickers and set "
                     "use_per_ticker_retrieval=true.\n"
+                    "5) Decide tool mix flags:\n"
+                    "- use_yfinance=true for market price/news/valuation style requests.\n"
+                    "- use_edgar_financials=true for direct SEC financial metric/statement requests.\n"
+                    "- use_rag=true when filing narrative evidence is needed from retrieved chunks.\n"
+                    "- use_rag=false for simple direct metric queries answerable from finance tools.\n"
                     "IMPORTANT: only clarify if absolutely needed. Do NOT keep asking clarifying questions."
                     "If no date range is provided, just set None for both date_from and date_to in the output - "
                     "do NOT ask for clarification on dates unless the question explicitly references time (like 'latest').\n"
                     "Return only JSON with keys:\n"
                     "action, tickers, filing_date_from, filing_date_to, clarifying_question, refusal_reason, "
-                    "use_per_ticker_retrieval."
+                    "use_per_ticker_retrieval, use_rag, use_yfinance, use_edgar_financials."
                 ),
             },
             {
@@ -521,13 +653,22 @@ class RAGService:
             trace.append(
                 self._tool_event(
                     "planner_llm",
-                    args={"raw_action": decision.action.value, "tickers": [str(t) for t in decision.tickers]},
+                    args={
+                        "raw_action": decision.action.value,
+                        "tickers": [str(t) for t in decision.tickers],
+                        "use_rag": decision.use_rag,
+                        "use_yfinance": decision.use_yfinance,
+                        "use_edgar_financials": decision.use_edgar_financials,
+                    },
                     result="Planner produced structured query decision.",
                 )
             )
 
         action = self._normalize_plan_action(decision.action)
         planned_tickers = explicit_tickers or self._normalize_ticker_list(decision.tickers)
+        use_rag, use_yfinance, use_edgar_financials = self.resolve_tool_usage_from_decision(
+            question=question, decision=decision
+        )
 
         if action == QueryStatus.REFUSED:
             reason = (
@@ -542,6 +683,9 @@ class RAGService:
                 filters=None,
                 tickers=planned_tickers,
                 refusal_message=reason,
+                use_rag=use_rag,
+                use_yfinance=use_yfinance,
+                use_edgar_financials=use_edgar_financials,
                 tool_trace=trace,
             )
 
@@ -567,6 +711,9 @@ class RAGService:
                 filters=None,
                 tickers=planned_tickers,
                 refusal_message=reason,
+                use_rag=use_rag,
+                use_yfinance=use_yfinance,
+                use_edgar_financials=use_edgar_financials,
                 tool_trace=trace,
             )
 
@@ -587,6 +734,9 @@ class RAGService:
                 filters=None,
                 tickers=planned_tickers,
                 clarifying_question=clarifying_question,
+                use_rag=use_rag,
+                use_yfinance=use_yfinance,
+                use_edgar_financials=use_edgar_financials,
                 tool_trace=trace,
             )
 
@@ -602,14 +752,21 @@ class RAGService:
         )
         trace.append(
             self._tool_event(
-                "build_retrieval_filters",
+                "plan_tool_usage",
+                args={"use_rag": use_rag, "use_yfinance": use_yfinance, "use_edgar_financials": use_edgar_financials},
+                result="Resolved planner tool usage flags.",
+            )
+        )
+        trace.append(
+            self._tool_event(
+                "prepare_rag_function",
                 args={
                     "tickers": list(filters.normalized_tickers()),
                     "filing_date_from": (filters.filing_date_from.isoformat() if filters.filing_date_from else None),
                     "filing_date_to": (filters.filing_date_to.isoformat() if filters.filing_date_to else None),
                     "use_per_ticker_retrieval": use_per_ticker,
                 },
-                result="Built retrieval filters from planner decision.",
+                result="Prepared RAG function call arguments from planner decision.",
             )
         )
         return PlannedQuery(
@@ -618,6 +775,9 @@ class RAGService:
             filters=filters,
             tickers=planned_tickers,
             use_per_ticker_retrieval=use_per_ticker,
+            use_rag=use_rag,
+            use_yfinance=use_yfinance,
+            use_edgar_financials=use_edgar_financials,
             tool_trace=trace,
         )
 
@@ -687,6 +847,39 @@ class RAGService:
         return self.retriever.build_filters(
             tickers=tickers, filing_date_from=filing_date_from, filing_date_to=filing_date_to
         )
+
+    def execute_finance_tools_for_plan(
+        self, *, question: str, planned: PlannedQuery
+    ) -> tuple[list[FinanceToolResult], list[ToolTraceEvent]]:
+        """
+        Execute finance tools requested by planner for the current plan.
+        """
+
+        if not planned.tickers:
+            return [], [self._tool_event("finance_tools_skip", result="Skipped finance tools (no planned tickers).")]
+
+        if not planned.use_yfinance and not planned.use_edgar_financials:
+            return [], [self._tool_event("finance_tools_skip", result="Planner disabled finance tool calls.")]
+
+        tool_results = self.finance_tools.fetch_for_plan(
+            question=question,
+            tickers=planned.tickers,
+            use_yfinance=planned.use_yfinance,
+            use_edgar_financials=planned.use_edgar_financials,
+        )
+        trace = [
+            self._tool_event(
+                "finance_tools_execute",
+                args={
+                    "tickers": list(planned.tickers),
+                    "use_yfinance": planned.use_yfinance,
+                    "use_edgar_financials": planned.use_edgar_financials,
+                    "result_count": len(tool_results),
+                },
+                result=f"Executed finance tools and produced {len(tool_results)} result objects.",
+            )
+        ]
+        return tool_results, trace
 
     def retrieve_chunks(
         self, question: str, settings: GenerationSettings, *, filters: RetrievalFilters
@@ -827,6 +1020,22 @@ class RAGService:
         if planned.status != QueryStatus.ANSWERED:
             return execution
 
+        tools_t0 = time.perf_counter()
+        tool_results, finance_tool_trace = self.execute_finance_tools_for_plan(question=question, planned=planned)
+        execution.tools_step_ms = (time.perf_counter() - tools_t0) * 1000.0
+        execution.tool_results = tool_results
+        execution.tool_trace.extend(finance_tool_trace)
+
+        if not planned.use_rag:
+            execution.tool_trace.append(
+                self._tool_event(
+                    "rag_function_skip",
+                    args={"reason": "planner_use_rag_false"},
+                    result="Skipped RAG retrieval function per planner tool decision.",
+                )
+            )
+            return execution
+
         retrieve_t0 = time.perf_counter()
         hybrid, retrieve_trace = self.retrieve_chunks_for_plan(question, settings, planned)
         execution.retrieve_step_ms = (time.perf_counter() - retrieve_t0) * 1000.0
@@ -841,14 +1050,23 @@ class RAGService:
         return execution
 
     def draft_prompt(
-        self, question: str, settings: GenerationSettings, reranked: list[ScoredChunk]
+        self,
+        question: str,
+        settings: GenerationSettings,
+        reranked: list[ScoredChunk],
+        tool_results: list[FinanceToolResult] | None = None,
     ) -> list[ChatMessage]:
         """
         Build the first-stage prompt used for draft generation.
         """
 
+        tool_context = self.finance_tools.tool_context_text(tool_results or [])
         return build_draft_prompt(
-            question, reranked, draft_max_tokens=settings.draft_max_tokens, answer_style=settings.answer_style
+            question,
+            reranked,
+            draft_max_tokens=settings.draft_max_tokens,
+            answer_style=settings.answer_style,
+            tool_context=tool_context,
         )
 
     def final_prompt(
@@ -858,34 +1076,47 @@ class RAGService:
         reranked: list[ScoredChunk],
         *,
         draft_answer: str | None = None,
+        tool_results: list[FinanceToolResult] | None = None,
     ) -> list[ChatMessage]:
         """
         Build the final-stage prompt for the current settings.
         """
 
         if not settings.enable_refine:
-            return self.draft_prompt(question, settings, reranked)
+            return self.draft_prompt(question, settings, reranked, tool_results=tool_results)
         if draft_answer is None:
             raise ValueError("draft_answer is required when refinement is enabled")
+        tool_context = self.finance_tools.tool_context_text(tool_results or [])
         return build_refine_prompt(
             question,
             draft_answer,
             reranked,
             final_max_tokens=settings.final_max_tokens,
             answer_style=settings.answer_style,
+            tool_context=tool_context,
         )
 
     def generate_answers(
-        self, question: str, settings: GenerationSettings, reranked: list[ScoredChunk]
+        self,
+        question: str,
+        settings: GenerationSettings,
+        reranked: list[ScoredChunk],
+        tool_results: list[FinanceToolResult] | None = None,
     ) -> tuple[str, str]:
         """
         Generate draft/final answers from reranked chunks.
         """
 
-        draft = self.llm.chat(self.draft_prompt(question, settings, reranked), temperature=settings.draft_temperature)
+        draft = self.llm.chat(
+            self.draft_prompt(question, settings, reranked, tool_results=tool_results),
+            temperature=settings.draft_temperature,
+        )
         if not settings.enable_refine:
             return draft, draft
-        final = self.llm.chat(self.final_prompt(question, settings, reranked, draft_answer=draft), temperature=0.0)
+        final = self.llm.chat(
+            self.final_prompt(question, settings, reranked, draft_answer=draft, tool_results=tool_results),
+            temperature=0.0,
+        )
         return draft, final
 
     def build_query_response(
@@ -895,6 +1126,7 @@ class RAGService:
         conversation_id: str | None = None,
         clarifying_question: str | None = None,
         tool_trace: list[ToolTraceEvent] | None = None,
+        tool_results: list[FinanceToolResult] | None = None,
         draft_answer: str,
         final_answer: str,
         reranked: list[ScoredChunk],
@@ -914,6 +1146,7 @@ class RAGService:
             conversation_id=conversation_id,
             clarifying_question=clarifying_question,
             tool_trace=(tool_trace or []),
+            tool_results=self.serialize_finance_tool_results(tool_results or []),
             draft_answer=draft_answer,
             final_answer=final_answer,
             top_chunks=top_chunks,
@@ -939,6 +1172,7 @@ class RAGService:
                 conversation_id=conversation_id,
                 clarifying_question=clarifying_question,
                 tool_trace=pipeline.tool_trace,
+                tool_results=pipeline.tool_results,
                 draft_answer=clarifying_question,
                 final_answer=clarifying_question,
                 reranked=[],
@@ -956,6 +1190,7 @@ class RAGService:
                 status=QueryStatus.REFUSED,
                 conversation_id=conversation_id,
                 tool_trace=pipeline.tool_trace,
+                tool_results=pipeline.tool_results,
                 draft_answer=refusal,
                 final_answer=refusal,
                 reranked=[],
@@ -963,11 +1198,14 @@ class RAGService:
                 hybrid=[],
             )
 
-        draft, final = self.generate_answers(pipeline.question, settings, pipeline.reranked)
+        draft, final = self.generate_answers(
+            pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results
+        )
         return self.build_query_response(
             status=QueryStatus.ANSWERED,
             conversation_id=conversation_id,
             tool_trace=pipeline.tool_trace,
+            tool_results=pipeline.tool_results,
             draft_answer=draft,
             final_answer=final,
             reranked=pipeline.reranked,
