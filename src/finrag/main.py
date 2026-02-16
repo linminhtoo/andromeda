@@ -307,8 +307,6 @@ def ingest_ticker_status(job_id: str):
     status = get_ticker_ingestion_job_status(job_id)
     if status is None:
         raise HTTPException(status_code=404, detail=f"Ingestion job not found: {job_id}")
-    if status.status == "succeeded" and status.doc_index_path:
-        os.environ["FINRAG_DOC_INDEX_PATH"] = status.doc_index_path
     return status.model_dump()
 
 
@@ -394,7 +392,9 @@ def ingested_companies():
     """
     Return the set of tickers (and best-effort company names) available in the currently ingested dataset.
 
-    Configure by setting FINRAG_DOC_INDEX_PATH.
+    Resolution order:
+    1. FINRAG_DOC_INDEX_PATH when explicitly configured.
+    2. Active ingest profile chunk output directory (`doc_index.jsonl`), with latest-path fallback.
     """
 
     return _INGESTED_COMPANIES_SERVICE.list_companies()
