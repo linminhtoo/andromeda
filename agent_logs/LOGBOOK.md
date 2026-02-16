@@ -1866,3 +1866,26 @@
 - Kept both reproduction artifacts for traceability.
 - For strict reproducibility claims, pinning the judge-context serialization behavior is necessary.
 - Saved reusable repro harness script: `agent_logs/20260217_002500_reproduce_v13_judgev2_notrunc.sh`.
+
+## 2026-02-17 - Added exact eval reproduction guide (`README_EVAL.md`)
+
+### Previous state
+- Reproduction details for best `v13` score existed across many scripts and logbook entries but not in one canonical runbook.
+
+### What changed
+- Added `README_EVAL.md` with an end-to-end, command-accurate path for reproducing the best `v13` result:
+  - profile rebuild/index commands
+  - query generation and Edgar validation flow
+  - tolerance filtering details (`--edgar-rel-tol 0.5`) and matched-only factual subset construction
+  - v13 generation + `judgev2` rescoring
+  - exact historical reproduction path via back-compat no-trunc judge-context script.
+
+### Why
+- Make reproduction deterministic and interview/demo-friendly for another engineer.
+- Make the filtering/tolerance step explicit (the main source of confusion).
+
+### Key artifacts referenced
+- `eval/eval_queries_revamp_validated_tol05_20260216.jsonl`
+- `eval/eval_queries_revamp_single_balanced_validated_tol05_20260216.jsonl`
+- `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430/score_summary.json`
+- `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2_repro_notrunc.20260217_002146/score_summary.json`
