@@ -13,6 +13,7 @@ from finrag.eval.generation import (
     generate_open_ended_queries,
     generate_refusal_queries,
 )
+from finrag.eval.ground_truth_validation import validate_factual_queries_with_edgar
 from finrag.eval.io import dump_jsonl
 from finrag.eval.sec_corpus import iter_all_chunks, iter_chunk_export_docs
 from finrag.utils import seed_everything
@@ -39,6 +40,25 @@ def main() -> None:
     ap.add_argument("--n-comparison", type=int, default=20, help="Number of multi-company comparison questions")
     ap.add_argument("--seed", type=int, default=0, help="RNG seed")
     ap.add_argument(
+        "--validate-factual-with-edgar",
+        action="store_true",
+        help="Validate factual numeric labels against EdgarTools metric snapshots.",
+    )
+    ap.add_argument(
+        "--edgar-drop-mismatched",
+        action="store_true",
+        help="When Edgar validation is enabled, drop mismatched factual examples instead of keeping them.",
+    )
+    ap.add_argument(
+        "--edgar-rel-tol", type=float, default=0.2, help="Relative error tolerance for Edgar factual-label validation."
+    )
+    ap.add_argument(
+        "--factual-candidate-multiplier",
+        type=int,
+        default=3,
+        help="Multiplier for factual candidate generation before optional Edgar validation.",
+    )
+    ap.add_argument(
         "--snippet-chars",
         type=int,
         default=5000,
@@ -56,7 +76,28 @@ def main() -> None:
         max_docs=args.max_docs,
         max_chunks_per_doc=args.max_chunks_per_doc,
     )
-    factual = generate_factual_queries(chunks_iter, n=args.n_factual, seed=args.seed, snippet_chars=args.snippet_chars)
+    factual_target_n = max(0, int(args.n_factual))
+    candidate_multiplier = max(1, int(args.factual_candidate_multiplier))
+    factual_candidate_n = (
+        factual_target_n * candidate_multiplier if args.validate_factual_with_edgar else factual_target_n
+    )
+
+    factual = generate_factual_queries(
+        chunks_iter, n=factual_candidate_n, seed=args.seed, snippet_chars=args.snippet_chars
+    )
+
+    if args.validate_factual_with_edgar:
+        factual, validation_stats = validate_factual_queries_with_edgar(
+            factual, rel_tol=float(args.edgar_rel_tol), drop_mismatched=bool(args.edgar_drop_mismatched)
+        )
+        logger.info(f"Edgar factual validation stats: {validation_stats.to_dict()}")
+        if len(factual) < factual_target_n:
+            logger.warning(
+                "Factual generation yielded fewer validated rows than requested: "
+                f"requested={factual_target_n}, available={len(factual)}"
+            )
+
+    factual = factual[:factual_target_n]
     logger.success(f"Generated {len(factual)} factual questions.")
 
     docs_iter = list(

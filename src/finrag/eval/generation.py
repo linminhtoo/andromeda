@@ -303,57 +303,28 @@ def generate_factual_queries(
     now = datetime.now(timezone.utc)
 
     chunk_list = list(chunks)
-    by_doc_id: dict[str, list[DocChunk]] = {}
-    for ch in chunk_list:
-        by_doc_id.setdefault(ch.doc_id, []).append(ch)
-
-    period_end_by_doc: dict[str, str | None] = {}
-    for doc_id, doc_chunks in by_doc_id.items():
-        doc0 = _doc_meta(doc_chunks[0]) if doc_chunks else None
-        period_end = doc0.period_end_date if doc0 and doc0.period_end_date else None
-        if not period_end:
-            period_end = _infer_period_end_date(doc_chunks)
-        period_end_by_doc[doc_id] = period_end
-
     candidates: list[EvalQuery] = []
     seen: set[tuple[str, str, str]] = set()
     for chunk in chunk_list:
         doc = _doc_meta(chunk)
         ticker = doc.ticker.upper() if doc and doc.ticker else ""
         filing_type = doc.filing_type if doc and doc.filing_type else ""
-        filing_quarter = _quarter_pretty(doc.filing_quarter if doc else None)
         filing_date = doc.filing_date if doc else None
-        period_end_date = period_end_by_doc.get(chunk.doc_id) or None
-        period_quarter = _quarter_from_iso_date(period_end_date) if period_end_date else None
 
         for metric, numeric in extract_metric_number_pairs(chunk.text or "", max_pairs=max_pairs_per_chunk):
-            period_key = period_end_date or filing_date or filing_quarter or ""
+            period_key = filing_date or filing_type or ""
             key = (ticker, period_key, metric)
             if key in seen:
                 continue
             seen.add(key)
 
             company = _company_label(doc)
-            if period_end_date and period_end_date.strip():
-                if period_quarter:
-                    period_s = f"for the quarter ended {period_end_date.strip()} ({period_quarter})"
-                else:
-                    period_s = f"for the period ended {period_end_date.strip()}"
-
-                # HOTFIX: this may be too confusing. the chunk's filing date can be many months later
-                # if filing_type and filing_date and filing_date.strip():
-                #     source_s = f"according to its {filing_type.strip()} filed {filing_date.strip()}"
-                #     q = f"What was {company}'s {metric} {period_s}, {source_s}?"
-                if filing_type:
-                    q = f"What was {company}'s {metric} {period_s}, according to its {filing_type.strip()}?"
-                else:
-                    q = f"What was {company}'s {metric} {period_s}?"
-            elif filing_type and filing_date and filing_date.strip():
+            if filing_type and filing_date and filing_date.strip():
                 q = f"What was {company}'s {metric} in its {filing_type.strip()} filed {filing_date.strip()}?"
             elif filing_type:
                 q = f"What was {company}'s {metric} in its {filing_type.strip()}?"
-            elif filing_quarter:
-                q = f"What was {company}'s {metric} in {filing_quarter}?"
+            elif filing_date and filing_date.strip():
+                q = f"What was {company}'s {metric} in the filing dated {filing_date.strip()}?"
             else:
                 q = f"What was {company}'s {metric} in the relevant filing?"
 

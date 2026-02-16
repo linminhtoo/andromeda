@@ -20,14 +20,28 @@ def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+def _is_multi_ticker_query(query: EvalQuery) -> bool:
+    if query.comparison is not None:
+        tickers = [t.strip().upper() for t in query.comparison.target_tickers if t and t.strip()]
+        return len(set(tickers)) > 1
+    if query.distractor is not None:
+        tickers = [t.strip().upper() for t in query.distractor.target_tickers if t and t.strip()]
+        return len(set(tickers)) > 1
+    return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run an eval query set through finrag.main.RAGService.answer_question().")
     ap.add_argument("--eval-queries", required=True, help="Eval queries JSONL (from scripts/make_eval_set.py).")
     ap.add_argument("--out-dir", required=True, help="Directory to write run artifacts.")
     ap.add_argument("--run-name", default=None, help="Optional run name prefix (e.g. 'baseline').")
     ap.add_argument("--mode", default="normal", help="Generation preset (quick|normal|thinking).")
+    ap.add_argument("--concurrency", type=int, default=8, help="Max parallel questions to run (set 1 to disable).")
     ap.add_argument(
-        "--concurrency", type=int, default=8, help="Max parallel questions to run (process-based; set 1 to disable)."
+        "--parallel-backend",
+        choices=["process", "thread"],
+        default="process",
+        help="Parallel execution backend when concurrency > 1.",
     )
     ap.add_argument(
         "--gpu-ids", nargs="*", type=int, default=None, help="Optional list of GPU IDs to assign to workers."
@@ -53,8 +67,24 @@ def main() -> None:
 
     # Output controls.
     ap.add_argument("--max-chunks", type=int, default=50)
-    ap.add_argument("--chunk-text-chars", type=int, default=2000)
-    ap.add_argument("--chunk-context-chars", type=int, default=2000)
+    ap.add_argument(
+        "--chunk-text-chars",
+        type=int,
+        default=0,
+        help="Max chars of chunk text to persist per row (<=0 keeps full chunk text).",
+    )
+    ap.add_argument(
+        "--chunk-context-chars",
+        type=int,
+        default=0,
+        help="Max chars of chunk context to persist per row (<=0 keeps full chunk context).",
+    )
+    ap.add_argument(
+        "--query-timeout-s",
+        type=float,
+        default=120.0,
+        help="Optional per-query timeout in seconds for generation (set <=0 to disable).",
+    )
 
     # Filters.
     ap.add_argument("--max-items", type=int, default=None, help="Optional cap on number of queries to run.")
@@ -65,8 +95,18 @@ def main() -> None:
         choices=["factual", "open_ended", "refusal", "distractor", "comparison"],
         help="Optional filter (defaults to all).",
     )
+    ap.add_argument("--single-ticker-only", action="store_true", help="Keep only single-ticker eval queries.")
+    ap.add_argument("--multi-ticker-only", action="store_true", help="Keep only multi-ticker eval queries.")
+    ap.add_argument(
+        "--disable-finance-tools",
+        action="store_true",
+        help="Disable yfinance/edgar tool calls during eval generation for faster RAG-focused iteration.",
+    )
 
     args = ap.parse_args()
+
+    if args.single_ticker_only and args.multi_ticker_only:
+        raise SystemExit("Use at most one of --single-ticker-only or --multi-ticker-only.")
 
     if args.index_dir:
         idx = Path(args.index_dir).expanduser().resolve()
@@ -78,11 +118,17 @@ def main() -> None:
         os.environ["FINRAG_DOC_INDEX_PATH"] = str(Path(args.doc_index_path).expanduser().resolve())
     if args.postgres_dsn:
         os.environ["POSTGRES_DSN"] = args.postgres_dsn
+    if args.disable_finance_tools:
+        os.environ["FINRAG_DISABLE_FINANCE_TOOLS"] = "1"
 
     queries = load_jsonl(args.eval_queries, EvalQuery)
     if args.kinds:
         wanted = set(args.kinds)
         queries = [q for q in queries if q.kind in wanted]
+    if args.single_ticker_only:
+        queries = [q for q in queries if not _is_multi_ticker_query(q)]
+    if args.multi_ticker_only:
+        queries = [q for q in queries if _is_multi_ticker_query(q)]
     if args.max_items is not None:
         queries = queries[: max(0, int(args.max_items))]
     if not queries:
@@ -109,9 +155,11 @@ def main() -> None:
         enable_refine=(bool(args.enable_refine) if args.enable_refine is not None else None),
         draft_temperature=args.draft_temperature,
         concurrency=args.concurrency,
+        parallel_backend=args.parallel_backend,
         max_chunks=args.max_chunks,
         chunk_text_chars=args.chunk_text_chars,
         chunk_context_chars=args.chunk_context_chars,
+        query_timeout_s=(float(args.query_timeout_s) if args.query_timeout_s is not None else None),
     )
 
     gpu_ids = [str(gpu) for gpu in args.gpu_ids] if args.gpu_ids else None
