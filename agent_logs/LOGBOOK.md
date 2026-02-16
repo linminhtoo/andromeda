@@ -1185,3 +1185,117 @@
 ### Scripts preserved under `agent_logs/`
 - `agent_logs/20260215_191500_validate_ui_grouping_layout_ingested.sh`
   - Runs TypeScript build + full pre-commit + full pytest suite.
+
+## 2026-02-15 - Deep tools-first finance integration (yfinance + edgartools + RAG-as-function)
+
+### Previous state
+- Query runtime was tools-first at planning level, but execution still always centered on retrieval/rerank before answer synthesis.
+- There was no native finance tool adapter layer in this repository for:
+  - yfinance price/news/valuation snapshots
+  - edgartools SEC financial metrics/statements
+- RAG retrieval was not represented as an explicitly skippable callable function in planner semantics.
+- Query responses did not expose structured finance tool outputs.
+
+### What changed
+- Added a dedicated finance adapter module:
+  - `src/finrag/finance_tools.py`
+  - Includes typed `FinanceToolResult` + `FinanceToolStatus` and bounded context serialization.
+  - Wraps:
+    - yfinance: `ticker_info`, `ticker_news`, `price_history`
+    - edgartools: annual/quarterly metrics + annual statement snapshots.
+- Extended planner schema and plan state in `src/finrag/query_runtime.py`:
+  - `PlannerDecision`: `use_rag`, `use_yfinance`, `use_edgar_financials`
+  - `PlannedQuery`: same tool usage flags
+  - Added heuristics to resolve tool usage when planner output omits fields.
+- Reframed RAG as callable/optional function in execution:
+  - Query pipeline now runs `finance tools` before retrieval.
+  - If `use_rag=false`, retrieval/rerank are skipped entirely and final synthesis uses tool context only.
+- Added structured tool outputs to API payloads:
+  - `QueryResponse.tool_results`.
+- Updated prompt construction path for synthesis across tool data + retrieved chunks:
+  - `src/finrag/qa.py` now supports `tool_context` in both draft/refine prompt builders.
+- Updated streaming runtime in `src/finrag/query_streaming.py`:
+  - new `tools` status step
+  - new `tool_results` stream event
+  - new `tools_ms` timing capture
+  - streaming generation now passes tool context through prompt builders.
+- Added focused test coverage:
+  - `tests/test_finance_tools.py`
+  - `tests/test_query_runtime_tools_first.py`
+  - updated `tests/test_qa.py` for `tool_context` prompt expectations.
+
+### Why
+- Enables complementary use of tool data and RAG chunks in one synthesis pass.
+- Enables tool-only fast path for direct metric/valuation/news questions, reducing unnecessary retrieval cost.
+- Prepares backend payloads/events for richer answer-pane rendering of finance artifacts during stream execution.
+
+### Surprising findings
+- `pre-commit` failed in this sandbox due readonly default cache path (`/home/mlin/.cache/pre-commit`); fixed by setting `PRE_COMMIT_HOME=/tmp/pre-commit-cache`.
+- Existing frontend streaming loop safely ignores unknown event types, so backend `tool_results` event can be introduced without frontend breakage.
+
+### Validation experiments and results
+- Targeted tests while developing:
+  - `source .venv/bin/activate && pytest -q tests/test_finance_tools.py tests/test_query_runtime_tools_first.py tests/test_qa.py`
+  - Result: pass (`9 passed`).
+- Required lint/type/UI checks:
+  - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - Result: pass.
+- Required full backend tests:
+  - `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: pass (`86 passed, 2 warnings`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/tools_first_finance_integration_20260215_202851.md`
+  - Planning document (phased approach + acceptance criteria + files list).
+
+### Follow-up update (same scope)
+- Added live frontend rendering for streamed finance tool outputs:
+  - `src/finrag/static/ts/index/main.ts`
+  - stream handler now consumes `tool_results` events and displays a temporary "Live Tool Snapshot" block in the answer pane while final LLM text is still streaming.
+- Rebuilt TypeScript output (`npm run -s build:ts`) so static JS entrypoints include the new stream behavior.
+- Re-ran required checks after this update:
+  - `PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> pass
+  - `pytest -vvv tests/` -> pass (`86 passed, 2 warnings`)
+
+## 2026-02-15 - Generation controls decoupling + finance tool panel + ingest-profile doc-index inference
+
+### Previous state
+- `thinking` mode implicitly enabled draft+refine, coupling answer depth and two-stage generation.
+- Finance `tool_results` were rendered as temporary markdown text mixed into the final answer area.
+- EdgarTools calls could fail due to missing SEC user identity setup.
+- `/ingested_companies` primarily depended on `FINRAG_DOC_INDEX_PATH`, which was redundant with profile-scoped artifacts.
+
+### What changed
+- Decoupled generation controls:
+  - `src/finrag/generation_controls.py`: `thinking.enable_refine` default changed to `False`.
+  - `src/finrag/static/index.html`, `src/finrag/static/ts/index/dom.ts`, `src/finrag/static/ts/index/main.ts`: added explicit `enableRefine` checkbox and wired request payload persistence (`enable_refine`) independent of mode.
+- EdgarTools identity handling:
+  - `src/finrag/finance_tools.py`: calls `edgar.set_identity(USER_EMAIL)` before company access.
+  - returns explicit `edgar_set_identity` tool error when `USER_EMAIL` is missing/invalid.
+- Tool rendering upgrade in UI:
+  - `src/finrag/static/index.html`, `src/finrag/static/ts/index/main.ts`: added dedicated "Tool snapshot" panel with tool cards.
+  - includes SVG price chart for `yfinance_get_price_history`, valuation/company metrics card for `yfinance_get_ticker_info`, and linked headlines for `yfinance_get_ticker_news`.
+  - tool panel now renders separately from LLM final markdown.
+- Citation UX improvement:
+  - `src/finrag/static/ts/index/citations.ts`: `[tool=...]` markers now render as visual chips (`toolCitationChip`) while `[doc=...]` remains clickable to source viewer.
+- Doc index inference improvement:
+  - `src/finrag/ingested_companies.py`: resolution order now is explicit env override first, then inferred ingest-profile chunk path (`doc_index.jsonl`) with latest fallback under `chunked_*/`.
+  - `src/finrag/main.py`: removed runtime mutation of `FINRAG_DOC_INDEX_PATH` in ingestion status endpoint and updated endpoint docs.
+  - `src/finrag/static/ts/index/ingested.ts`: updated failure messaging to inferred-path semantics.
+- Tests updated:
+  - `tests/test_finance_tools.py`: adjusted edgar mock to include `set_identity` + added missing-`USER_EMAIL` coverage.
+
+### Why
+- Makes generation controls intuitive and explicit.
+- Keeps financial tool artifacts visible and structured without polluting narrative answer text.
+- Fixes known EdgarTools SEC identity setup failure mode.
+- Removes redundant env-path coupling by honoring ingest-profile artifacts directly.
+
+### Validation experiments and results
+- `npm run -s build:ts` -> pass.
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> pass.
+- `source .venv/bin/activate && pytest -vvv tests/` -> pass (`87 passed, 2 warnings`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_211245_validate_generation_controls_tools_ui.sh`
+  - Replays TypeScript build + pre-commit + full tests.
