@@ -5,11 +5,11 @@ this file.
 
 This format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased 
+## Unreleased
 
-### Added 
+### Added
 
-### Changed 
+### Changed
 
 ### Fixed
 
