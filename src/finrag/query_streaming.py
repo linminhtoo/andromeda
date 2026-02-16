@@ -132,6 +132,7 @@ async def run_query_stream(
         yield ndjson_bytes({"type": "start", "request_id": request_id, "conversation_id": conversation_id})
 
         yield ndjson_bytes({"type": "status", "step": "plan", "message": "Planning query tools…"})
+        yield ndjson_bytes({"type": "status", "step": "tools", "message": "Fetching finance tools…"})
         yield ndjson_bytes({"type": "status", "step": "retrieve", "message": "Retrieving chunks…"})
         yield ndjson_bytes(
             {
@@ -177,6 +178,16 @@ async def run_query_stream(
         if cancel_evt.is_set():
             yield ndjson_bytes({"type": "cancelled", "request_id": request_id, "elapsed_ms": _elapsed(started_ms)})
             return
+
+        yield ndjson_bytes(
+            {
+                "type": "tool_results",
+                "count": len(pipeline.tool_results),
+                "results": jsonable_encoder(rag_service.serialize_finance_tool_results(pipeline.tool_results)),
+                "step_ms": _step_ms(pipeline.tools_step_ms),
+                "elapsed_ms": _elapsed(started_ms),
+            }
+        )
 
         retrieved_payload = [
             stream_chunk_payload(scored_chunk=sc, preview_chars=preview_chars, text_chars=text_chars)
@@ -239,6 +250,7 @@ async def run_query_stream(
             status=QueryStatus.ANSWERED,
             conversation_id=conversation_id,
             tool_trace=list(pipeline.tool_trace),
+            tool_results=pipeline.tool_results,
             draft_answer=answer.draft,
             final_answer=(answer.final if answer.final else answer.draft),
             reranked=pipeline.reranked,
@@ -286,7 +298,9 @@ async def stream_answer_text(
             llm=rag_service.llm,
             request=request,
             cancel_evt=cancel_evt,
-            prompt=rag_service.draft_prompt(pipeline.question, settings, pipeline.reranked),
+            prompt=rag_service.draft_prompt(
+                pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results
+            ),
             temperature=settings.draft_temperature,
             delta_type="draft_delta",
             allow_stream=stream_draft_enabled(),
@@ -318,7 +332,13 @@ async def stream_answer_text(
             llm=rag_service.llm,
             request=request,
             cancel_evt=cancel_evt,
-            prompt=rag_service.final_prompt(pipeline.question, settings, pipeline.reranked, draft_answer=answer.draft),
+            prompt=rag_service.final_prompt(
+                pipeline.question,
+                settings,
+                pipeline.reranked,
+                draft_answer=answer.draft,
+                tool_results=pipeline.tool_results,
+            ),
             temperature=0.0,
             delta_type="final_delta",
             allow_stream=True,
@@ -334,7 +354,9 @@ async def stream_answer_text(
             llm=rag_service.llm,
             request=request,
             cancel_evt=cancel_evt,
-            prompt=rag_service.final_prompt(pipeline.question, settings, pipeline.reranked),
+            prompt=rag_service.final_prompt(
+                pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results
+            ),
             temperature=settings.draft_temperature,
             delta_type="final_delta",
             allow_stream=True,
@@ -349,6 +371,8 @@ async def stream_answer_text(
 def _record_timing(*, timing_ms: dict[str, float], pipeline: QueryPipelineExecution) -> None:
     if pipeline.plan_step_ms is not None:
         timing_ms["plan_ms"] = pipeline.plan_step_ms
+    if pipeline.tools_step_ms is not None:
+        timing_ms["tools_ms"] = pipeline.tools_step_ms
     if pipeline.retrieve_step_ms is not None:
         timing_ms["retrieve_ms"] = pipeline.retrieve_step_ms
     if pipeline.rerank_step_ms is not None:
