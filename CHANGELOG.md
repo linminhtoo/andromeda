@@ -17,6 +17,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Deprecated
 
 ### Dev
+- Added github `ci.yaml`
 
 
 ## v1.8.0 - 17 Feb 2026
