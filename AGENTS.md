@@ -9,7 +9,7 @@ Violations will cause runs to be blocked or reverted and large multimillion doll
 
 * Strictly follow existing style in the codebase.
 * Ensure every function is properly documented following the existing style.
-* Keep code concise.
+* Keep code concise, tasteful and elegant.
 * Don't overcomplicate things. Don't implement more than you need to.
 * Ensure code is readable by humans, easy to extend and maintain.
 * Avoid prefixing functions, variables, classes with `_`. The only exception is when
@@ -49,13 +49,15 @@ key/attribute existence, such as by using `dataclass`, `TypedDict` and class att
 
 ## Implementation rules
 
-* Before starting a big task, you should plan and document your plan as a markdown file in the `agent_logs/` folder. Give your plan file a descriptive and time-stamped name, such as `refactor_10Feb2026.md`
+* Before starting a big task, you should plan and document your plan as a markdown file in the `agent_logs/` folder.
+Give your plan file a descriptive and time-stamped name, such as `refactor_10Feb2026.md`
 * Make sure to reference `agent_logs/LOGBOOK.md` to learn from previous lessons and avoid repeating past mistakes.
 * Implement the **entire phase**, not partial work
-* During refactors/migrations,  when removing existing comments especially TODO, which is not relevant to the current task, you must ensure those comments continue to exist in the new/migrated function/code.
+* During refactors/migrations, when removing existing comments especially TODO, which is not relevant to the current task,
+you must ensure those comments continue to exist in the new/migrated function/code.
 * Update `CHANGELOG.md` when behavior changes
 * Agents must not commit or push. Only the coordinator may commit/push after review passes.
-* Never modify repository files outside this `lrdml` git repository.
+* Never modify repository files outside this git repository.
 * You must write down key learning points and observations in a `agent_logs/LOGBOOK.md` at this repository's root level:
     - IMPORTANT: When you implement a new feature or make a breaking change, you need to
         highlight this in the `LOGBOOK.md`. State the previous state, what was changed, and why.
@@ -65,12 +67,18 @@ key/attribute existence, such as by using `dataclass`, `TypedDict` and class att
     - Make it easy for someone else to pick up on your work
     - Keep your notes concise, but don't sacrifice important info.
     - If a `LOGBOOK.md` file already exists, append your observations as a new entry. Never delete existing entries.
-    - IMPORTANT: you must preserve scripts you executed under the `agent_logs/` folder. Name each script appropriately,
+    - IMPORTANT: you must preserve scripts you executed (EXCEPT pre-commit/pytest) under the `agent_logs/` folder.
+        Name each script appropriately,
         including a timestamp and its intent (eg `run_improved_mlp_model_$now.sh`)
+    - HOWEVER, do NOT bother with saving a script if it is just executing `pre-commit` and `pytest`.
+        This is not noteworthy enough to be saved a script. Scripts are reserved for special scripts
+        you created and ran, such as benchmarking, special testing, and so on.
 * IMPORTANT CAVEAT:
     - Other agents/humans may be working on the codebase at the same time
-    - Recognize that code changes not related to your scope of work may be done by them, including modifications to this `LOGBOOK.md` file.
+    - Recognize that code changes not related to your scope of work may be done by them,
+    including modifications to `LOGBOOK.md`, `agent_logs/`, `CHANGELOG.md` and so on.
     - NEVER undo others' work.
+    - Keep calm and continue executing with your plan. You do not need to stop and ask me about it.
 
 ## Testing rules
 
