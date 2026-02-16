@@ -112,12 +112,7 @@ class FinanceTools:
         self.max_context_chars_per_result = max(300, int(max_context_chars_per_result))
 
     def fetch_for_plan(
-        self,
-        *,
-        question: str,
-        tickers: list[str],
-        use_yfinance: bool,
-        use_edgar_financials: bool,
+        self, *, question: str, tickers: list[str], use_yfinance: bool, use_edgar_financials: bool
     ) -> list[FinanceToolResult]:
         """
         Execute selected finance tools for requested tickers.

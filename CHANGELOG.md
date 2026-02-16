@@ -25,6 +25,23 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `src/finrag/ingested_companies.py` (doc-index parsing + company-name caching)
 - Runtime service builder module:
   - `src/finrag/runtime_builders.py` for env/config parsing, LLM/retriever/reranker builders, and ingestion runtime config assembly.
+- Finance tool adapter module:
+  - `src/finrag/finance_tools.py` with typed wrappers for:
+    - yfinance market snapshot/news/price-history fetches
+    - edgartools annual/quarterly financial metrics + statement snapshots
+- Finance tool result payload surfaced in API responses:
+  - `QueryResponse.tool_results`
+  - normalized status enum (`ok`, `no_data`, `error`)
+- New backend tests for tools-first orchestration:
+  - `tests/test_finance_tools.py`
+  - `tests/test_query_runtime_tools_first.py`
+- Dedicated answer-pane finance snapshot section in the main UI:
+  - separate tool results panel with chart/cards rendering for
+    - `yfinance_get_price_history`
+    - `yfinance_get_ticker_info`
+    - `yfinance_get_ticker_news`
+  - independent from final LLM markdown answer rendering.
+- Tool citation chip rendering in answer markdown for `[tool=...]` markers.
 
 ### Changed
 - Ingestion now defaults to profile-first artifact layout:
@@ -60,6 +77,31 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `QueryStatus` for response/planning status (`answered`, `clarification_required`, `refused`)
   - `PlannerAction` for planner decisions.
 - Markdown chunk exports now include `line_start`/`line_end` metadata for `MarkdownTablePreservingChunker` chunks, and query payloads now include `source_text` (original chunk text) alongside retrieval text.
+- Planner/runtime now supports tool-mix directives for each question:
+  - `use_yfinance`
+  - `use_edgar_financials`
+  - `use_rag` (RAG treated as callable function, so retrieval can be skipped for simple tool-answerable queries)
+- Query pipeline execution order is now:
+  - plan
+  - finance tools
+  - optional RAG retrieval/rerank
+  - answer synthesis over tool outputs + retrieved chunks
+- Prompt builders now accept explicit tool context:
+  - `build_draft_prompt(..., tool_context=...)`
+  - `build_refine_prompt(..., tool_context=...)`
+- Streaming API now emits finance tool stage/output events:
+  - status step `tools`
+  - `tool_results` event payload
+  - `tools_ms` timing capture
+- Main query UI stream client now renders a live `tool_results` snapshot in the answer pane while final text generation is still in progress.
+- Generation control UX now decouples answer depth from two-stage refine:
+  - `thinking` mode now controls comprehensive answer style only.
+  - `enable_refine` is explicitly user-toggleable and independent from mode.
+- EdgarTools integration now sets SEC user identity from `USER_EMAIL` via `edgar.set_identity(...)`, and emits a clear tool error when identity is missing/unset.
+- `/ingested_companies` no longer depends solely on `FINRAG_DOC_INDEX_PATH`:
+  - resolves from env var when explicitly set,
+  - otherwise infers `doc_index.jsonl` from active ingest-profile chunk artifacts with latest-path fallback.
+- Main UI now renders finance tool outputs in a dedicated panel instead of injecting snapshot markdown into final answer text.
 
 ### Fixed
 - Citation source jumps now prioritize deterministic line-span highlights (when available) and otherwise match using `source_text` instead of retrieval-enriched text, improving in-file jump accuracy.
