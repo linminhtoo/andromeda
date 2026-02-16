@@ -1934,3 +1934,44 @@
 - Tests:
   - `source .venv/bin/activate && pytest -vvv tests/`
   - Result: `116 passed, 1 warning`.
+
+## 2026-02-17 - Chunk-size tradeoff sweep (single-ticker eval50) + frontier mapping docs
+
+### Commits
+- `50ecdaf332d3db4514daa6cdb72b43558f0e4b3f` - Add chunk-size eval sweep harness and analysis report
+- `4c1633b98c20f50a588f0ed4ca4db6c0905d95f5` - Document prioritized eval frontier tradeoff studies
+
+### Scope
+- Ran a controlled chunk-size sweep for `chunk_size in {256, 512, 1024, 2048}` with deploy-matching generation settings.
+- Built per-size postgres schemas and scored all runs with the same judge settings.
+- Added reusable scripts plus report artifacts.
+- Added a separate prioritized frontier-study plan (no execution in that phase).
+
+### Commands/scripts used
+- Sweep runner: `agent_logs/20260217_014500_run_chunk_size_tradeoff_eval.sh`
+- Metrics collector: `agent_logs/20260217_014500_collect_chunk_size_metrics.py`
+- Report: `agent_logs/chunk_size_tradeoff_17Feb2026.md`
+- Manifest: `eval/results_revamp/chunk_size_study/run_manifest.csv`
+
+### Key run settings
+- Eval set: `eval/eval_queries_revamp_single_balanced_validated_tol05_20260216.jsonl` (n=50)
+- Generation concurrency: 12 threads
+- Query timeout: 600s (corrected from initial 240s for 2048 stability)
+- Judge workers: 8
+- Judge context chars: 65000 (rescored all 4 runs for consistency)
+
+### Results summary
+- `256`: qps `0.2004`, p95 `92565 ms`, factual fail `0.0000`, open faithfulness fail `0.4667`
+- `512`: qps `0.1837`, p95 `115069 ms`, factual fail `0.0000`, open faithfulness fail `0.3333`
+- `1024`: qps `0.1684`, p95 `121490 ms`, factual fail `0.0500`, open faithfulness fail `0.5333`
+- `2048`: qps `0.1587`, p95 `132783 ms`, factual fail `0.0000`, open faithfulness fail `0.4667`
+
+### Interpretation and action
+- `512` is the best quality/latency compromise in this sweep (best open-ended faithfulness fail with moderate latency cost).
+- `1024` is dominated by `512` on both latency and faithfulness for this dataset.
+- `2048` increases tail latency without corresponding quality gain.
+- Next eval optimization iterations should use `chunk_size=512` as primary and keep `256` as speed baseline.
+
+### Notes on anomalies
+- Initial `2048` run with `query-timeout-s=240` produced one timeout and a stuck worker teardown path; it was discarded and rerun at `600s`.
+- A judge run at `80000` context chars also exhibited a tail hang on 2048; rescoring all runs at `65000` fixed this and kept settings consistent.
