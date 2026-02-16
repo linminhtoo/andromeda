@@ -31,6 +31,7 @@ class LLMClient(Protocol):
         temperature: float = 0.1,
         response_model: type[BaseModel] | None = None,
         max_tokens: int | None = None,
+        timeout_s: float | None = None,
     ) -> str: ...
 
     def chat_stream(
@@ -88,6 +89,7 @@ class MistralClientWrapper:
         temperature: float = 0.1,
         response_model: type[BaseModel] | None = None,
         max_tokens: int | None = None,
+        timeout_s: float | None = None,
     ) -> str:
         mistral_messages = [cast(MessagesTypedDict, msg) for msg in messages]
         response_format: MistralResponseFormatTypedDict | None = (
@@ -167,11 +169,14 @@ class OpenAIClientWrapper:
         temperature: float = 0.1,
         response_model: type[BaseModel] | None = None,
         max_tokens: int | None = None,
+        timeout_s: float | None = None,
     ) -> str:
         oa_messages: list[ChatCompletionMessageParam] = [cast(ChatCompletionMessageParam, msg) for msg in messages]
         request_kwargs: dict[str, Any] = {}
         if max_tokens is not None:
             request_kwargs["max_tokens"] = int(max_tokens)
+        if timeout_s is not None and timeout_s > 0:
+            request_kwargs["timeout"] = float(timeout_s)
         if response_model is None:
             res = self.client.chat.completions.create(
                 model=self.chat_model, messages=oa_messages, temperature=temperature, **request_kwargs

@@ -1846,12 +1846,24 @@ class RAGService:
         """
 
         if self._question_mentions_filing_narrative(question):
+            years = sorted({token for token in re.findall(r"\b20\d{2}\b", question)})
+            year_scope_note = ""
+            if years:
+                year_scope_note = (
+                    "- Year-scope handling: interpret requested years as filing-year scope unless the user explicitly "
+                    "asks for fiscal-year scope. In the opening sentence, state both filing date and covered period "
+                    "when they differ.\n"
+                )
             return (
                 "Narrative evidence mode:\n"
-                "- For each key point, include at least one short direct quote from context or tool context.\n"
+                "- Output at most 6 material points.\n"
+                "- For each point, include: point, why it matters, and one short direct quote with citation.\n"
                 "- Do not include a point unless a direct quote supports it.\n"
+                "- Keep quotes short and verbatim from context/tool context.\n"
+                "- Never cite doc/chunk IDs that are absent from the provided context headers.\n"
                 "- If a requested point has no explicit quote support, state: "
-                "'Not explicitly stated in the provided context.'"
+                "'Not explicitly stated in the provided context.'\n"
+                + year_scope_note
             )
         return None
 

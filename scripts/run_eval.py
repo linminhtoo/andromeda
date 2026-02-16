@@ -75,6 +75,12 @@ def main() -> None:
         default=120.0,
         help="Optional per-query timeout in seconds for generation (set <=0 to disable).",
     )
+    ap.add_argument(
+        "--query-max-retries",
+        type=int,
+        default=1,
+        help="Retry count after the first timed-out/transient generation failure.",
+    )
 
     # Filters.
     ap.add_argument("--max-items", type=int, default=None, help="Optional cap on number of queries to run.")
@@ -148,6 +154,7 @@ def main() -> None:
         parallel_backend=args.parallel_backend,
         max_chunks=args.max_chunks,
         query_timeout_s=(float(args.query_timeout_s) if args.query_timeout_s is not None else None),
+        query_max_retries=max(0, int(args.query_max_retries)),
     )
 
     gpu_ids = [str(gpu) for gpu in args.gpu_ids] if args.gpu_ids else None
