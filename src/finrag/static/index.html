@@ -46,7 +46,7 @@
       justify-content: space-between;
       gap: 1rem;
       padding: 1rem 1.25rem;
-      max-width: 1760px;
+      max-width: 2280px;
       margin: 0 auto;
     }
     .brand { display: flex; align-items: baseline; gap: 0.8rem; }
@@ -60,13 +60,13 @@
     .subtitle { color: var(--muted); font-size: 0.9rem; }
     .actions { display:flex; gap: 0.5rem; align-items:center; flex-wrap: wrap; }
     main {
-      max-width: 1760px;
+      max-width: 2280px;
       margin: 0 auto;
       padding: clamp(0.9rem, 1.8vw, 1.35rem);
     }
     .grid {
       display: grid;
-      grid-template-columns: clamp(230px, 17vw, 310px) 1fr;
+      grid-template-columns: clamp(250px, 14vw, 330px) 1fr;
       gap: 1rem;
       align-items: start;
     }
@@ -199,6 +199,20 @@
     .citationLink:hover{
       background: rgba(147,197,253,0.16);
       text-decoration: none;
+    }
+    .toolCitationChip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-family: var(--mono);
+      font-size: 0.78em;
+      padding: 0.08rem 0.4rem;
+      border-radius: 999px;
+      border: 1px solid rgba(15,118,110,0.28);
+      background: rgba(15,118,110,0.09);
+      color: #0f4b46;
+      white-space: nowrap;
+      vertical-align: baseline;
     }
     .markdown p { margin: 0.55rem 0; }
     .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 0.8rem 0 0.4rem 0; }
@@ -384,7 +398,7 @@
       gap: 0;
       align-items: stretch;
       min-width: 0;
-      --sourcesPaneWidth: 520px;
+      --sourcesPaneWidth: 460px;
     }
     .qaMain {
       flex: 1 1 auto;
@@ -411,10 +425,186 @@
     .qaSplitter:focus-visible { outline: 2px solid rgba(14,116,144,0.7); outline-offset: -3px; }
     .qaSources {
       flex: 0 0 var(--sourcesPaneWidth);
-      min-width: 320px;
-      max-width: 70%;
+      min-width: 300px;
+      max-width: 62%;
       min-height: 0;
       padding-left: 1rem;
+    }
+    .conversationThread {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+    .turnCard {
+      border: 1px solid rgba(44,64,82,0.14);
+      border-radius: 12px;
+      background: #f9fcfe;
+      padding: 0.65rem 0.75rem;
+    }
+    .turnMeta {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.5rem;
+    }
+    .turnQuestion {
+      font-weight: 700;
+      font-size: 0.93rem;
+      margin-bottom: 0.45rem;
+      line-height: 1.35rem;
+    }
+    .turnAnswer {
+      font-size: 0.96rem;
+      line-height: 1.45rem;
+    }
+    .ingestedCards {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+    .ingestedCard {
+      border: 1px solid rgba(44,64,82,0.16);
+      border-radius: 12px;
+      background: #f8fcff;
+      overflow: hidden;
+    }
+    .ingestedCardHead {
+      width: 100%;
+      border: none;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.4rem;
+      padding: 0.58rem 0.68rem;
+      background: rgba(14,116,144,0.05);
+      cursor: pointer;
+    }
+    .ingestedCardHead:hover {
+      background: rgba(14,116,144,0.1);
+    }
+    .ingestedCardBody {
+      display: none;
+    }
+    .ingestedCard.open .ingestedCardBody {
+      display: block;
+    }
+    .ingestedCardTitle {
+      display: flex;
+      align-items: baseline;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-right: 0.4rem;
+    }
+    .ingestedTicker {
+      font-family: var(--mono);
+      font-weight: 750;
+      letter-spacing: 0.2px;
+      font-size: 0.88rem;
+    }
+    .ingestedCompany {
+      font-size: 0.84rem;
+      color: #466174;
+    }
+    .ingestedDocTable {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .ingestedDocTable th,
+    .ingestedDocTable td {
+      text-align: left;
+      border-bottom: 1px solid rgba(44,64,82,0.12);
+      padding: 0.42rem 0.38rem;
+      vertical-align: top;
+    }
+    .ingestedDocTable th {
+      color: #3d5367;
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .ingestedDocTable tr:last-child td {
+      border-bottom: none;
+    }
+    .toolResultsPanel {
+      border: 1px solid rgba(44,64,82,0.16);
+      border-radius: 12px;
+      background: #f7fbfe;
+      padding: 0.7rem;
+      margin-bottom: 0.85rem;
+    }
+    .toolResultsGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 0.6rem;
+    }
+    .toolCard {
+      border: 1px solid rgba(44,64,82,0.16);
+      border-radius: 12px;
+      background: #ffffff;
+      padding: 0.6rem;
+    }
+    .toolCardHead {
+      display: flex;
+      gap: 0.4rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 0.45rem;
+    }
+    .toolCardTitle {
+      font-size: 0.84rem;
+      font-family: var(--mono);
+      font-weight: 700;
+      color: #214158;
+    }
+    .toolCardSummary {
+      font-size: 0.82rem;
+      color: #3f556a;
+      line-height: 1.2rem;
+      margin-bottom: 0.45rem;
+    }
+    .toolKv {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.32rem 0.55rem;
+      font-size: 0.79rem;
+    }
+    .toolKv .k {
+      color: #5a6f82;
+      font-family: var(--mono);
+    }
+    .toolKv .v {
+      color: #1f3144;
+      font-family: var(--mono);
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+    .toolNewsList {
+      margin: 0;
+      padding-left: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.38rem;
+    }
+    .toolNewsList li {
+      font-size: 0.81rem;
+      line-height: 1.2rem;
+    }
+    .toolNewsList a {
+      color: #0a5f8a;
+    }
+    .toolChart {
+      width: 100%;
+      height: 130px;
+      display: block;
+    }
+    .toolChartMeta {
+      margin-top: 0.35rem;
+      font-size: 0.78rem;
+      color: #4f6477;
+      font-family: var(--mono);
     }
     body.resizing {
       cursor: col-resize;
@@ -514,6 +704,12 @@
                           <div class="help modeTooltip" id="genModeHelp" role="tooltip"></div>
                         </div>
                       </div>
+                      <div style="margin-bottom: 0.75rem;">
+                        <label class="row" style="gap: 0.5rem; align-items: center;">
+                          <input id="enableRefine" type="checkbox" style="width:auto; margin: 0;" />
+                          <span class="muted">Run draft + refine (two-stage generation)</span>
+                        </label>
+                      </div>
 	                    <div class="kv">
 	                      <div>
 	                        <label class="muted" for="topKRetrieve">top_k_retrieve</label>
@@ -561,7 +757,7 @@
                       </div>
 	                      <input id="ingestedFilter" type="text" placeholder="Filter by ticker or company…" />
 	                      <div class="help" id="ingestedStatus" style="margin: 0.6rem 0;"></div>
-	                      <div class="chunkText" id="ingestedList" style="max-height: 180px;"></div>
+	                      <div class="chunkText" id="ingestedList" style="max-height: 340px;"></div>
 	                    </div>
 	                  </details>
                   </div>
@@ -631,6 +827,22 @@
                       </summary>
                       <div class="chunkBody">
                         <div class="answer markdown" id="draftAnswer"></div>
+                      </div>
+                    </details>
+
+                    <details id="toolResultsDetails" open style="margin-bottom: 0.9rem;">
+                      <summary>
+                        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                          <strong>Tool snapshot</strong>
+                          <span class="pill" id="toolResultsCountPill">0</span>
+                        </div>
+                        <div class="muted" style="font-size: 0.86rem;">toggle</div>
+                      </summary>
+                      <div class="chunkBody">
+                        <div class="toolResultsPanel">
+                          <div class="help" id="toolResultsStatus">No tool results yet.</div>
+                          <div class="toolResultsGrid" id="toolResults"></div>
+                        </div>
                       </div>
                     </details>
 

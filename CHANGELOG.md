@@ -8,21 +8,114 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
-- Standalone vLLM/OpenAI tool-calling probe script: `scripts/test_vllm_tool_call_openai.py`.
 
 ### Changed
-- Reduced query-pipeline duplication in `src/finrag/main.py` by introducing shared `RAGService` helpers for:
-  - retrieval filters
-  - retrieval and reranking
-  - draft/final prompt construction
-  - response assembly
-- Refactored `/query_stream` to reuse the same `RAGService` query helpers used by `answer_question()`, and consolidated repeated draft/final token streaming loops into one local stage helper.
 
 ### Fixed
 
 ### Deprecated
 
 ### Dev
+
+
+## v1.7.0 - 15 Feb 2026
+### Added
+- Tools-first query orchestration in `src/finrag/main.py` with explicit planner tool trace output (`tool_trace`) and query status signaling (`answered`, `clarification_required`, `refused`).
+- Conversation-aware query fields and response metadata:
+  - `conversation_id` on `QueryRequest` / `QueryResponse`
+  - `clarifying_question` on `QueryResponse`
+- Download cutoff control in `scripts/download.py`:
+  - `--year-cutoff` to include only filings with year >= cutoff (for both 10-K and 10-Q pulls).
+- PostgreSQL ticker-catalog retrieval primitive:
+  - `PostgresDB.list_ingested_companies()`
+  - `PostgresHybridRetriever.list_ingested_companies()`
+- New modular query-serving support files:
+  - `src/finrag/query_streaming.py` (stream orchestration + cancellation registry)
+  - `src/finrag/history_store.py` (history persistence/query APIs)
+  - `src/finrag/source_access.py` (source file resolution and inline text loading)
+  - `src/finrag/ingested_companies.py` (doc-index parsing + company-name caching)
+- Runtime service builder module:
+  - `src/finrag/runtime_builders.py` for env/config parsing, LLM/retriever/reranker builders, and ingestion runtime config assembly.
+- Finance tool adapter module:
+  - `src/finrag/finance_tools.py` with typed wrappers for:
+    - yfinance market snapshot/news/price-history fetches
+    - edgartools annual/quarterly financial metrics + statement snapshots
+- Finance tool result payload surfaced in API responses:
+  - `QueryResponse.tool_results`
+  - normalized status enum (`ok`, `no_data`, `error`)
+- New backend tests for tools-first orchestration:
+  - `tests/test_finance_tools.py`
+  - `tests/test_query_runtime_tools_first.py`
+- Dedicated answer-pane finance snapshot section in the main UI:
+  - separate tool results panel with chart/cards rendering for
+    - `yfinance_get_price_history`
+    - `yfinance_get_ticker_info`
+    - `yfinance_get_ticker_news`
+  - independent from final LLM markdown answer rendering.
+- Tool citation chip rendering in answer markdown for `[tool=...]` markers.
+
+### Changed
+- Ingestion now defaults to profile-first artifact layout:
+  - `download`, `process_html_to_markdown`, and `chunk` write under `data/ingest_profiles/<profile>/...` when output dirs are not explicitly provided.
+  - `build_index` now defaults `--ingest-output-dir` from profile chunk settings (or profile-scoped chunk path fallback).
+  - `build_index` and runtime config now default PostgreSQL schema to the active ingest profile name when schema is not explicitly set.
+- Shell wrappers now default to profile-scoped paths/schema:
+  - `scripts/download.sh`
+  - `scripts/process_html_to_markdown.sh`
+  - `scripts/chunk.sh`
+  - `scripts/build_index.sh`
+- `MarkdownTablePreservingChunker` now uses a Hugging Face tokenizer for token counting and overlap windows instead of whitespace heuristics, improving adherence to `max_tokens`/`overlap_tokens`.
+- Reduced query-pipeline duplication in `src/finrag/main.py` by introducing shared `RAGService` helpers for:
+  - retrieval filters
+  - retrieval and reranking
+  - draft/final prompt construction
+  - response assembly
+- Refactored `/query_stream` to reuse the same `RAGService` query helpers used by `answer_question()`, and consolidated repeated draft/final token streaming loops into one local stage helper.
+- `/query` and `/query_stream` now run a planner stage before retrieval and can short-circuit with clarification/refusal responses without entering retrieval/rerank generation stages.
+- Multi-entity retrieval now supports per-ticker retrieval fan-out + merge with ticker-coverage-aware rerank post-processing to improve recall on comparison questions.
+- Frontend query client now persists `conversation_id` across turns and handles clarification/refusal responses in-stream without breaking source/citation rendering.
+- Added shared pipeline execution abstraction in `RAGService`:
+  - `execute_query_pipeline(...)`
+  - `response_from_pipeline(...)`
+  so `/query` and `/query_stream` now consume the same tools-first plan/retrieve/rerank execution path.
+- Extracted shared streamed token stage helper (`stream_text_stage(...)`) to reduce complexity inside `/query_stream` and keep stage streaming behavior reusable.
+- Refactored `src/finrag/main.py` from mixed runtime logic to API wiring:
+  - `/query_stream` now delegates to `run_query_stream(...)`
+  - `/history`, `/source`, and `/ingested_companies` endpoints delegate to dedicated service modules
+  - file length reduced substantially while preserving endpoint behavior.
+- `RAGService` planner now requests structured JSON responses via `llm.chat(..., response_model=PlannerDecision)` and falls back to robust JSON extraction/validation only when needed.
+- Query orchestration status/action semantics are now represented by enums in `query_runtime`:
+  - `QueryStatus` for response/planning status (`answered`, `clarification_required`, `refused`)
+  - `PlannerAction` for planner decisions.
+- Markdown chunk exports now include `line_start`/`line_end` metadata for `MarkdownTablePreservingChunker` chunks, and query payloads now include `source_text` (original chunk text) alongside retrieval text.
+- Planner/runtime now supports tool-mix directives for each question:
+  - `use_yfinance`
+  - `use_edgar_financials`
+  - `use_rag` (RAG treated as callable function, so retrieval can be skipped for simple tool-answerable queries)
+- Query pipeline execution order is now:
+  - plan
+  - finance tools
+  - optional RAG retrieval/rerank
+  - answer synthesis over tool outputs + retrieved chunks
+- Prompt builders now accept explicit tool context:
+  - `build_draft_prompt(..., tool_context=...)`
+  - `build_refine_prompt(..., tool_context=...)`
+- Streaming API now emits finance tool stage/output events:
+  - status step `tools`
+  - `tool_results` event payload
+  - `tools_ms` timing capture
+- Main query UI stream client now renders a live `tool_results` snapshot in the answer pane while final text generation is still in progress.
+- Generation control UX now decouples answer depth from two-stage refine:
+  - `thinking` mode now controls comprehensive answer style only.
+  - `enable_refine` is explicitly user-toggleable and independent from mode.
+- EdgarTools integration now sets SEC user identity from `USER_EMAIL` via `edgar.set_identity(...)`, and emits a clear tool error when identity is missing/unset.
+- `/ingested_companies` no longer depends solely on `FINRAG_DOC_INDEX_PATH`:
+  - resolves from env var when explicitly set,
+  - otherwise infers `doc_index.jsonl` from active ingest-profile chunk artifacts with latest-path fallback.
+- Main UI now renders finance tool outputs in a dedicated panel instead of injecting snapshot markdown into final answer text.
+
+### Fixed
+- Citation source jumps now prioritize deterministic line-span highlights (when available) and otherwise match using `source_text` instead of retrieval-enriched text, improving in-file jump accuracy.
 
 
 ## v1.6.0 - 14 Feb 2026
@@ -78,6 +171,9 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - progress activity feed is collapsed by default
   - draft panel is hidden by default for non-refine modes
   - layout width and answer readability spacing were tightened
+- Main query UI history now groups by `conversation_id` so multi-turn exchanges appear as one conversation entry in the sidebar and render as a single scrollable thread in the answer pane.
+- Main query UI desktop layout now uses a wider container and rebalanced pane constraints so the central answer area has more horizontal room on large screens.
+- `/ingested_companies` now returns per-ticker document metadata (count/chunk totals/latest filing + document list), and the UI ingested panel now renders interactive expandable ticker cards with document-level details and source/chunk links.
 - QA citation prompting now explicitly asks for chunk-level inline citations in the form `[doc=... chunk=...]`.
 
 ### Fixed

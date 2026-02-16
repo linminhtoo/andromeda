@@ -1,6 +1,6 @@
-import { safeText } from '../shared/html.js';
-import { formatDuration } from '../shared/time.js';
-import { renderHistoryList } from './history.js';
+import { escapeHtmlAttr, safeText, sanitizeHref } from '../shared/html.js';
+import { fmtDate, formatDuration } from '../shared/time.js';
+import { ConversationHistoryGroup, groupHistoryByConversation, renderHistoryList } from './history.js';
 import { renderChunks } from './chunks.js';
 import { CitationManager, extractDocMeta, formatCitationLabelFromChunk, formatDocMetaLine } from './citations.js';
 import { els, DEFAULT_ANSWER_PANE_PCT, DEFAULT_SOURCES_PANE_WIDTH_PX, STEP_ORDER } from './dom.js';
@@ -13,11 +13,15 @@ import { readLocalHistory, readSettings, readUi, writeLocalHistory, writeSetting
 import { buildChunksBySource, isMarkdownSource, SourceViewer } from './source-viewer.js';
 
 let historyItems: any[] = [];
+let historyGroups: ConversationHistoryGroup[] = [];
 let activeEntry: any = null;
 let lastQueryResponse: any = null;
 let lastRerankedChunks: any[] = [];
 let lastRetrievedChunks: any[] = [];
+let lastToolResults: any[] = [];
 let activeStream: { controller: AbortController; requestId: string | null } | null = null;
+let activeConversationId: string | null = null;
+let activeConversationKey: string | null = null;
 let activeIngestJobId: string | null = null;
 let activeIngestPollHandle: number | null = null;
 
@@ -63,10 +67,11 @@ function renderAnswerMarkdown(md: string, { citations = false }: { citations?: b
   });
 }
 
-/** Return true when current generation mode is expected to emit a draft stage. */
-function modeUsesDraft(modeOverride?: unknown): boolean {
-  const mode =
-    String(modeOverride || els.genMode?.value || '').trim().toLowerCase() || generationModes.getDefaultMode() || 'normal';
+/** Return true when current controls indicate two-stage draft+refine generation. */
+function modeUsesDraft(modeOverride?: unknown, refineOverride?: unknown): boolean {
+  if (refineOverride !== undefined && refineOverride !== null) return Boolean(refineOverride);
+  if (els.enableRefine) return Boolean(els.enableRefine.checked);
+  const mode = String(modeOverride || els.genMode?.value || '').trim().toLowerCase() || generationModes.getDefaultMode() || 'normal';
   return generationModes.modeUsesDraft(mode);
 }
 
@@ -92,6 +97,176 @@ function expandProgressLog(): void {
   els.progressLogDetails.open = true;
 }
 
+/** Render dedicated tool snapshot panel separate from markdown answer text. */
+function renderToolResults(results: any[]): void {
+  const list = Array.isArray(results) ? results : [];
+  lastToolResults = list;
+  if (els.toolResultsCountPill) els.toolResultsCountPill.textContent = String(list.length);
+  if (els.toolResultsStatus) {
+    els.toolResultsStatus.textContent = list.length ? `Showing ${list.length} tool result${list.length === 1 ? '' : 's'}.` : 'No tool results yet.';
+  }
+  if (!els.toolResults) return;
+  if (!list.length) {
+    els.toolResults.innerHTML = '';
+    return;
+  }
+
+  const formatMetric = (value: unknown): string => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.abs(value) >= 1000 ? value.toLocaleString() : String(value);
+    }
+    return String(value ?? '');
+  };
+
+  const renderPriceChartCard = (item: any): string => {
+    const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {};
+    const series = Array.isArray(payload?.series) ? payload.series : [];
+    const closeSeries = series
+      .map((point: any) => ({
+        t: String(point?.t || ''),
+        close: Number(point?.close),
+      }))
+      .filter((point: any) => Number.isFinite(point.close));
+    if (!closeSeries.length) return '';
+
+    const width = 360;
+    const height = 130;
+    const padX = 14;
+    const padY = 12;
+    const values = closeSeries.map((point: any) => Number(point.close));
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min || 1;
+    const innerW = width - padX * 2;
+    const innerH = height - padY * 2;
+    const points = closeSeries.map((point: any, idx: number) => {
+      const x = padX + (innerW * idx) / Math.max(closeSeries.length - 1, 1);
+      const y = padY + ((max - Number(point.close)) / span) * innerH;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    });
+    const first = Number(closeSeries[0]?.close);
+    const last = Number(closeSeries[closeSeries.length - 1]?.close);
+    const delta = last - first;
+    const deltaPct = first === 0 ? 0 : (delta / first) * 100;
+    return `
+      <article class="toolCard">
+        <div class="toolCardHead">
+          <span class="toolCardTitle">${safeText(String(item?.ticker || 'n/a'))} price history</span>
+          <span class="pill">${safeText(String(payload?.period || 'period'))}</span>
+        </div>
+        <div class="toolCardSummary">${safeText(String(item?.summary || ''))}</div>
+        <svg class="toolChart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Price chart">
+          <rect x="0" y="0" width="${width}" height="${height}" rx="10" ry="10" fill="#f5fafc"></rect>
+          <polyline fill="none" stroke="#0f766e" stroke-width="2.2" points="${safeText(points.join(' '))}"></polyline>
+        </svg>
+        <div class="toolChartMeta">last ${formatMetric(last)} · min ${formatMetric(min)} · max ${formatMetric(max)} · ${delta >= 0 ? '+' : ''}${delta.toFixed(2)} (${deltaPct.toFixed(2)}%)</div>
+      </article>
+    `;
+  };
+
+  const renderInfoCard = (item: any): string => {
+    const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {};
+    const profile = payload?.profile && typeof payload.profile === 'object' ? payload.profile : {};
+    const valuation = payload?.valuation && typeof payload.valuation === 'object' ? payload.valuation : {};
+    const market = payload?.market && typeof payload.market === 'object' ? payload.market : {};
+    const rows = [
+      ['name', profile.longName],
+      ['sector', profile.sector],
+      ['industry', profile.industry],
+      ['marketCap', valuation.marketCap],
+      ['trailingPE', valuation.trailingPE],
+      ['forwardPE', valuation.forwardPE],
+      ['currentPrice', market.currentPrice],
+      ['52wHigh', market.fiftyTwoWeekHigh],
+      ['52wLow', market.fiftyTwoWeekLow],
+    ].filter((row) => row[1] !== undefined && row[1] !== null && String(row[1]).trim() !== '');
+    if (!rows.length) return '';
+    return `
+      <article class="toolCard">
+        <div class="toolCardHead">
+          <span class="toolCardTitle">${safeText(String(item?.ticker || 'n/a'))} company profile</span>
+          <span class="pill">${safeText(String(item?.status || ''))}</span>
+        </div>
+        <div class="toolCardSummary">${safeText(String(item?.summary || ''))}</div>
+        <div class="toolKv">
+          ${rows
+            .slice(0, 10)
+            .map(
+              (row) =>
+                `<div class="k">${safeText(String(row[0]))}</div><div class="v">${safeText(formatMetric(row[1]))}</div>`,
+            )
+            .join('')}
+        </div>
+      </article>
+    `;
+  };
+
+  const renderNewsCard = (item: any): string => {
+    const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {};
+    const articles = Array.isArray(payload?.articles) ? payload.articles : [];
+    if (!articles.length) return '';
+    return `
+      <article class="toolCard">
+        <div class="toolCardHead">
+          <span class="toolCardTitle">${safeText(String(item?.ticker || 'n/a'))} news</span>
+          <span class="pill">${safeText(String(articles.length))} items</span>
+        </div>
+        <div class="toolCardSummary">${safeText(String(item?.summary || ''))}</div>
+        <ol class="toolNewsList">
+          ${articles
+            .slice(0, 6)
+            .map((article: any) => {
+              const title = String(article?.title || article?.summary || '').trim() || '(untitled)';
+              const url = String(article?.url || '').trim();
+              const published = String(article?.published_at || '').trim();
+              const titleHtml = url
+                ? `<a href="${escapeHtmlAttr(sanitizeHref(url))}" target="_blank" rel="noopener">${safeText(title)}</a>`
+                : safeText(title);
+              return `<li>${titleHtml}${published ? ` <span class="muted">(${safeText(published)})</span>` : ''}</li>`;
+            })
+            .join('')}
+        </ol>
+      </article>
+    `;
+  };
+
+  const renderFallbackCard = (item: any): string => {
+    const tool = String(item?.tool || 'tool');
+    const payload = item?.payload;
+    const payloadText = payload ? safeText(JSON.stringify(payload).slice(0, 3000)) : '';
+    return `
+      <article class="toolCard">
+        <div class="toolCardHead">
+          <span class="toolCardTitle">${safeText(tool)}</span>
+          <span class="pill">${safeText(String(item?.ticker || 'n/a'))}</span>
+          <span class="pill">${safeText(String(item?.status || ''))}</span>
+        </div>
+        <div class="toolCardSummary">${safeText(String(item?.summary || ''))}</div>
+        ${payloadText ? `<div class="chunkText">${payloadText}</div>` : ''}
+      </article>
+    `;
+  };
+
+  const cards: string[] = [];
+  for (const item of list) {
+    const tool = String(item?.tool || '').trim().toLowerCase();
+    if (tool === 'yfinance_get_price_history') {
+      cards.push(renderPriceChartCard(item) || renderFallbackCard(item));
+      continue;
+    }
+    if (tool === 'yfinance_get_ticker_info') {
+      cards.push(renderInfoCard(item) || renderFallbackCard(item));
+      continue;
+    }
+    if (tool === 'yfinance_get_ticker_news') {
+      cards.push(renderNewsCard(item) || renderFallbackCard(item));
+      continue;
+    }
+    cards.push(renderFallbackCard(item));
+  }
+  els.toolResults.innerHTML = cards.join('');
+}
+
 /** Read current generation controls into API request settings payload. */
 function currentSettings(): any {
   const toInt = (v: unknown, fallback: number): number => {
@@ -103,6 +278,7 @@ function currentSettings(): any {
 
   return {
     mode,
+    enable_refine: Boolean(els.enableRefine?.checked),
     top_k_retrieve: toInt(els.topKRetrieve.value, 30),
     top_k_rerank: toInt(els.topKRerank.value, 8),
     draft_max_tokens: toInt(els.draftMaxTokens.value, 65536),
@@ -125,6 +301,11 @@ function applySettings(settings: any): void {
   if (settings.top_k_rerank) els.topKRerank.value = settings.top_k_rerank;
   if (settings.draft_max_tokens) els.draftMaxTokens.value = settings.draft_max_tokens;
   if (settings.final_max_tokens) els.finalMaxTokens.value = settings.final_max_tokens;
+  if (els.enableRefine) {
+    const hasExplicit = settings.enable_refine !== undefined && settings.enable_refine !== null;
+    if (hasExplicit) els.enableRefine.checked = Boolean(settings.enable_refine);
+    else els.enableRefine.checked = generationModes.modeUsesDraft(mode);
+  }
 }
 
 /** Check backend health endpoint and update status pill styling/text. */
@@ -144,18 +325,16 @@ async function checkHealth(): Promise<void> {
 
 /** Render history sidebar from current in-memory history cache. */
 function renderHistory(): void {
+  historyGroups = groupHistoryByConversation(historyItems);
   renderHistoryList({
-    items: historyItems,
+    groups: historyGroups,
     filterValue: String(els.historyFilter?.value || ''),
-    activeEntryId: activeEntry?.id || null,
+    activeConversationKey,
     historyCountEl: els.historyCount,
     historyListEl: els.historyList,
     steps: STEP_ORDER,
-    onSelect: (entry) => {
-      activeEntry = entry;
-      els.activeEntryPill.textContent = entry.id ? `selected: ${entry.id.slice(0, 8)}` : 'selected';
-      renderHistory();
-      showEntry(entry);
+    onSelect: (group) => {
+      showConversation(group);
     },
   });
 }
@@ -184,9 +363,85 @@ function renderChunkList(
   });
 }
 
-/** Display a selected history entry in the main answer/debug panes. */
-function showEntry(entry: any): void {
-  if (!entry) return;
+/** Build one HTML block with all turns from a selected conversation. */
+function renderConversationThread(entriesNewestFirst: any[]): string {
+  const ordered = [...entriesNewestFirst].reverse();
+  const html = ordered.map((entry, idx) => {
+    const turn = idx + 1;
+    const createdAt = String(entry?.created_at || '').trim();
+    const question = String(entry?.request?.question || '').trim() || '(missing question)';
+    const res = entry?.response || {};
+    const status = String(res?.status || 'answered').trim().toLowerCase();
+    let answerText = String(res?.final_answer || '').trim();
+    if (status === 'clarification_required' && !answerText) {
+      answerText = String(res?.clarifying_question || '').trim();
+    }
+    if (status === 'refused' && !answerText) {
+      answerText = 'The request was refused.';
+    }
+    if (!answerText) answerText = '(empty answer)';
+
+    const statusClass = status === 'answered' ? 'ok' : status === 'refused' ? 'bad' : '';
+    const answerHtml = renderAnswerMarkdown(answerText, { citations: true });
+    return `
+      <article class="turnCard" data-turn-index="${turn}">
+        <div class="turnMeta">
+          <span class="pill">turn ${turn}</span>
+          ${status ? `<span class="pill ${statusClass}">${safeText(status)}</span>` : ''}
+          ${createdAt ? `<span class="pill">${safeText(fmtDate(createdAt))}</span>` : ''}
+        </div>
+        <div class="turnQuestion">${safeText(question)}</div>
+        <div class="turnAnswer markdown">${answerHtml}</div>
+      </article>
+    `;
+  });
+  return `<section class="conversationThread">${html.join('')}</section>`;
+}
+
+/** Return the active group object by its stable list key. */
+function groupByKey(key: string | null): ConversationHistoryGroup | null {
+  if (!key) return null;
+  const found = historyGroups.find((group) => group.key === key);
+  return found || null;
+}
+
+/** Return the active group object by conversation id. */
+function groupByConversationId(conversationId: string | null): ConversationHistoryGroup | null {
+  const cid = String(conversationId || '').trim();
+  if (!cid) return null;
+  const found = historyGroups.find((group) => group.conversation_id === cid);
+  return found || null;
+}
+
+/** Keep active conversation selection stable after history refreshes. */
+function syncActiveConversationAfterHistoryRefresh(): void {
+  const fromConversationId = groupByConversationId(activeConversationId);
+  if (fromConversationId) {
+    showConversation(fromConversationId);
+    return;
+  }
+  const fromKey = groupByKey(activeConversationKey);
+  if (fromKey) {
+    showConversation(fromKey);
+    return;
+  }
+  if (!activeConversationKey && historyGroups.length) return;
+  activeConversationKey = null;
+  activeEntry = null;
+}
+
+/** Display a selected conversation in the main answer/debug panes. */
+function showConversation(group: ConversationHistoryGroup, opts: { rerenderHistory?: boolean } = {}): void {
+  const entry = group?.latest;
+  if (!group || !entry) return;
+
+  activeConversationKey = group.key;
+  activeEntry = entry;
+  activeConversationId = group.conversation_id;
+  els.activeEntryPill.textContent = group.conversation_id
+    ? `${group.conversation_id.slice(0, 8)} · ${group.entries.length} turn${group.entries.length === 1 ? '' : 's'}`
+    : `entry · ${group.entries.length} turn${group.entries.length === 1 ? '' : 's'}`;
+  if (opts.rerenderHistory !== false) renderHistory();
 
   const res = entry.response || {};
   const draft = String(res.draft_answer ?? '');
@@ -216,7 +471,8 @@ function showEntry(entry: any): void {
   } else {
     els.draftAnswer.innerHTML = '';
   }
-  els.finalAnswer.innerHTML = renderAnswerMarkdown(final, { citations: true });
+  renderToolResults(res.tool_results || []);
+  els.finalAnswer.innerHTML = renderConversationThread(group.entries);
 
   renderChunkList(chunks);
 
@@ -231,10 +487,13 @@ function showEntry(entry: any): void {
 /** Reset interactive query view to idle/new-chat state. */
 function resetChatView({ clearQuestion = true, resetAnswerSplit = false }: { clearQuestion?: boolean; resetAnswerSplit?: boolean } = {}): void {
   activeEntry = null;
+  activeConversationId = null;
+  activeConversationKey = null;
   lastQueryResponse = null;
   citationManager.reset();
   lastRerankedChunks = [];
   lastRetrievedChunks = [];
+  lastToolResults = [];
 
   sourceViewer.clearChunks();
 
@@ -255,6 +514,7 @@ function resetChatView({ clearQuestion = true, resetAnswerSplit = false }: { cle
   setDraftPanelVisibility(modeUsesDraft());
   els.draftStatePill.textContent = modeUsesDraft() ? 'waiting' : 'disabled';
   els.draftAnswer.innerHTML = '';
+  renderToolResults([]);
   els.finalAnswer.innerHTML = '<div class="muted">Ask a question below to see the answer here.</div>';
   els.copyAnswerBtn.disabled = true;
   els.copyDebugBtn.disabled = true;
@@ -282,6 +542,7 @@ async function loadHistoryFromServer(): Promise<any[]> {
   if (data.path && els.historyPath) els.historyPath.textContent = data.path;
   writeLocalHistory(items);
   renderHistory();
+  syncActiveConversationAfterHistoryRefresh();
   return items;
 }
 
@@ -511,7 +772,7 @@ async function stopActiveQuery(): Promise<void> {
 /** Execute the full streaming query flow and update UI incrementally. */
 async function doQuery(question: string): Promise<void> {
   const settings = currentSettings();
-  const showDraft = modeUsesDraft(settings.mode);
+  const showDraft = modeUsesDraft(settings.mode, settings.enable_refine);
   writeSettings(settings);
 
   els.queryBtn.disabled = true;
@@ -540,6 +801,7 @@ async function doQuery(question: string): Promise<void> {
   citationManager.reset();
   lastRerankedChunks = [];
   lastRetrievedChunks = [];
+  renderToolResults([]);
 
   let draftText = '';
   let finalText = '';
@@ -595,7 +857,7 @@ async function doQuery(question: string): Promise<void> {
     const res = await fetch('/query_stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, ...settings }),
+      body: JSON.stringify({ question, conversation_id: activeConversationId, ...settings }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -644,6 +906,8 @@ async function doQuery(question: string): Promise<void> {
 
         if (type === 'start') {
           streamState.requestId = String(evt?.request_id || '');
+          const streamConversationId = String(evt?.conversation_id || '').trim();
+          if (streamConversationId) activeConversationId = streamConversationId;
           els.requestIdPill.textContent = streamState.requestId ? 'req ' + streamState.requestId.slice(0, 8) : 'req';
           progressUi.setSummary('running');
           progressUi.append('Started ' + els.requestIdPill.textContent);
@@ -677,6 +941,16 @@ async function doQuery(question: string): Promise<void> {
           const dur = formatDuration(ms, { empty: '' });
           const count = String(evt?.count ?? chunks.length);
           progressUi.append(dur ? `retrieve: ${dur} · ${count} chunks` : `Retrieved ${count} chunks`);
+          continue;
+        }
+
+        if (type === 'tool_results') {
+          const results = Array.isArray(evt?.results) ? evt.results : [];
+          renderToolResults(results);
+          const ms = finishStep('tools', evt?.step_ms ?? evt?.tools_ms);
+          const dur = formatDuration(ms, { empty: '' });
+          const count = String(evt?.count ?? results.length);
+          progressUi.append(dur ? `tools: ${dur} · ${count} results` : `Finance tools: ${count} results`);
           continue;
         }
 
@@ -755,14 +1029,24 @@ async function doQuery(question: string): Promise<void> {
 
         if (type === 'done') {
           const data = evt?.response || {};
+          const responseStatus = String(data?.status || 'answered').trim().toLowerCase();
+          const responseConversationId = String(data?.conversation_id || '').trim();
+          if (responseConversationId) activeConversationId = responseConversationId;
           lastQueryResponse = data;
-          els.queryStatus.textContent = '';
+          if (responseStatus === 'clarification_required') {
+            els.queryStatus.textContent = 'Clarification required.';
+          } else if (responseStatus === 'refused') {
+            els.queryStatus.textContent = 'Request refused.';
+          } else {
+            els.queryStatus.textContent = '';
+          }
 
-          const showDraftResult = showDraft || sawDraftStage;
+          const showDraftResult = responseStatus === 'answered' && (showDraft || sawDraftStage);
           setDraftPanelVisibility(showDraftResult);
           els.draftStatePill.textContent = showDraftResult ? 'done' : 'disabled';
           draftText = String(data.draft_answer ?? draftText);
           finalText = String(data.final_answer ?? finalText);
+          renderToolResults(data.tool_results || []);
           citationManager.updateFromChunks(data.top_chunks || []);
 
           if (showDraftResult) {
@@ -787,9 +1071,15 @@ async function doQuery(question: string): Promise<void> {
           await loadHistoryFromServer();
 
           const timing = evt?.timing_ms && typeof evt.timing_ms === 'object' ? evt.timing_ms : {};
-          finishStep('final', evt?.final_ms ?? timing?.final_ms);
-          if (Object.keys(timing).length) {
-            progressUi.applyTimingMs(timing);
+          if (responseStatus === 'answered') {
+            finishStep('final', evt?.final_ms ?? timing?.final_ms);
+            if (Object.keys(timing).length) {
+              progressUi.applyTimingMs(timing);
+            } else {
+              for (const step of STEP_ORDER) {
+                if (!stepDurations.has(step)) progressUi.setStep(step, 'skipped', null);
+              }
+            }
           } else {
             for (const step of STEP_ORDER) {
               if (!stepDurations.has(step)) progressUi.setStep(step, 'skipped', null);
@@ -805,7 +1095,13 @@ async function doQuery(question: string): Promise<void> {
                 ? totalMs
                 : performance.now() - queryT0;
 
-          progressUi.setSummary(`total ${formatDuration(total)}`, 'ok');
+          if (responseStatus === 'clarification_required') {
+            progressUi.setSummary(`clarification ${formatDuration(total)}`);
+          } else if (responseStatus === 'refused') {
+            progressUi.setSummary(`refused ${formatDuration(total)}`, 'bad');
+          } else {
+            progressUi.setSummary(`total ${formatDuration(total)}`, 'ok');
+          }
           const summary = stepSummary();
           progressUi.append(`Done in ${formatDuration(total)}${summary ? ' · ' + summary : ''}`);
           break;
@@ -953,6 +1249,7 @@ els.copyAnswerBtn.addEventListener('click', async () => {
 els.copyDebugBtn.addEventListener('click', async () => {
   const payload = {
     question: String(els.question.value || ''),
+    conversation_id: activeConversationId,
     settings: currentSettings(),
     response: lastQueryResponse,
     selected_history_entry: activeEntry,
@@ -987,7 +1284,15 @@ els.genMode?.addEventListener('change', () => {
     finalMaxTokens: els.finalMaxTokens,
   });
   generationModes.updateModeHelp(mode, els.genModeHelp);
-  const showDraft = modeUsesDraft(mode);
+  if (els.enableRefine) els.enableRefine.checked = generationModes.modeUsesDraft(mode);
+  const showDraft = modeUsesDraft(mode, els.enableRefine?.checked);
+  setDraftPanelVisibility(showDraft);
+  if (!showDraft) els.draftAnswer.innerHTML = '';
+  if (!activeStream) els.draftStatePill.textContent = showDraft ? 'waiting' : 'disabled';
+  writeSettings(currentSettings());
+});
+els.enableRefine?.addEventListener('change', () => {
+  const showDraft = modeUsesDraft(undefined, els.enableRefine.checked);
   setDraftPanelVisibility(showDraft);
   if (!showDraft) els.draftAnswer.innerHTML = '';
   if (!activeStream) els.draftStatePill.textContent = showDraft ? 'waiting' : 'disabled';
@@ -1028,8 +1333,9 @@ els.ingestTicker?.addEventListener('keydown', (e: KeyboardEvent) => {
   );
   generationModes.updateModeHelp(mode, els.genModeHelp);
   applySettings(saved);
-  setDraftPanelVisibility(modeUsesDraft(mode));
-  if (!modeUsesDraft(mode)) {
+  const showDraft = modeUsesDraft(mode, els.enableRefine?.checked);
+  setDraftPanelVisibility(showDraft);
+  if (!showDraft) {
     els.draftStatePill.textContent = 'disabled';
     els.draftAnswer.innerHTML = '';
   }

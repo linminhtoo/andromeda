@@ -238,6 +238,31 @@
   - `scripts/build_index.py`
   - `scripts/build_index.sh`
 - Added method-specific sparse SQL branching in `PostgresDB.hybrid_search()`:
+
+## 2026-02-15 - Download year cutoff for SEC filings
+
+### Previous state
+- `scripts/download.py` fetched the most recent filings by form type (10-K/10-Q) with no filing-year filter.
+
+### What changed
+- Added CLI flag `--year-cutoff` to `scripts/download.py`.
+- Added year filtering in submission selection so only filings with `filingDate` year `>= year_cutoff` are considered.
+- Threaded `year_cutoff` through `fetch_10ks_for_tickers(...)` and persisted it in ingest profile `download` step settings.
+
+### Why
+- Enables reproducible ingestion windows and simple “recent filings only” pulls (for example, `--year-cutoff 2025`).
+
+### Validation experiments and results
+- Lint/type hooks:
+  - `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- Tests:
+  - `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: pass.
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_175748_download_year_cutoff_validation.sh`
+  - Runs `pre-commit run --all` and `pytest -vvv tests/`.
   - `bm25`: `retrieval_text <@> to_bm25query(...)`
   - `fts`: existing `ts_rank_cd(...)` path
 - Added schema metadata table `retrieval_runtime_config` to persist indexed sparse method and enforce compatibility checks:
@@ -753,3 +778,524 @@
 
 ### Scripts preserved under `agent_logs/`
 - `agent_logs/20260215_validate_query_pipeline_dedup.sh`
+
+## 2026-02-15 - Pylance type fixes for vLLM tool-calling probe script
+
+### Previous state
+- `scripts/test_vllm_tool_call_openai.py` had Pylance typing errors:
+  - `tool_choice` argument passed as plain `str` to `client.chat.completions.create(...)`.
+  - Access to `tool_call.function` without narrowing the union type of returned tool calls.
+
+### What changed
+- Added `ToolChoice = Literal["auto", "required", "none"]` and updated `run_tool_call_probe(...)` signature to use it.
+- Cast CLI `args.tool_choice` to `ToolChoice` before passing to the OpenAI client call.
+- Added explicit runtime type narrowing (`if tool_call.type != "function": raise RuntimeError(...)`) before accessing `tool_call.function` attributes.
+
+### Why
+- Satisfy static typing guarantees expected by Pylance/pyright while keeping runtime behavior unchanged for valid function tool calls.
+
+### Validation experiments and results
+- Lint/format/type:
+  - `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- Tests:
+  - `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `77 passed, 1 warning`.
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_validate_pylance_tool_probe_typing.sh`
+
+## 2026-02-15 - Tools-first answer orchestration + shared sync/stream pipeline execution
+
+### Previous state
+- Complex multi-entity questions could miss target entities during retrieval/rerank, causing ungrounded answers.
+- `/query` and `/query_stream` still required parallel logic updates when core answer flow changed.
+- `/query_stream` had grown into a large mixed-responsibility function (planning, retrieval/rerank logic, generation streaming, response assembly).
+
+### What changed
+- Added tools-first planning and execution primitives in `src/finrag/main.py`:
+  - planner outputs typed decisions with statuses: `answered`, `clarification_required`, `refused`
+  - planner tool trace is returned in API responses (`tool_trace`)
+  - new query metadata fields: `conversation_id`, `status`, `clarifying_question`
+- Added indexed ticker validation and early refusal path:
+  - planner checks requested/inferred tickers against indexed ticker catalog before retrieval
+  - returns explicit refusal when ticker coverage is missing
+- Added per-ticker fan-out retrieval strategy for multi-entity questions:
+  - retrieval can run once per ticker
+  - merged candidates are deduped and passed through ticker-coverage-aware rerank post-processing
+- Added shared pipeline abstractions in `RAGService`:
+  - `execute_query_pipeline(...)` runs plan->retrieve->rerank once
+  - `response_from_pipeline(...)` builds clarification/refusal/final responses from pipeline outputs
+- Rewired both endpoints to share the same core pipeline execution:
+  - `answer_question()` now delegates to shared pipeline abstractions
+  - `/query_stream` now calls the same `execute_query_pipeline(...)` path before streaming generation
+- Reduced `/query_stream` complexity by extracting shared token-stage streaming helper:
+  - `stream_text_stage(...)`
+
+### Additional backend/frontend updates
+- Added PostgreSQL/retriever ticker catalog primitive:
+  - `PostgresDB.list_ingested_companies()`
+  - `PostgresHybridRetriever.list_ingested_companies()`
+- Frontend now persists and sends `conversation_id` across turns and handles non-answer statuses in stream completion payloads.
+- Added/updated tests:
+  - `tests/test_main_api_e2e.py` now covers clarification follow-up flow using conversation context
+  - `tests/test_retriever_postgres.py` now covers ingested-company listing pass-through
+
+### Why
+- Improve robustness for multi-company queries and avoid hallucination-prone answers when required entities are missing from indexed context.
+- Remove duplicated core decision logic so behavior changes are made once and apply to both sync and streaming query APIs.
+- Keep streaming implementation focused on transport/UX concerns rather than re-implementing retrieval orchestration.
+
+### Surprising findings
+- Earlier dedup still left semantic duplication risk because orchestration decisions (plan/branch behavior) were not truly centralized.
+- Extracting a typed pipeline execution object (`QueryPipelineExecution`) made the sync/stream parity boundary explicit and easier to reason about.
+
+### Validation experiments and results
+- Full validation script:
+  - `bash agent_logs/20260215_021319_validate_tools_first_answering_overhaul.sh`
+  - Result: pass (pre-commit, TS checks, frontend unit/UI tests, full `pytest -vvv tests/`, vLLM tool-call probe).
+- Targeted backend checks during iteration:
+  - `source .venv/bin/activate && pytest -q tests/test_main_api_e2e.py tests/test_retriever_postgres.py`
+  - Result: pass (`13 passed`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_021319_validate_tools_first_answering_overhaul.sh`
+- `agent_logs/refactor_15Feb2026_020326_tools_first_answering_overhaul.md`
+
+## 2026-02-15 - `main.py` cleanup pass: extracted endpoint-adjacent services/modules
+
+### Previous state
+- `src/finrag/main.py` had grown to ~1511 lines and mixed endpoint wiring with non-API concerns:
+  - streaming orchestration and cancellation state
+  - source file resolution and inline text loading
+  - ingested-company doc-index parsing/cache logic
+  - query history persistence/readback logic
+- Even after prior dedup work, `query_docs_stream()` remained difficult to maintain due to mixed responsibilities.
+
+### What changed
+- Added new modules and moved logic out of `main.py`:
+  - `src/finrag/query_streaming.py`
+    - `StreamCancelRegistry`
+    - `run_query_stream(...)`
+    - stream payload/timing helpers
+  - `src/finrag/history_store.py`
+    - `QueryHistoryStore` with append/read/read_entry/clear
+  - `src/finrag/source_access.py`
+    - source allowlist resolution and text file loading helpers
+  - `src/finrag/ingested_companies.py`
+    - `IngestedCompaniesService` with doc-index parsing and cache
+- Rewired `src/finrag/main.py` endpoints to delegate to these modules while keeping API contract stable:
+  - `/query_stream` now delegates to `run_query_stream(...)`
+  - `/cancel` uses `StreamCancelRegistry`
+  - `/source` and `/source_text` use `source_access` helpers
+  - `/ingested_companies` uses `IngestedCompaniesService`
+  - `/history` endpoints use `QueryHistoryStore`
+- Kept conversation/status constants available from `finrag.main` for test compatibility.
+- Result: `src/finrag/main.py` reduced from ~1511 lines to ~836 lines.
+
+### Why
+- Enforce clearer separation of concerns so `main.py` focuses on public API endpoints and dependency wiring.
+- Reduce maintenance cost and drift risk when tools-first answer logic evolves.
+- Make streaming and persistence logic independently testable and easier to reason about.
+
+### Validation experiments and results
+- `source .venv/bin/activate && python -m py_compile src/finrag/main.py src/finrag/query_streaming.py src/finrag/history_store.py src/finrag/source_access.py src/finrag/ingested_companies.py`
+  - Result: pass.
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `79 passed, 1 warning`.
+
+### Scripts preserved under `agent_logs/`
+- No new standalone script created for this pass; validations were run directly from shell commands.
+
+## 2026-02-15 - Runtime builder extraction from `main.py` + planner `response_model` usage
+
+### Previous state
+- `src/finrag/main.py` still contained most env/config/service-builder implementation details:
+  - LLM provider/model/env resolution
+  - PostgreSQL retriever/reranker builders
+  - ticker ingestion runtime config + coercion helpers
+- Planner decision call in `src/finrag/query_runtime.py` parsed raw LLM JSON manually without using the existing `response_model` capability.
+
+### What changed
+- Added `src/finrag/runtime_builders.py` and moved runtime construction logic there:
+  - `setup_logging(...)`
+  - LLM helpers (`llm_for_chat`, `llm_for_embeddings`, provider/model/env helpers)
+  - retrieval config helpers (`context_config`, `sparse_search_method`, `postgres_dsn`)
+  - ingestion config assembly (`build_ticker_ingestion_config(project_root=...)`) and coercion helpers
+  - `build_retriever()` and `build_reranker()`
+- Updated `src/finrag/main.py` to import/use these builders instead of maintaining inline implementations.
+- Updated planner structured call in `src/finrag/query_runtime.py`:
+  - now calls `self.llm.chat(..., response_model=PlannerDecision)`
+  - first attempts `PlannerDecision.model_validate_json(raw)`
+  - preserves fallback extraction/validation path when output is not directly valid JSON.
+- Audited all `llm.chat(...)` call sites:
+  - suitable structured-output use now present in `query_runtime` planner and `eval/judges`
+  - remaining calls (`qa`, `context_support`, generation flow) are free-text generation and intentionally do not use `response_model`.
+
+### Why
+- Keep `main.py` focused on app wiring/endpoints and reduce maintenance surface for runtime configuration code.
+- Improve planner reliability by explicitly requesting schema-constrained model output before fallback parsing.
+
+### Validation experiments and results
+- `source .venv/bin/activate && python -m py_compile src/finrag/main.py src/finrag/runtime_builders.py src/finrag/query_runtime.py`
+  - Result: pass.
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `79 passed, 1 warning`.
+
+### Scripts preserved under `agent_logs/`
+- No new standalone script created for this pass; validations were run directly via shell commands.
+
+## 2026-02-15 - Replace free-form status/action strings with enums in query runtime
+
+### Previous state
+- `src/finrag/query_runtime.py` used free-form strings for planner `action` and query `status` fields.
+- Branching/comparisons in planning and response construction relied on string literals.
+
+### What changed
+- Added enums in `src/finrag/query_runtime.py`:
+  - `QueryStatus` (`answered`, `clarification_required`, `refused`)
+  - `PlannerAction` (answer/retrieve/proceed/clarify variants/refuse variants)
+- Updated typed fields and signatures to use enums:
+  - `QueryResponse.status`
+  - `PlannerDecision.action`
+  - `PlannedQuery.status`
+  - `RAGService._normalize_plan_action(...)`
+  - `RAGService.build_query_response(status=...)`
+- Updated internal branching to compare enum members instead of raw strings.
+- Preserved `QUERY_STATUS_*` exports as string-value aliases for compatibility with existing consumers/tests.
+
+### Why
+- Stronger type safety and fewer invalid-string branches in core query orchestration logic.
+- Keeps API behavior stable while improving maintainability internally.
+
+### Validation experiments and results
+- `source .venv/bin/activate && python -m py_compile src/finrag/query_runtime.py src/finrag/main.py src/finrag/query_streaming.py`
+  - Result: pass.
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -q tests/test_main_api_e2e.py tests/test_qa.py`
+  - Result: `12 passed, 1 warning`.
+
+### Scripts preserved under `agent_logs/`
+- No new standalone script created for this pass; validations were run directly via shell commands.
+
+## 2026-02-15 - Follow-up fix: enum constant usage in streaming/conversation paths
+
+### Previous state
+- After enum migration, `query_streaming.py` still passed `QUERY_STATUS_ANSWERED` where `build_query_response(...)` expects `QueryStatus`.
+- Pylance flagged this as `reportArgumentType`.
+
+### What changed
+- Updated status usage in `query_streaming.py` to enum members (`QueryStatus.ANSWERED`).
+- Updated status comparison in `query_conversation.py` to use `QueryStatus.CLARIFICATION_REQUIRED`.
+- Adjusted exported `QUERY_STATUS_*` compatibility constants to reference enum members directly.
+
+### Validation
+- `source .venv/bin/activate && pre-commit run --all` -> pass.
+- `source .venv/bin/activate && pytest -q tests/test_main_api_e2e.py tests/test_qa.py` -> `12 passed`.
+
+## 2026-02-15 - Remove status alias constants; use enums directly
+
+### Previous state
+- `query_runtime` still exposed `QUERY_STATUS_*` alias constants pointing to `QueryStatus` enum members.
+- `main` and tests referenced these aliases.
+
+### What changed
+- Removed `QUERY_STATUS_*` aliases from `src/finrag/query_runtime.py`.
+- Removed alias imports/exports from `src/finrag/main.py`.
+- Updated `tests/test_main_api_e2e.py` to use `QueryStatus` directly.
+- Kept planner action enum strict (no synonym/legacy normalization).
+
+### Why
+- Align code with strict-enum-only design and avoid duplicate status representations.
+
+### Validation
+- `source .venv/bin/activate && pre-commit run --all` -> pass.
+- `source .venv/bin/activate && pytest -q tests/test_main_api_e2e.py tests/test_qa.py` -> `12 passed`.
+
+## 2026-02-15 - Citation source-jump reliability via line spans + source text
+
+### Previous state
+- Citation click opened the source markdown file, but in-file jump could fail because source-viewer highlighting used `chunk.text`.
+- In query payloads, `chunk.text` commonly held retrieval-enriched text (`retrieval_text`), which can differ from original markdown chunk text and break span matching.
+- Markdown chunk exports did not include explicit source line boundaries.
+
+### What changed
+- Added original chunk text to query payloads:
+  - `TopChunk.source_text` in `src/finrag/dataclasses.py`.
+  - populated in `RAGService._serialize_top_chunks(...)` (`src/finrag/query_runtime.py`).
+  - added to stream chunk payloads in `src/finrag/query_streaming.py`.
+- Added markdown chunk line metadata in `src/finrag/chunking.py` (`MarkdownTablePreservingChunker`):
+  - `metadata.line_start` (1-based)
+  - `metadata.line_end` (1-based, inclusive)
+  - emitted for text and table chunks.
+- Exposed line metadata to UI payloads via `RAGService._chunk_metadata_for_ui(...)` in `src/finrag/query_runtime.py`.
+- Updated source viewer highlighting logic (`src/finrag/static/ts/index/source-viewer.ts`):
+  - first uses `line_start`/`line_end` to derive deterministic char spans
+  - falls back to fuzzy match using `source_text` (then `text`/`preview`)
+  - keeps existing rendered/raw behavior and active-chunk scroll.
+- Added/updated test coverage in `tests/test_chunking_markdown.py` for `line_start`/`line_end` metadata.
+- Updated `CHANGELOG.md` (Unreleased) for behavior change.
+
+### Why
+- This keeps retrieval-enriched text useful for QA/ranking display while providing source-faithful text (`source_text`) and deterministic chunk boundaries (`line_start`/`line_end`) for accurate source jumps.
+
+### Surprising findings
+- The root cause was payload semantics, not citation parsing: `chunk.text` intentionally favored retrieval context over raw source text.
+- No PostgreSQL schema migration was required because chunk metadata is already persisted in JSONB.
+
+### Validation experiments and results
+- `source .venv/bin/activate && pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `79 passed, 1 warning`.
+- Re-ran full validation via preserved script:
+  - `bash agent_logs/20260215_043200_validate_citation_jump_line_spans.sh`
+  - Result: pass (`pre-commit` + full test suite).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_043200_validate_citation_jump_line_spans.sh`
+  - Runs TS build, `pre-commit --all`, and `pytest -vvv tests/`.
+
+## 2026-02-15 - Markdown chunker switched to tokenizer-accurate token accounting
+
+### Previous state
+- `MarkdownTablePreservingChunker` estimated tokens by whitespace word count.
+- This caused drift from real model token counts, including oversized chunks relative to configured `max_tokens`.
+
+### What changed
+- Updated `src/finrag/chunking.py` (`MarkdownTablePreservingChunker`) to use `HuggingFaceTokenizer` for:
+  - `_count_tokens` via tokenizer token count
+  - `_tail_overlap` via token-id tail extraction and decode
+  - fallback long-sentence splitting via token-id windows instead of word windows
+- Added `tokenizer_model` and `tokenizer_kwargs` constructor options for `MarkdownTablePreservingChunker`.
+- Updated `tests/test_chunking_markdown.py` oversized-chunk assertion to validate token count with the chunker tokenizer.
+- Updated `CHANGELOG.md` Unreleased/Changed with this behavior change.
+
+### Why
+- Enforce chunk boundaries with the same tokenization regime used by retrieval/generation components.
+- Reduce max-token overshoot in exported chunk JSONL for SEC filings.
+
+### Validation experiments and results
+- `source .venv/bin/activate && pre-commit run --all` -> pass.
+- `source .venv/bin/activate && pytest -vvv tests/` -> `79 passed, 1 warning`.
+- Executed preserved script: `./agent_logs/20260215_tokenizer_chunker_validation.sh` -> pass.
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_tokenizer_chunker_validation.sh`
+  - Runs repo-required lint + tests (`pre-commit run --all`, `pytest -vvv tests/`).
+
+## 2026-02-15 - Ingestion profile-first artifact layout + schema coupling
+
+### Previous state
+- Ingestion scripts relied on flat/shared defaults such as:
+  - `data/sec_filings`
+  - `data/sec_filings_md_secparser`
+- PostgreSQL schema often depended on explicit `--postgres-schema`/`POSTGRES_SCHEMA`.
+- This made experiment isolation rely heavily on manual folder naming/discipline.
+
+### What changed
+- Added profile layout resolver in `src/finrag/ingest_profile.py`:
+  - `IngestProfileLayout`
+  - `ingest_profile_layout(...)`
+  - `postgres_schema_for_ingest_profile(...)`
+- Wired profile-first defaults into scripts:
+  - `scripts/download.py`
+    - default output now resolves to `data/ingest_profiles/<profile>/sec_filings`.
+  - `scripts/process_html_to_markdown.py`
+    - default output now resolves to `data/ingest_profiles/<profile>/sec_filings_md_secparser`.
+  - `scripts/chunk.py`
+    - default markdown input resolves to profile `processed_markdown`.
+    - default output resolves to profile `chunked_<max>_<overlap>`.
+  - `scripts/build_index.py`
+    - `--ingest-output-dir` is now optional; default resolves from profile chunk settings, then profile chunk path fallback.
+    - schema now defaults to `postgres_schema_for_ingest_profile(profile)` when not explicitly provided.
+- Runtime alignment:
+  - `src/finrag/runtime_builders.py` now falls back to profile-derived schema for ingestion config and retriever when schema env/settings are absent.
+- Shell wrappers updated to profile-first path defaults:
+  - `scripts/download.sh`
+  - `scripts/process_html_to_markdown.sh`
+  - `scripts/chunk.sh`
+  - `scripts/build_index.sh`
+- Added tests in `tests/test_ingest_profile.py` for profile layout and schema derivation.
+
+### Why
+- Ensure ingestion artifacts and database schema are strongly tied to a specific ingest profile by default.
+- Make experiment management more intuitive and reduce accidental cross-experiment contamination.
+
+### Surprising findings
+- Existing ingest profiles already persisted step settings, but runtime defaults still pointed to shared flat folders, creating an implicit split-brain between profile metadata and artifact layout.
+
+### Validation experiments and results
+- `source .venv/bin/activate && bash agent_logs/20260215_182045_validate_ingestion_profile_first_layout.sh`
+  - `pre-commit run --all` -> pass.
+  - `pytest -vvv tests/` -> `81 passed, 1 warning`.
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_182045_validate_ingestion_profile_first_layout.sh`
+  - Runs required lint/format/type/UI hooks plus full backend tests.
+
+## 2026-02-15 - UI improvements: conversation-grouped history, wider desktop layout, richer ingested explorer
+
+### Previous state
+- History sidebar rendered one row per request entry, so multi-turn conversations appeared fragmented as separate items.
+- On wide screens, app content remained visually constrained and the answer pane felt cramped relative to available space.
+- Ingested companies panel showed only plain ticker/company text without document-level metadata.
+
+### What changed
+- Conversation-aware history UI
+  - `src/finrag/static/ts/index/history.ts`
+    - added `groupHistoryByConversation(...)` and conversation-level sidebar rendering.
+    - sidebar now shows one item per conversation with turn count + latest-turn metadata.
+  - `src/finrag/static/ts/index/main.ts`
+    - selection now targets a conversation group instead of a single history entry.
+    - answer pane now renders a full multi-turn conversation thread in one scrollable view.
+    - latest turn in selected conversation remains the active detail source for chunks/source viewer/timing.
+- Desktop layout rebalance
+  - `src/finrag/static/index.html`, `src/finrag/static/ts/index/dom.ts`, `src/finrag/static/ts/index/layout.ts`
+    - increased max container width and rebalanced grid/sidebar widths.
+    - reduced default source-pane width and tightened source max ratio to free more room for the answer pane.
+- Ingested companies explorer upgrade
+  - `src/finrag/ingested_companies.py`
+    - endpoint now emits per-ticker aggregates and `documents` details (form/date/doc id/chunk counts/source/chunks paths).
+    - still preserves ticker/company fields for compatibility.
+  - `src/finrag/static/ts/index/ingested.ts`, `src/finrag/static/index.html`
+    - replaced plain text list with interactive ticker cards and document table.
+    - added links to open source/chunk files and searchable document-level filtering.
+    - implemented custom toggle controls (not nested `<summary>`) to keep Playwright strict locators stable.
+- Updated release notes
+  - `CHANGELOG.md` Unreleased/Changed updated for the three UI behavior changes above.
+
+### Surprising findings
+- Existing Playwright tests used `#ingestedDetails summary` strict locator; nested `<summary>` elements inside the upgraded ingested panel caused deterministic test failures.
+- Replacing nested details/summary with custom button toggles preserved interactivity while restoring test compatibility.
+
+### Validation experiments and results
+- Full required validation script executed:
+  - `bash agent_logs/20260215_191500_validate_ui_grouping_layout_ingested.sh`
+  - Result:
+    - `npm run -s build:ts` passed
+    - `PRE_COMMIT_HOME=/tmp/pre-commit-cache VIRTUALENV_OVERRIDE_APP_DATA=/tmp/virtualenv-app-data pre-commit run --all` passed
+    - `pytest -vvv tests/` passed (`81 passed, 2 warnings`)
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_191500_validate_ui_grouping_layout_ingested.sh`
+  - Runs TypeScript build + full pre-commit + full pytest suite.
+
+## 2026-02-15 - Deep tools-first finance integration (yfinance + edgartools + RAG-as-function)
+
+### Previous state
+- Query runtime was tools-first at planning level, but execution still always centered on retrieval/rerank before answer synthesis.
+- There was no native finance tool adapter layer in this repository for:
+  - yfinance price/news/valuation snapshots
+  - edgartools SEC financial metrics/statements
+- RAG retrieval was not represented as an explicitly skippable callable function in planner semantics.
+- Query responses did not expose structured finance tool outputs.
+
+### What changed
+- Added a dedicated finance adapter module:
+  - `src/finrag/finance_tools.py`
+  - Includes typed `FinanceToolResult` + `FinanceToolStatus` and bounded context serialization.
+  - Wraps:
+    - yfinance: `ticker_info`, `ticker_news`, `price_history`
+    - edgartools: annual/quarterly metrics + annual statement snapshots.
+- Extended planner schema and plan state in `src/finrag/query_runtime.py`:
+  - `PlannerDecision`: `use_rag`, `use_yfinance`, `use_edgar_financials`
+  - `PlannedQuery`: same tool usage flags
+  - Added heuristics to resolve tool usage when planner output omits fields.
+- Reframed RAG as callable/optional function in execution:
+  - Query pipeline now runs `finance tools` before retrieval.
+  - If `use_rag=false`, retrieval/rerank are skipped entirely and final synthesis uses tool context only.
+- Added structured tool outputs to API payloads:
+  - `QueryResponse.tool_results`.
+- Updated prompt construction path for synthesis across tool data + retrieved chunks:
+  - `src/finrag/qa.py` now supports `tool_context` in both draft/refine prompt builders.
+- Updated streaming runtime in `src/finrag/query_streaming.py`:
+  - new `tools` status step
+  - new `tool_results` stream event
+  - new `tools_ms` timing capture
+  - streaming generation now passes tool context through prompt builders.
+- Added focused test coverage:
+  - `tests/test_finance_tools.py`
+  - `tests/test_query_runtime_tools_first.py`
+  - updated `tests/test_qa.py` for `tool_context` prompt expectations.
+
+### Why
+- Enables complementary use of tool data and RAG chunks in one synthesis pass.
+- Enables tool-only fast path for direct metric/valuation/news questions, reducing unnecessary retrieval cost.
+- Prepares backend payloads/events for richer answer-pane rendering of finance artifacts during stream execution.
+
+### Surprising findings
+- `pre-commit` failed in this sandbox due readonly default cache path (`/home/mlin/.cache/pre-commit`); fixed by setting `PRE_COMMIT_HOME=/tmp/pre-commit-cache`.
+- Existing frontend streaming loop safely ignores unknown event types, so backend `tool_results` event can be introduced without frontend breakage.
+
+### Validation experiments and results
+- Targeted tests while developing:
+  - `source .venv/bin/activate && pytest -q tests/test_finance_tools.py tests/test_query_runtime_tools_first.py tests/test_qa.py`
+  - Result: pass (`9 passed`).
+- Required lint/type/UI checks:
+  - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - Result: pass.
+- Required full backend tests:
+  - `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: pass (`86 passed, 2 warnings`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/tools_first_finance_integration_20260215_202851.md`
+  - Planning document (phased approach + acceptance criteria + files list).
+
+### Follow-up update (same scope)
+- Added live frontend rendering for streamed finance tool outputs:
+  - `src/finrag/static/ts/index/main.ts`
+  - stream handler now consumes `tool_results` events and displays a temporary "Live Tool Snapshot" block in the answer pane while final LLM text is still streaming.
+- Rebuilt TypeScript output (`npm run -s build:ts`) so static JS entrypoints include the new stream behavior.
+- Re-ran required checks after this update:
+  - `PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> pass
+  - `pytest -vvv tests/` -> pass (`86 passed, 2 warnings`)
+
+## 2026-02-15 - Generation controls decoupling + finance tool panel + ingest-profile doc-index inference
+
+### Previous state
+- `thinking` mode implicitly enabled draft+refine, coupling answer depth and two-stage generation.
+- Finance `tool_results` were rendered as temporary markdown text mixed into the final answer area.
+- EdgarTools calls could fail due to missing SEC user identity setup.
+- `/ingested_companies` primarily depended on `FINRAG_DOC_INDEX_PATH`, which was redundant with profile-scoped artifacts.
+
+### What changed
+- Decoupled generation controls:
+  - `src/finrag/generation_controls.py`: `thinking.enable_refine` default changed to `False`.
+  - `src/finrag/static/index.html`, `src/finrag/static/ts/index/dom.ts`, `src/finrag/static/ts/index/main.ts`: added explicit `enableRefine` checkbox and wired request payload persistence (`enable_refine`) independent of mode.
+- EdgarTools identity handling:
+  - `src/finrag/finance_tools.py`: calls `edgar.set_identity(USER_EMAIL)` before company access.
+  - returns explicit `edgar_set_identity` tool error when `USER_EMAIL` is missing/invalid.
+- Tool rendering upgrade in UI:
+  - `src/finrag/static/index.html`, `src/finrag/static/ts/index/main.ts`: added dedicated "Tool snapshot" panel with tool cards.
+  - includes SVG price chart for `yfinance_get_price_history`, valuation/company metrics card for `yfinance_get_ticker_info`, and linked headlines for `yfinance_get_ticker_news`.
+  - tool panel now renders separately from LLM final markdown.
+- Citation UX improvement:
+  - `src/finrag/static/ts/index/citations.ts`: `[tool=...]` markers now render as visual chips (`toolCitationChip`) while `[doc=...]` remains clickable to source viewer.
+- Doc index inference improvement:
+  - `src/finrag/ingested_companies.py`: resolution order now is explicit env override first, then inferred ingest-profile chunk path (`doc_index.jsonl`) with latest fallback under `chunked_*/`.
+  - `src/finrag/main.py`: removed runtime mutation of `FINRAG_DOC_INDEX_PATH` in ingestion status endpoint and updated endpoint docs.
+  - `src/finrag/static/ts/index/ingested.ts`: updated failure messaging to inferred-path semantics.
+- Tests updated:
+  - `tests/test_finance_tools.py`: adjusted edgar mock to include `set_identity` + added missing-`USER_EMAIL` coverage.
+
+### Why
+- Makes generation controls intuitive and explicit.
+- Keeps financial tool artifacts visible and structured without polluting narrative answer text.
+- Fixes known EdgarTools SEC identity setup failure mode.
+- Removes redundant env-path coupling by honoring ingest-profile artifacts directly.
+
+### Validation experiments and results
+- `npm run -s build:ts` -> pass.
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> pass.
+- `source .venv/bin/activate && pytest -vvv tests/` -> pass (`87 passed, 2 warnings`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260215_211245_validate_generation_controls_tools_ui.sh`
+  - Replays TypeScript build + pre-commit + full tests.

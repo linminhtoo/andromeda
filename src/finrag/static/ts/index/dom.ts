@@ -16,6 +16,7 @@ export const els = {
   question: byId('question'),
   genMode: byId('genMode'),
   genModeHelp: byId('genModeHelp'),
+  enableRefine: byId('enableRefine'),
   topKRetrieve: byId('topKRetrieve'),
   topKRerank: byId('topKRerank'),
   draftMaxTokens: byId('draftMaxTokens'),
@@ -37,6 +38,10 @@ export const els = {
   draftDetails: byId('draftDetails'),
   draftStatePill: byId('draftStatePill'),
   draftAnswer: byId('draftAnswer'),
+  toolResultsDetails: byId('toolResultsDetails'),
+  toolResultsCountPill: byId('toolResultsCountPill'),
+  toolResultsStatus: byId('toolResultsStatus'),
+  toolResults: byId('toolResults'),
   finalAnswer: byId('finalAnswer'),
   retrievedDetails: byId('retrievedDetails'),
   retrievedCountPill: byId('retrievedCountPill'),
@@ -77,7 +82,7 @@ export const LS_HISTORY = 'finrag_history_v1';
 export const LS_SETTINGS = 'finrag_settings_v1';
 export const LS_UI = 'finrag_ui_v1';
 
-export const DEFAULT_SOURCES_PANE_WIDTH_PX = 520;
+export const DEFAULT_SOURCES_PANE_WIDTH_PX = 460;
 export const DEFAULT_ANSWER_PANE_PCT = 85;
 
 export const STEP_ORDER = ['retrieve', 'rerank', 'draft', 'final'];

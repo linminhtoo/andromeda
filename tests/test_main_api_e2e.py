@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 import finrag.main as mainmod
+from finrag.query_runtime import QueryStatus
 
 
 def test_health_endpoint() -> None:
@@ -36,6 +37,8 @@ def test_query_endpoint_uses_service(monkeypatch) -> None:
             filing_date_from=None,
             filing_date_to=None,
             include_retrieved_chunks: bool = False,
+            conversation_id: str | None = None,
+            pre_tool_trace=None,
         ):
             self.calls.append(
                 {
@@ -46,9 +49,17 @@ def test_query_endpoint_uses_service(monkeypatch) -> None:
                     "filing_date_from": filing_date_from,
                     "filing_date_to": filing_date_to,
                     "include_retrieved_chunks": include_retrieved_chunks,
+                    "conversation_id": conversation_id,
+                    "pre_tool_trace": pre_tool_trace,
                 }
             )
-            return mainmod.QueryResponse(draft_answer="D", final_answer="F", top_chunks=[], retrieved_chunks=None)
+            return mainmod.QueryResponse(
+                draft_answer="D",
+                final_answer="F",
+                top_chunks=[],
+                retrieved_chunks=None,
+                conversation_id=conversation_id,
+            )
 
     svc = DummyService()
     monkeypatch.setattr(mainmod, "get_rag_service", lambda: svc)
@@ -58,6 +69,74 @@ def test_query_endpoint_uses_service(monkeypatch) -> None:
     assert resp.status_code == 200
     assert resp.json()["final_answer"] == "F"
     assert svc.calls and svc.calls[0]["mode"] == "quick"
+    assert isinstance(resp.json().get("conversation_id"), str)
+    assert svc.calls[0]["pre_tool_trace"] == []
+
+
+def test_query_endpoint_supports_clarification_followup(monkeypatch) -> None:
+    mainmod._CONVERSATIONS.clear()
+
+    class DummyService:
+        def __init__(self):
+            self.calls = []
+
+        def answer_question(
+            self,
+            *,
+            question,
+            settings,
+            tickers=None,
+            filing_date_from=None,
+            filing_date_to=None,
+            include_retrieved_chunks: bool = False,
+            conversation_id: str | None = None,
+            pre_tool_trace=None,
+        ):
+            _ = settings, tickers, filing_date_from, filing_date_to, include_retrieved_chunks
+            self.calls.append(
+                {"question": question, "conversation_id": conversation_id, "pre_tool_trace": pre_tool_trace}
+            )
+            if "User clarification:" not in str(question):
+                return mainmod.QueryResponse(
+                    status=QueryStatus.CLARIFICATION_REQUIRED,
+                    conversation_id=conversation_id,
+                    clarifying_question="Which ticker should I use?",
+                    draft_answer="Which ticker should I use?",
+                    final_answer="Which ticker should I use?",
+                    top_chunks=[],
+                    retrieved_chunks=None,
+                )
+            return mainmod.QueryResponse(
+                status=QueryStatus.ANSWERED,
+                conversation_id=conversation_id,
+                draft_answer="D",
+                final_answer="F",
+                top_chunks=[],
+                retrieved_chunks=None,
+            )
+
+    svc = DummyService()
+    monkeypatch.setattr(mainmod, "get_rag_service", lambda: svc)
+
+    client = TestClient(mainmod.app)
+    first = client.post("/query", json={"question": "Compare Google and Nvidia."})
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == QueryStatus.CLARIFICATION_REQUIRED.value
+    conversation_id = str(first_payload["conversation_id"])
+    assert conversation_id
+
+    second = client.post("/query", json={"question": "Use NVDA.", "conversation_id": conversation_id})
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == QueryStatus.ANSWERED.value
+
+    assert len(svc.calls) == 2
+    assert "User clarification:" in svc.calls[1]["question"]
+    assert "Use NVDA." in svc.calls[1]["question"]
+    pre_tool_trace = svc.calls[1]["pre_tool_trace"]
+    assert isinstance(pre_tool_trace, list)
+    assert pre_tool_trace and getattr(pre_tool_trace[0], "tool", "") == "apply_user_clarification"
 
 
 def test_cancel_endpoint_not_found_by_default() -> None:

@@ -45,6 +45,14 @@ def test_markdown_table_preserving_chunker_tracks_headings_pages_and_overlap(tmp
     chunks = c.chunk_document(str(md_path), doc_id="d1", metadata_json_path=str(meta_path))
 
     assert [ch.metadata.get("block_type") for ch in chunks] == ["text", "text", "table", "text"]
+    assert chunks[0].metadata.get("line_start") == 4
+    assert chunks[0].metadata.get("line_end") == 4
+    assert chunks[1].metadata.get("line_start") == 6
+    assert chunks[1].metadata.get("line_end") == 6
+    assert chunks[2].metadata.get("line_start") == 8
+    assert chunks[2].metadata.get("line_end") == 10
+    assert chunks[3].metadata.get("line_start") == 12
+    assert chunks[3].metadata.get("line_end") == 12
     assert all(ch.page_no == 7 for ch in chunks)
     assert chunks[0].headings == ["Item 1. Business"]
     assert chunks[1].headings == ["Item 1. Business"]
@@ -88,4 +96,4 @@ def test_markdown_table_preserving_chunker_splits_oversized_text_blocks(tmp_path
     text_chunks = [ch for ch in chunks if (ch.metadata or {}).get("block_type") == "text"]
     assert len(text_chunks) >= 3
     for ch in text_chunks:
-        assert len(ch.text.split()) <= 24  # allows small overlap carry-in
+        assert c._count_tokens(ch.text) <= 24  # allows small overlap carry-in

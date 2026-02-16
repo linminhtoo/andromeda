@@ -306,7 +306,7 @@ class DocumentContextPostprocessor:
         for ch in chunks:
             by_doc[ch.doc_id].append(ch)
 
-        for doc_id, group in by_doc.items():
+        for _, group in by_doc.items():
             source = group[0].source
             doc_ctx: dict = {}
 

@@ -103,6 +103,16 @@ class HybridSearchRow:
     metadata: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class IngestedCompanyRow:
+    """
+    Typed ticker/company row discovered from indexed documents.
+    """
+
+    ticker: str
+    company: str | None
+
+
 def normalize_iso_date(value: str | date | None) -> date | None:
     """
     Normalize a date-like value into `datetime.date`.
@@ -905,6 +915,44 @@ class PostgresDB:
                 cur.execute("DELETE FROM retrieval_runtime_config WHERE id = 1;")
         self._sparse_method_verified_for_indexing = False
         self._sparse_method_verified_for_retrieval = False
+
+    def list_ingested_companies(self) -> list[IngestedCompanyRow]:
+        """
+        Return distinct indexed ticker/company pairs from `documents`.
+        """
+
+        sql = """
+        SELECT
+            UPPER(TRIM(ticker)) AS ticker,
+            NULLIF(TRIM(company), '') AS company
+        FROM documents
+        WHERE ticker IS NOT NULL
+          AND TRIM(ticker) <> ''
+        GROUP BY UPPER(TRIM(ticker)), NULLIF(TRIM(company), '')
+        ORDER BY UPPER(TRIM(ticker)) ASC, NULLIF(TRIM(company), '') ASC;
+        """
+
+        with self.connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+
+        out: list[IngestedCompanyRow] = []
+        seen: set[str] = set()
+        for row in rows:
+            ticker_raw = row["ticker"]
+            ticker = str(ticker_raw).strip().upper()
+            if not ticker or ticker in seen:
+                continue
+            seen.add(ticker)
+            company_raw = row["company"]
+            company = None
+            if isinstance(company_raw, str):
+                company_text = company_raw.strip()
+                if company_text:
+                    company = company_text
+            out.append(IngestedCompanyRow(ticker=ticker, company=company))
+        return out
 
     def export_schema_snapshot(self) -> dict[str, Any]:
         """

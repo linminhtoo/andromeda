@@ -11,6 +11,7 @@ from finrag.db import (
     ChunkRecord,
     DocumentRecord,
     HybridSearchRow,
+    IngestedCompanyRow,
     PostgresDB,
     RetrievalFilters,
     SparseSearchMethod,
@@ -251,6 +252,13 @@ class PostgresHybridRetriever:
         """
 
         return self.db.existing_chunk_ids(chunk_ids)
+
+    def list_ingested_companies(self) -> list[IngestedCompanyRow]:
+        """
+        Return indexed ticker/company rows from PostgreSQL corpus metadata.
+        """
+
+        return self.db.list_ingested_companies()
 
     def index(self, chunks: list[DocChunk], *, rebuild_bm25: bool = True) -> None:
         """

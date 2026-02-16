@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -89,6 +90,58 @@ def ingest_profile_path(project_root: Path, profile_name: str, root_override: st
 
     safe_name = sanitize_ingest_profile_name(profile_name)
     return ingest_profile_dir(project_root, root_override=root_override) / f"{safe_name}.json"
+
+
+@dataclass(frozen=True)
+class IngestProfileLayout:
+    """
+    Profile-scoped filesystem layout for ingestion artifacts.
+    """
+
+    profile_name: str
+    profile_root: Path
+    sec_filings_root: Path
+    sec_filings_raw_html_dir: Path
+    sec_filings_meta_dir: Path
+    sec_filings_md_root: Path
+    sec_filings_md_processed_dir: Path
+    sec_filings_md_debug_dir: Path
+
+    def chunk_output_dir(self, *, max_tokens: int, overlap_tokens: int) -> Path:
+        """
+        Return profile-scoped chunk output directory for chunking parameters.
+        """
+
+        return self.sec_filings_md_root / f"chunked_{int(max_tokens)}_{int(overlap_tokens)}"
+
+
+def ingest_profile_layout(project_root: Path, profile_name: str) -> IngestProfileLayout:
+    """
+    Return deterministic profile-scoped artifact paths.
+    """
+
+    safe_name = sanitize_ingest_profile_name(profile_name)
+    profile_root = (project_root / "data" / "ingest_profiles" / safe_name).resolve()
+    sec_filings_root = profile_root / "sec_filings"
+    sec_filings_md_root = profile_root / "sec_filings_md_secparser"
+    return IngestProfileLayout(
+        profile_name=safe_name,
+        profile_root=profile_root,
+        sec_filings_root=sec_filings_root,
+        sec_filings_raw_html_dir=sec_filings_root / "raw_htmls",
+        sec_filings_meta_dir=sec_filings_root / "meta",
+        sec_filings_md_root=sec_filings_md_root,
+        sec_filings_md_processed_dir=sec_filings_md_root / "processed_markdown",
+        sec_filings_md_debug_dir=sec_filings_md_root / "debug",
+    )
+
+
+def postgres_schema_for_ingest_profile(profile_name: str) -> str:
+    """
+    Return PostgreSQL schema name derived from ingest profile.
+    """
+
+    return sanitize_ingest_profile_name(profile_name)
 
 
 def _json_default(value: Any) -> Any:

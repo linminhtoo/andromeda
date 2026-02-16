@@ -29,7 +29,14 @@ from tqdm import tqdm
 from finrag.context_support import apply_context_strategy, context_builder_from_metadata
 from finrag.dataclasses import DocChunk
 from finrag.db import PostgresDB, SparseSearchMethod
-from finrag.ingest_profile import resolve_ingest_profile_name, update_ingest_profile_step
+from finrag.ingest_profile import (
+    ingest_profile_layout,
+    ingest_profile_step_settings,
+    load_ingest_profile,
+    postgres_schema_for_ingest_profile,
+    resolve_ingest_profile_name,
+    update_ingest_profile_step,
+)
 from finrag.llm_clients import get_llm_client
 from finrag.retriever import PostgresHybridRetriever
 
@@ -38,7 +45,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 @dataclass
 class Args:
-    ingest_output_dir: str
+    ingest_output_dir: str | None
     ingest_profile: str | None
     postgres_dsn: str | None
     postgres_schema: str | None
@@ -159,8 +166,12 @@ def parse_args() -> Args:
     parser = argparse.ArgumentParser(description="Build PostgreSQL retrieval index from chunk exports.")
     parser.add_argument(
         "--ingest-output-dir",
-        required=True,
-        help="Directory produced by scripts/chunk.py (must contain doc_index.jsonl and chunks/).",
+        default=None,
+        help=(
+            "Directory produced by scripts/chunk.py (must contain doc_index.jsonl and chunks/). "
+            "Defaults to profile chunk output from saved chunk step settings, else profile-scoped "
+            "`.../sec_filings_md_secparser/chunked_1024_128`."
+        ),
     )
     parser.add_argument(
         "--ingest-profile",
@@ -176,7 +187,10 @@ def parse_args() -> Args:
     parser.add_argument(
         "--postgres-schema",
         default=(os.getenv("POSTGRES_SCHEMA") or None),
-        help="Optional PostgreSQL schema name for experiment isolation (defaults to POSTGRES_SCHEMA env var).",
+        help=(
+            "Optional PostgreSQL schema name for experiment isolation "
+            "(defaults to POSTGRES_SCHEMA env var, then active ingest profile name)."
+        ),
     )
     parser.add_argument("--llm-provider", default=None, help="Embedding provider (defaults to env LLM_PROVIDER).")
     parser.add_argument(
@@ -422,14 +436,41 @@ def maybe_log_indexed_chunk_sample(
 
 def main() -> int:
     args = parse_args()
+    project_root = Path(__file__).resolve().parents[1]
     profile_name = resolve_ingest_profile_name(args.ingest_profile)
+    profile_layout = ingest_profile_layout(project_root=project_root, profile_name=profile_name)
+    profile_payload = load_ingest_profile(project_root=project_root, profile_name=profile_name)
+    chunk_settings = ingest_profile_step_settings(profile_payload, "chunk")
 
-    ingest_out = Path(args.ingest_output_dir).expanduser().resolve()
+    if args.ingest_output_dir is None:
+        profile_chunk_output = chunk_settings["output_dir"] if "output_dir" in chunk_settings else None
+        if isinstance(profile_chunk_output, str) and profile_chunk_output.strip():
+            ingest_out = Path(profile_chunk_output).expanduser().resolve()
+        else:
+            try:
+                chunk_max_tokens = int(chunk_settings["max_tokens"]) if "max_tokens" in chunk_settings else 1024
+            except (TypeError, ValueError):
+                chunk_max_tokens = 1024
+            try:
+                chunk_overlap_tokens = (
+                    int(chunk_settings["overlap_tokens"]) if "overlap_tokens" in chunk_settings else 128
+                )
+            except (TypeError, ValueError):
+                chunk_overlap_tokens = 128
+            ingest_out = profile_layout.chunk_output_dir(
+                max_tokens=chunk_max_tokens, overlap_tokens=chunk_overlap_tokens
+            )
+    else:
+        ingest_out = Path(args.ingest_output_dir).expanduser().resolve()
+    args.ingest_output_dir = str(ingest_out)
+
+    resolved_postgres_schema = args.postgres_schema or postgres_schema_for_ingest_profile(profile_name)
+    args.postgres_schema = resolved_postgres_schema
+
     doc_index_path = ingest_out / "doc_index.jsonl"
     if not doc_index_path.exists():
         raise SystemExit(f"Missing required file: {doc_index_path}")
 
-    project_root = Path(__file__).resolve().parents[1]
     log_path = setup_logging(project_root)
     logger.info(f"Logging to: {log_path}")
     logger.info(f"Parsed args: {args.to_dict()}")
@@ -439,7 +480,7 @@ def main() -> int:
 
     if (
         (args.reset_corpus or args.recreate_ann_index)
-        and not args.postgres_schema
+        and not resolved_postgres_schema
         and not args.allow_default_schema_mutations
     ):
         raise SystemExit(
@@ -472,7 +513,7 @@ def main() -> int:
         dsn=dsn,
         context_builder=context_builder_from_metadata(key=args.context_metadata_key),
         retrieval_context_key=args.context_metadata_key,
-        postgres_schema=args.postgres_schema,
+        postgres_schema=resolved_postgres_schema,
         sparse_search_method=args.sparse_search_method,
         ann_hnsw_m=args.ann_hnsw_m,
         ann_hnsw_ef_construction=args.ann_hnsw_ef_construction,
