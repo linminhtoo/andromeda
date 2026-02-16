@@ -5,7 +5,20 @@ this file.
 
 This format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+## Unreleased 
+
+### Added 
+
+### Changed 
+
+### Fixed
+
+### Deprecated
+
+### Dev
+
+
+## v1.8.0 - 17 Feb 2026
 
 ### Added
 - Dedicated multi-ticker map/reduce answering path in `src/finrag/query_runtime.py`:
@@ -70,12 +83,6 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `RunConfig` in `src/finrag/eval/runner.py` now always persists full `text` and `context` for retrieved chunks.
 - Judge context assembly in `src/finrag/eval/scoring.py` now prioritizes answer-cited chunk IDs before other retrieved chunks under char budget.
 - `factual_correctness_v1` judge instruction in `src/finrag/eval/judges.py` now treats evidence/context as source of truth when `Expected` conflicts with provided evidence.
-
-### Fixed
-
-### Deprecated
-
-### Dev
 
 
 ## v1.7.0 - 15 Feb 2026
