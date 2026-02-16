@@ -17,7 +17,6 @@ Violations will cause runs to be blocked or reverted and large multimillion doll
 there is already precedence (existing code) in the specific file in the codebase.
 * Adhere to SOLID principles, especially the Single Responsibility Principle.
 * Always import directly from the source module. Never re-export.
-* After each change, you must run the linter. See instructions under "Lint Instructions".
 * Unless absolutely necessary, avoid the use of ugly `dict.get(query_key, None)` or
 `getattr(self, query_attr, None)`. Instead, prefer explicit code that guarantees
 key/attribute existence, such as by using `dataclass`, `TypedDict` and class attributes which are properly typed.
@@ -30,7 +29,8 @@ key/attribute existence, such as by using `dataclass`, `TypedDict` and class att
 
 
 ## Lint Instructions
-* After every change, you must run the formatter and linter and ensure everything is passing.
+* At the very end when wrapping up complete your implementation, you must run the formatter and linter and ensure everything is passing.
+    * Do not run the linter after every change. It is too slow.
 * First, activate the python venv by running `source .venv/bin/activate` from the repository root.
 * Then, run `pre-commit run --all`.
 * We use the pyright pre-commit hook to catch typing issues. There may be a large number of such errors. Try your best to fix them where possible, and document your findings in the `agent_logs/LOGBOOK.md`. If fixing a particular error is too tedious, make a judgement as to whether you should just ignore it in-line, or modify the pyright config (if applicable).
@@ -83,6 +83,9 @@ you must ensure those comments continue to exist in the new/migrated function/co
 
 ## Testing rules
 
+* You must run the tests after wrapping up all changes, or before running an actual piece of work
+which relies on recent changes to the codebase, to ensure that core functions work as expected.
+    - You don't need to run the tests after every little change. Exercise judgement.
 * First, activate the venv by running `source .venv/bin/activate` from the repository root.
 * Then, run tests with `pytest -vvv tests/`.
 * Fix failing tests before proceeding.
