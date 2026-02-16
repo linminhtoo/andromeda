@@ -18,6 +18,73 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Dev
 
 
+## v1.8.0 - 17 Feb 2026
+
+### Added
+- Dedicated multi-ticker map/reduce answering path in `src/finrag/query_runtime.py`:
+  - planner signal `use_multi_ticker_briefs`
+  - per-ticker retrieval/rerank fan-out in parallel
+  - per-ticker brief generation in parallel
+  - final synthesis from per-ticker briefs.
+- New generation controls for multi-ticker behavior:
+  - `brief_max_tokens` (per-ticker brief budget)
+  - `answering_effort` (`low`/`medium`/`high`)
+  exposed in API request models, runtime settings, and frontend advanced controls.
+- New QA prompt builders in `src/finrag/qa.py`:
+  - `build_ticker_brief_prompt(...)`
+  - `build_multi_ticker_synthesis_prompt(...)`
+  - `build_multi_ticker_refine_prompt(...)`.
+- Streaming events for per-ticker subagent ergonomics in `src/finrag/query_streaming.py`:
+  - `briefs_start`
+  - `ticker_brief_delta`
+  - `ticker_brief_done`
+  - `briefs_done`.
+- Frontend answer-pane support for streamed per-ticker brief cards:
+  - new "Per-ticker briefs" panel in `src/finrag/static/index.html`
+  - streaming render support in `src/finrag/static/ts/index/main.ts`.
+- Test coverage updates:
+  - multi-ticker brief pipeline path in `tests/test_query_runtime_tools_first.py`
+  - generation control parsing for effort/brief budget in `tests/test_generation_controls.py`.
+- Eval pipeline upgrades:
+  - New `helpfulness_v1` judge integrated into default scoring for factual/open-ended/distractor/comparison queries.
+  - Multi-judge fail-rate reporting in eval summaries (`*_judge_fail_rates`) plus explicit `*_helpfulness_fail_rate` fields.
+  - Edgar-backed factual-label validation module (`src/finrag/eval/ground_truth_validation.py`) and `make_eval_set.py` CLI switches:
+    - `--validate-factual-with-edgar`
+    - `--edgar-drop-mismatched`
+    - `--edgar-rel-tol`
+    - `--factual-candidate-multiplier`
+  - Eval runner thread backend support for high-throughput environments without multiprocessing semaphores:
+    - `RunConfig.parallel_backend`
+    - `scripts/run_eval.py --parallel-backend {process,thread}`.
+- New tests:
+  - `tests/test_eval_ground_truth_validation.py`
+  - extended `tests/test_eval_runner.py` for thread backend and timeout behavior
+  - new year-window inference coverage in `tests/test_query_runtime_tools_first.py`.
+- Eval dashboard harness:
+  - `scripts/eval_dashboard.py` to aggregate run configs + generation/scoring metrics and render:
+    - `metrics_runs.csv`
+    - `metrics_runs.json`
+    - `index.html` (trend + comparison view).
+
+### Changed
+- Planner instruction contract now explicitly asks for `use_multi_ticker_briefs=true` on comparison-style multi-entity queries.
+- Streaming pipeline now executes `execute_query_pipeline(..., generate_multi_ticker_briefs=False)` and streams per-ticker brief generation live before final synthesis.
+- Progress pipeline UI now includes a dedicated `briefs` step.
+- Query planning now infers filing-date windows from explicit year mentions in question text when no date filters are provided (e.g., `2025` -> `2025-01-01..2025-12-31`).
+- QA prompts now enforce stronger evidence discipline:
+  - disallow unsupported factual inference
+  - require citations for every material claim
+  - explicitly call out missing-period evidence instead of guessing.
+- Eval run artifact defaults now preserve full chunk payloads unless explicitly overridden:
+  - `scripts/run_eval.py` defaults `--chunk-text-chars=0`, `--chunk-context-chars=0`
+  - `RunConfig` defaults in `src/finrag/eval/runner.py` aligned to full chunk persistence.
+- Eval runner chunk payload truncation overrides were removed:
+  - deleted `--chunk-text-chars` and `--chunk-context-chars` from `scripts/run_eval.py`
+  - `RunConfig` in `src/finrag/eval/runner.py` now always persists full `text` and `context` for retrieved chunks.
+- Judge context assembly in `src/finrag/eval/scoring.py` now prioritizes answer-cited chunk IDs before other retrieved chunks under char budget.
+- `factual_correctness_v1` judge instruction in `src/finrag/eval/judges.py` now treats evidence/context as source of truth when `Expected` conflicts with provided evidence.
+
+
 ## v1.7.0 - 15 Feb 2026
 ### Added
 - Tools-first query orchestration in `src/finrag/main.py` with explicit planner tool trace output (`tool_trace`) and query status signaling (`answered`, `clarification_required`, `refused`).

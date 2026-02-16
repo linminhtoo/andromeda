@@ -64,6 +64,98 @@ class StreamAnswerAccumulator:
     final_step_ms: float | None = None
 
 
+async def stream_per_ticker_briefs(
+    *,
+    request: Request,
+    cancel_evt: threading.Event,
+    rag_service: RAGService,
+    pipeline: QueryPipelineExecution,
+    settings: GenerationSettings,
+    started_ms: int,
+    timing_ms: dict[str, float],
+) -> AsyncIterator[bytes]:
+    """
+    Stream per-ticker brief deltas from parallel subagents and persist final briefs on pipeline.
+    """
+
+    tickers = list(pipeline.per_ticker_reranked.keys())
+    if not tickers:
+        return
+
+    yield ndjson_bytes({"type": "status", "step": "briefs", "message": "Generating per-ticker briefs…"})
+    yield ndjson_bytes({"type": "briefs_start", "tickers": tickers, "elapsed_ms": _elapsed(started_ms)})
+
+    t0 = time.perf_counter()
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    worker_threads: list[threading.Thread] = []
+    effort_temperature = rag_service._effort_temperature(settings.answering_effort)
+
+    def run_worker(ticker: str) -> None:
+        text = ""
+        try:
+            prompt = rag_service.build_ticker_brief_prompt(
+                question=pipeline.question,
+                ticker=ticker,
+                settings=settings,
+                reranked=pipeline.per_ticker_reranked[ticker],
+                tool_results=pipeline.tool_results,
+            )
+            for delta in rag_service.llm.chat_stream(prompt, temperature=effort_temperature):
+                if cancel_evt.is_set():
+                    break
+                text += delta
+                payload: dict[str, object] = {"kind": "delta", "ticker": ticker, "delta": delta}
+                loop.call_soon_threadsafe(queue.put_nowait, payload)
+        finally:
+            payload_done: dict[str, object] = {"kind": "done", "ticker": ticker, "text": text}
+            loop.call_soon_threadsafe(queue.put_nowait, payload_done)
+
+    for ticker in tickers:
+        thread = threading.Thread(target=run_worker, args=(ticker,), daemon=True)
+        thread.start()
+        worker_threads.append(thread)
+
+    remaining = len(tickers)
+    briefs: dict[str, str] = {}
+    while remaining > 0:
+        if await request.is_disconnected():
+            cancel_evt.set()
+        if cancel_evt.is_set():
+            break
+        item = await queue.get()
+        kind = str(item.get("kind") or "")
+        ticker = str(item.get("ticker") or "")
+        if kind == "delta":
+            yield ndjson_bytes(
+                {
+                    "type": "ticker_brief_delta",
+                    "ticker": ticker,
+                    "delta": str(item.get("delta") or ""),
+                    "elapsed_ms": _elapsed(started_ms),
+                }
+            )
+            continue
+        if kind == "done":
+            text = str(item.get("text") or "")
+            briefs[ticker] = text
+            remaining -= 1
+            yield ndjson_bytes(
+                {"type": "ticker_brief_done", "ticker": ticker, "chars": len(text), "elapsed_ms": _elapsed(started_ms)}
+            )
+
+    for thread in worker_threads:
+        await asyncio.to_thread(thread.join, 0.2)
+
+    pipeline.per_ticker_briefs = briefs
+    brief_ms = (time.perf_counter() - t0) * 1000.0
+    pipeline.brief_step_ms = brief_ms
+    timing_ms["brief_ms"] = brief_ms
+    yield ndjson_bytes(
+        {"type": "briefs_done", "count": len(briefs), "step_ms": _step_ms(brief_ms), "elapsed_ms": _elapsed(started_ms)}
+    )
+
+
 def stream_chunk_payload(*, scored_chunk, preview_chars: int, text_chars: int) -> dict:
     """
     Convert scored chunk to stream-safe payload.
@@ -150,6 +242,7 @@ async def run_query_stream(
             filing_date_from=req.filing_date_from,
             filing_date_to=req.filing_date_to,
             pre_tool_trace=pre_tool_trace,
+            generate_multi_ticker_briefs=False,
         )
 
         _record_timing(timing_ms=timing_ms, pipeline=pipeline)
@@ -218,6 +311,18 @@ async def run_query_stream(
                 "elapsed_ms": _elapsed(started_ms),
             }
         )
+
+        if pipeline.planned.use_multi_ticker_briefs and pipeline.per_ticker_reranked:
+            async for payload in stream_per_ticker_briefs(
+                request=request,
+                cancel_evt=cancel_evt,
+                rag_service=rag_service,
+                pipeline=pipeline,
+                settings=settings,
+                started_ms=started_ms,
+                timing_ms=timing_ms,
+            ):
+                yield payload
 
         answer = StreamAnswerAccumulator()
         async for payload in stream_answer_text(
@@ -291,6 +396,93 @@ async def stream_answer_text(
     timing_ms: dict[str, float],
     answer: StreamAnswerAccumulator,
 ) -> AsyncIterator[bytes]:
+    if pipeline.planned.use_multi_ticker_briefs and pipeline.per_ticker_briefs:
+        if settings.enable_refine:
+            yield ndjson_bytes(
+                {"type": "status", "step": "draft", "message": "Synthesizing draft answer…", "is_draft": True}
+            )
+            draft_result = StreamStageResult()
+            async for payload in stream_text_stage(
+                llm=rag_service.llm,
+                request=request,
+                cancel_evt=cancel_evt,
+                prompt=rag_service.multi_ticker_synthesis_prompt(
+                    question=pipeline.question,
+                    settings=settings,
+                    per_ticker_briefs=pipeline.per_ticker_briefs,
+                    tool_results=pipeline.tool_results,
+                ),
+                temperature=rag_service._effort_temperature(settings.answering_effort),
+                delta_type="draft_delta",
+                allow_stream=stream_draft_enabled(),
+                result=draft_result,
+            ):
+                yield payload
+            answer.draft = draft_result.text
+            if draft_result.step_ms is not None:
+                timing_ms["draft_ms"] = draft_result.step_ms
+            yield ndjson_bytes(
+                {
+                    "type": "draft_done",
+                    "chars": len(answer.draft),
+                    "step_ms": _step_ms(draft_result.step_ms),
+                    "elapsed_ms": _elapsed(started_ms),
+                }
+            )
+
+            if await request.is_disconnected():
+                cancel_evt.set()
+            if cancel_evt.is_set():
+                return
+
+            yield ndjson_bytes(
+                {"type": "status", "step": "final", "message": "Generating final answer…", "is_draft": False}
+            )
+            final_result = StreamStageResult()
+            async for payload in stream_text_stage(
+                llm=rag_service.llm,
+                request=request,
+                cancel_evt=cancel_evt,
+                prompt=rag_service.multi_ticker_synthesis_prompt(
+                    question=pipeline.question,
+                    settings=settings,
+                    per_ticker_briefs=pipeline.per_ticker_briefs,
+                    tool_results=pipeline.tool_results,
+                    draft_answer=answer.draft,
+                ),
+                temperature=0.0,
+                delta_type="final_delta",
+                allow_stream=True,
+                result=final_result,
+            ):
+                yield payload
+            answer.final = final_result.text
+            answer.final_step_ms = final_result.step_ms
+            return
+
+        yield ndjson_bytes({"type": "status", "step": "final", "message": "Synthesizing answer…"})
+        final_result = StreamStageResult()
+        async for payload in stream_text_stage(
+            llm=rag_service.llm,
+            request=request,
+            cancel_evt=cancel_evt,
+            prompt=rag_service.multi_ticker_synthesis_prompt(
+                question=pipeline.question,
+                settings=settings,
+                per_ticker_briefs=pipeline.per_ticker_briefs,
+                tool_results=pipeline.tool_results,
+            ),
+            temperature=rag_service._effort_temperature(settings.answering_effort),
+            delta_type="final_delta",
+            allow_stream=True,
+            result=final_result,
+        ):
+            yield payload
+        answer.final = final_result.text
+        answer.final_step_ms = final_result.step_ms
+        answer.draft = answer.final
+        return
+
     if settings.enable_refine:
         yield ndjson_bytes({"type": "status", "step": "draft", "message": "Generating draft…", "is_draft": True})
         draft_result = StreamStageResult()
@@ -377,6 +569,8 @@ def _record_timing(*, timing_ms: dict[str, float], pipeline: QueryPipelineExecut
         timing_ms["retrieve_ms"] = pipeline.retrieve_step_ms
     if pipeline.rerank_step_ms is not None:
         timing_ms["rerank_ms"] = pipeline.rerank_step_ms
+    if pipeline.brief_step_ms is not None:
+        timing_ms["brief_ms"] = pipeline.brief_step_ms
 
 
 def _step_ms(value: float | None) -> int | None:

@@ -1,69 +1,311 @@
 # Andromeda
 
-Andromeda is a financial RAG assistant for SEC filings.
-This codebase is now **PostgreSQL-first**:
-- PostgreSQL is the source of truth for corpus data.
-- PostgreSQL also handles hybrid retrieval (`pgvector` + BM25/FTS sparse ranking).
-- Retrieval supports native pre-filtering by ticker/date to reduce false positives.
+Andromeda is a financial question-answering system grounded in SEC filings, with a tools-first runtime that can combine retrieval-augmented generation (RAG), market data tools, and SEC financial statement tools in a single answer pipeline.
 
-This rewrite intentionally removed backend sprawl:
-- Removed Qdrant support.
-- Removed Milvus support.
-- Removed app-level OpenTelemetry/tracing modules.
+## What this system does
 
-Backward compatibility with old vector artifacts is not a goal. Rebuild the corpus/index from source files.
+- Answers filing-grounded questions over an indexed SEC corpus.
+- Uses a planner to decide whether to:
+  - run RAG retrieval,
+  - call finance tools (`yfinance`, `edgar`),
+  - or do both.
+- Streams execution stages and partial output to the UI.
+- Supports conversation-aware follow-ups with clarification/refusal handling.
+- Supports profile-scoped ingestion and schema-scoped indexing for reproducible experiments.
 
-## Architecture
+## System architecture
 
-### Core runtime flow
-
-```mermaid
-flowchart LR
-  UI[Web UI] --> API[FastAPI /query_stream]
-  API --> RET[PostgresHybridRetriever]
-  RET --> PG[(PostgreSQL + pgvector + BM25 or FTS)]
-  API --> RER[Cross-encoder reranker]
-  API --> LLM[Chat LLM]
-  LLM --> API
-  API --> UI
-```
-
-### Ingestion/indexing flow
+### High-level runtime
 
 ```mermaid
 flowchart LR
-  EDGAR[EDGAR filings] --> DL[scripts/download.py]
-  DL --> H2M[scripts/process_html_to_markdown.py]
-  H2M --> CH[scripts/chunk.py]
-  CH --> BI[scripts/build_index.py]
-  BI --> PG[(documents + chunks tables)]
+  U[Web UI] -->|POST /query or /query_stream| API[FastAPI: finrag.main]
+  API --> C[Conversation resolution]
+  API --> P[Planner: action + tool flags]
+  P --> T[Finance tools stage]
+  P --> R[Optional RAG stage]
+  T --> S[Synthesis prompt builder]
+  R --> S
+  S --> L[LLM draft/final generation]
+  L --> API
+  API --> H[History store]
+  API --> U
 ```
 
-## Data model (concise relational schema)
+1. UI sends `/query` or `/query_stream`.
+2. Planner produces a structured decision:
+   - action: `answer`, `clarification_required`, `refused`
+   - tool flags: `use_rag`, `use_yfinance`, `use_edgar_financials`
+3. Runtime executes tools-first pipeline:
+   - finance tools (optional)
+   - retrieval/rerank (optional, controlled by `use_rag`)
+   - answer synthesis over tool context + retrieved chunks
+4. API returns:
+   - final answer
+   - chunk citations
+   - structured `tool_results`
+   - `tool_trace` decision/execution log
 
-The refactor uses a minimal schema to keep joins simple and code maintainable.
+### Core backend modules
 
-### `documents`
-- one row per canonical filing document
-- key metadata used for filtering (`ticker`, `filing_date`, etc.)
+- `src/finrag/main.py`
+  - FastAPI wiring, endpoints, stream cancellation, history hooks.
+- `src/finrag/query_runtime.py`
+  - Planner schema, tools-first pipeline execution, response assembly.
+- `src/finrag/query_streaming.py`
+  - NDJSON stream orchestration and stage event emission.
+- `src/finrag/finance_tools.py`
+  - Typed adapters for `yfinance` and `edgar` tool calls.
+- `src/finrag/retriever.py`, `src/finrag/db.py`
+  - PostgreSQL hybrid retrieval (`pgvector` + sparse search) and corpus persistence.
+- `src/finrag/runtime_builders.py`
+  - Environment/profile-driven runtime construction.
 
-### `chunks`
-- one row per chunk
-- dense vector in `embedding` (`pgvector`)
-- lexical text in `retrieval_text` (indexed with generated `tsvector`)
-- optional `retrieval_context` for contextual embeddings
+## Tools-first query lifecycle
+
+### Planner outputs
+
+Planner decisions are strongly typed and include:
+
+- `action`: `answer | clarification_required | refused`
+- `tickers`, `filing_date_from`, `filing_date_to`
+- `use_per_ticker_retrieval`
+- `use_rag`, `use_yfinance`, `use_edgar_financials`
+
+When planner output is malformed, runtime falls back to deterministic ticker inference.
+
+### Execution order
+
+For `action=answer`, the runtime executes:
+
+1. `plan`
+2. `finance tools`
+3. `retrieve` (only if `use_rag=true`)
+4. `rerank` (if enabled by generation settings)
+5. `draft/final` synthesis
+
+This enables tool-only answers for direct metric/market queries and mixed evidence answers for narrative filing questions.
+
+### App logic flow (`/query` and `/query_stream`)
+
+```mermaid
+flowchart TD
+  A[Request received] --> B[Resolve conversation context]
+  B --> C[Resolve generation settings]
+  C --> D[Plan query]
+  D --> E{Planner action}
+  E -->|refused| F[Return refused response]
+  E -->|clarification_required| G[Return clarifying question]
+  E -->|answer| H[Execute finance tools]
+  H --> I{use_rag?}
+  I -->|no| J[Skip retrieval/rerank]
+  I -->|yes| K[Hybrid retrieve]
+  K --> L[Optional rerank]
+  J --> M[Build synthesis prompt]
+  L --> M
+  M --> N[Generate draft/final answer]
+  N --> O[Persist history + conversation state]
+  O --> P[Return response / stream done]
+```
+
+### Streaming contract (`/query_stream`)
+
+The stream emits NDJSON events such as:
+
+- `start`
+- `status` (`plan`, `tools`, `retrieve`, `rerank`, `draft`, `final`)
+- `tool_results`
+- `retrieved`
+- `reranked`
+- `draft_delta`, `final_delta`
+- `draft_done`
+- `done`
+- `cancelled`
+- `error`
+
+## Data model and retrieval
+
+### PostgreSQL schema
+
+The corpus is intentionally minimal:
+
+- `documents`
+  - filing-level metadata (`ticker`, `filing_date`, etc.)
+- `chunks`
+  - chunk text, metadata, vector embedding, generated `search_tsv`
+- `retrieval_runtime_config`
+  - schema-level sparse-method compatibility guard
+
+### Retrieval strategy
+
+`PostgresHybridRetriever` performs weighted reciprocal-rank fusion over:
+
+- dense rank: `embedding <=> query_vector` (pgvector)
+- sparse rank:
+  - BM25 via `pg_textsearch` (default), or
+  - PostgreSQL FTS (`ts_rank_cd`)
+
+Pre-ranking filters:
+
+- `tickers`
+- `filing_date_from`
+- `filing_date_to`
+
+For multi-ticker comparisons, runtime supports per-ticker retrieval fan-out + merge + ticker-coverage-aware rerank post-processing.
+
+### Sparse-method compatibility safety
+
+Indexing stores the sparse method (`bm25` or `fts`) in `retrieval_runtime_config`.
+Retrieval/indexing fail fast on method mismatch to prevent silent quality regressions.
+
+## Finance tool integration
+
+`src/finrag/finance_tools.py` normalizes tool outputs into typed results:
+
+- `yfinance_get_ticker_info`
+- `yfinance_get_ticker_news`
+- `yfinance_get_price_history`
+- `edgar_get_financial_metrics`
+- `edgar_get_quarterly_financial_metrics`
+- `edgar_get_financial_statements`
+
+Each result includes:
+
+- `tool`
+- `ticker`
+- `status`: `ok | no_data | error`
+- `summary`
+- `payload` (bounded/normalized)
+
+Tool outputs are exposed in API responses (`QueryResponse.tool_results`) and rendered in a dedicated UI panel.
+
+## Ingestion and indexing
+
+### Pipeline
+
+```mermaid
+flowchart LR
+  EDGAR[SEC EDGAR] --> DL[scripts/download.py]
+  DL --> MD[scripts/process_html_to_markdown.py]
+  MD --> CH[scripts/chunk.py]
+  CH --> IDX[scripts/build_index.py]
+  IDX --> PG[(PostgreSQL)]
+  IDX --> CFG[retrieval_runtime_config]
+```
+
+The ingestion/indexing pipeline is:
+
+1. `scripts/download.py`
+2. `scripts/process_html_to_markdown.py`
+3. `scripts/chunk.py`
+4. `scripts/build_index.py`
+
+Shell wrappers (`*.sh`) default to profile-scoped artifact paths under `data/ingest_profiles/<profile>/...`.
+
+### On-the-fly ticker ingestion
+
+Backend jobs (`/ingest`, `/ingest/{job_id}`) run the same pipeline in background threads via `src/finrag/ingestion_jobs.py`, using persisted profile settings when available.
+
+## API surface (primary endpoints)
+
+- `GET /health`
+- `GET /generation_presets`
+- `POST /query`
+- `POST /query_stream`
+- `POST /cancel`
+- `POST /ingest`
+- `GET /ingest/{job_id}`
+- `GET /ingested_companies`
+- `GET /source`
+- `GET /source_text`
+- `GET /history`
+- `GET /history_entry`
+- `DELETE /history`
+
+## Local development
+
+Run from repository root.
+
+### 1) Environment
+
+```bash
+cp .env.example .env
+```
+
+Set at minimum:
+
+- `POSTGRES_DSN` (or `DATABASE_URL`)
+- `OPENAI_API_KEY` (or provider-specific key)
+- model/base-url settings for your runtime
+
+Recommended for experiment isolation:
+
+- `POSTGRES_SCHEMA`
+- `POSTGRES_SPARSE_SEARCH_METHOD`
+
+### 2) Python/Node setup
+
+```bash
+source .venv/bin/activate
+pip install -e ".[dev]"
+npm install
+```
+
+### 3) Build index
+
+```bash
+bash scripts/download.sh
+bash scripts/process_html_to_markdown.sh
+bash scripts/chunk.sh
+bash scripts/build_index.sh
+```
+
+### 4) Launch app
+
+```bash
+bash scripts/launch_app.sh
+```
+
+Default UI routes:
+
+- `http://localhost:8236/` (Q&A)
+- `http://localhost:8236/review` (evaluation review)
+
+## Testing and quality gates
+
+Python:
+
+```bash
+source .venv/bin/activate
+pre-commit run --all
+pytest -vvv tests/
+```
+
+Frontend:
+
+```bash
+npm run -s test:unit
+npm run -s test:ui
+```
+
+## Design decisions and tradeoffs
+
+- Tools-first orchestration improves flexibility: tool-only, RAG-only, or mixed answers per query.
+- PostgreSQL-first storage/retrieval keeps operational footprint compact and reproducible.
+- Profile + schema scoping makes experiments safer on shared databases.
+- Strict sparse-method compatibility checks prioritize correctness over silent fallback behavior.
+- Modular runtime separation (`main` wiring vs. query/runtime services) reduces endpoint complexity and improves testability.
+
+## PostgreSQL data model
 
 ```mermaid
 erDiagram
   DOCUMENTS {
     text doc_id PK
+    text source
     text ticker
     text company
-    text cik
-    text accession
-    text filing_type
     date filing_date
-    date period_end_date
     jsonb metadata
   }
 
@@ -71,246 +313,18 @@ erDiagram
     text chunk_id PK
     text doc_id FK
     int chunk_index
-    int page_no
-    text[] headings
-    text text
     text retrieval_text
     text retrieval_context
     vector embedding
+    tsvector search_tsv
     jsonb metadata
+  }
+
+  RETRIEVAL_RUNTIME_CONFIG {
+    smallint id PK
+    text sparse_search_method
+    timestamptz updated_at
   }
 
   DOCUMENTS ||--o{ CHUNKS : contains
 ```
-
-## Retrieval model
-
-`PostgresHybridRetriever` combines:
-- dense ranking: cosine distance on `embedding`
-- sparse ranking (default): BM25 via `pg_textsearch`
-- sparse ranking (alternative): PostgreSQL FTS (`ts_rank_cd`)
-- fusion: weighted reciprocal-rank fusion (RRF)
-- ANN index strategy: HNSW (pgvector)
-
-Optional retrieval filters are applied before ranking:
-- `tickers`
-- `filing_date_from`
-- `filing_date_to`
-
-## Naming cleanup: `retrieval_text` and `retrieval_context`
-
-Old code overloaded `index_text` and `context`.
-The rewrite makes fields explicit:
-- `retrieval_text`: text used for lexical retrieval and UI/source inspection
-- `retrieval_context`: optional LLM-situated context
-- embedding input is derived as:
-  - `retrieval_text`
-  - or `f"Context:\n{retrieval_context}\n\nChunk:\n{retrieval_text}"`
-
-Database bootstrap includes a safety migration:
-- `chunks.index_text -> chunks.retrieval_text`
-- `chunks.context -> chunks.retrieval_context`
-
-## Quickstart
-
-Run commands from the repository root.
-
-### 0) Environment
-
-```bash
-cp .env.example .env
-```
-
-Fill at least:
-- `POSTGRES_DSN` (or `DATABASE_URL`)
-- `OPENAI_API_KEY`
-- model endpoint base URLs
-
-Optional (recommended for experiment isolation on shared DBs):
-- `POSTGRES_SCHEMA` (used by both indexing and runtime retrieval)
-- `POSTGRES_SPARSE_SEARCH_METHOD` (`bm25` default, or `fts`)
-
-### 1) Start PostgreSQL
-
-BM25 is the default sparse method and requires PostgreSQL 17/18 plus `pg_textsearch`.
-Use an image that already has `pg_textsearch` installed, or switch to FTS mode (`POSTGRES_SPARSE_SEARCH_METHOD=fts`).
-
-FTS-only local option:
-
-```bash
-docker run --name andromeda-pg \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=andromeda \
-  -p 5432:5432 \
-  -d pgvector/pgvector:pg16
-```
-
-### 2) Ingestion + index build
-
-```bash
-./scripts/download.sh
-./scripts/process_html_to_markdown.sh
-./scripts/chunk.sh
-./scripts/build_index.sh
-```
-
-### Safe experiment runs (shared Postgres)
-
-If you run a shared Postgres instance (including a remote Docker host), use one schema per experiment.
-
-Recommended env pattern:
-
-```bash
-POSTGRES_SCHEMA=exp_ctx_neighbors_w1_m24_ef200 \
-POSTGRES_SPARSE_SEARCH_METHOD=bm25 \
-CONTEXT_MAX_TOKENS=256 \
-RESET_CORPUS=true \
-RECREATE_ANN_INDEX=true \
-ANN_HNSW_M=24 \
-ANN_HNSW_EF_CONSTRUCTION=200 \
-bash scripts/build_index.sh
-```
-
-This keeps experiments isolated while reusing the same `POSTGRES_DSN`.
-
-What each knob does:
-- `POSTGRES_SCHEMA`: target schema for tables/indexes. If unset/empty, indexing uses the default schema (`public`).
-- `POSTGRES_SPARSE_SEARCH_METHOD`: sparse ranking mode (`bm25` or `fts`). Must match between indexing and retrieval.
-- `RESET_CORPUS=true`: applies `--reset-corpus` and truncates `documents` + `chunks` in the selected schema.
-- `RECREATE_ANN_INDEX=true`: drops and recreates ANN indexes in the selected schema.
-- `ANN_HNSW_M`: HNSW graph connectivity. Higher typically improves recall but increases index memory/build cost.
-- `ANN_HNSW_EF_CONSTRUCTION`: HNSW build-time search breadth. Higher typically improves recall but slows index build.
-
-Safety behavior:
-- If `POSTGRES_SCHEMA` is unset and you request destructive/index-recreate flags, the script exits early by default.
-- To intentionally mutate default schema, set `ALLOW_DEFAULT_SCHEMA_MUTATIONS=true` (dangerous on production DSNs).
-
-CLI equivalent (without shell env vars):
-
-```bash
-python -m scripts.build_index \
-  --ingest-output-dir ./data/sec_filings_md_secparser/chunked_1024_128 \
-  --postgres-dsn "$POSTGRES_DSN" \
-  --postgres-schema exp_ctx_neighbors_w1_m24_ef200 \
-  --sparse-search-method bm25 \
-  --context neighbors \
-  --context-window 1 \
-  --ann-hnsw-m 24 \
-  --ann-hnsw-ef-construction 200 \
-  --reset-corpus \
-  --recreate-ann-index
-```
-
-Note: runtime retrieval also reads `POSTGRES_SCHEMA` and `POSTGRES_SPARSE_SEARCH_METHOD`, so use matching values when serving/evaluating that experiment.
-
-Compatibility safety:
-- Indexing records the sparse search method in schema metadata.
-- Retrieval raises an explicit error when configured method does not match indexed method.
-
-### 3) Start app
-
-```bash
-./scripts/launch_app.sh
-```
-
-`launch_app.sh` now compiles frontend TypeScript assets before starting Uvicorn.
-Node.js/npm must be installed locally.
-
-Open:
-- Q&A: `http://localhost:8236/`
-- Eval review UI: `http://localhost:8236/review`
-
-### Frontend TypeScript build (manual)
-
-```bash
-npm install
-npm run build:ts
-```
-
-Compiled assets are written to:
-- `src/finrag/static/js/index/main.js`
-- `src/finrag/static/js/review/main.js`
-- additional page submodules under:
-  - `src/finrag/static/js/index/`
-  - `src/finrag/static/js/review/`
-
-TypeScript source is now split into page-focused submodules:
-- `src/finrag/static/ts/index/`
-- `src/finrag/static/ts/review/`
-- shared helpers in `src/finrag/static/ts/shared/`
-
-## UI notes
-
-### Q&A UI (`/`)
-- Refreshed, cleaner non-purple visual theme with improved spacing/contrast.
-- Progress panel now shows a per-step pipeline (`retrieve`, `rerank`, `draft`, `final`) plus a live event feed.
-- History entries persist and display timing data (`timing_ms`) so step durations survive reloads.
-
-### Review UI (`/review`)
-- Refreshed visual theme aligned with the main Q&A UI.
-- Case details include a dedicated "Generation timings" block when `generation.timing_ms` is available.
-
-## Key scripts
-
-- `scripts/process_html_to_markdown.py`
-  - parses SEC filing HTML directly with `sec-parser` (no PDF/OCR roundtrip)
-  - emits normalized markdown to `processed_markdown/`
-  - writes per-file debug metadata to `debug/<filing>/metadata.json`
-
-- `scripts/chunk.py`
-  - default chunker is `markdown_table_preserving` to keep whole tables and heading sections
-  - optional `docling_hybrid` chunker is still available for tokenizer-aware chunking
-
-- `scripts/build_index.py`
-  - reads chunk exports and upserts into PostgreSQL
-  - supports schema-scoped indexing via `--postgres-schema` (or `POSTGRES_SCHEMA`)
-  - supports sparse method selection via `--sparse-search-method` (`bm25` default, `fts` optional)
-  - supports context strategies (`none`, `document`, `neighbors`, `metadata`)
-  - ANN is HNSW-only with optional tuning via `--ann-hnsw-m` and `--ann-hnsw-ef-construction`
-  - supports `--reset-corpus` (`--truncate` alias), `--recreate-ann-index`, and `--skip-existing-chunks`
-  - blocks destructive flags on default schema unless `--allow-default-schema-mutations` is explicitly set
-
-- `scripts/run_eval.py`
-  - runs eval queries through `RAGService.answer_question()`
-  - writes `generations.jsonl`, `generation_summary.json`, `run_config.json`
-
-- `scripts/inspect_collection.py`
-  - inspects indexed chunks directly in PostgreSQL
-  - supports chunk/ticker/date filters
-
-## API filter support
-
-`/query` and `/query_stream` accept:
-- `tickers: list[str]`
-- `filing_date_from: YYYY-MM-DD`
-- `filing_date_to: YYYY-MM-DD`
-
-These filters are enforced in SQL before dense/sparse candidate generation.
-
-## Evaluation workflow
-
-```bash
-python3 scripts/make_eval_set.py \
-  --ingest-output-dir ./data/sec_filings_md_secparser/chunked_1024_128 \
-  --out ./eval/eval_queries.jsonl
-
-python3 -m scripts.run_eval \
-  --eval-queries ./eval/eval_queries.jsonl \
-  --out-dir ./eval/results \
-  --mode normal \
-  --concurrency 8
-
-python3 -m scripts.score_eval --run-dir ./eval/results/eval_run.<...>
-```
-
-Review labels:
-- run app or `bash scripts/launch_review.sh`
-- open `http://localhost:8236/review`
-
-## Breaking changes summary
-
-- Qdrant removed.
-- Milvus removed.
-- App-level OpenTelemetry/tracing modules removed.
-- Env vars like `RETRIEVER_BACKEND`, `MILVUS_*`, `QDRANT_*`, `FINRAG_OTEL_*`, `FINRAG_TRACES_*` are obsolete.
-- `index_text` renamed to `retrieval_text`; `context` renamed to `retrieval_context`.

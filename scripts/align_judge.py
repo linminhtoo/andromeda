@@ -81,7 +81,14 @@ def main() -> None:
     ap.add_argument(
         "--judge",
         default="faithfulness_v1",
-        choices=["faithfulness_v1", "factual_correctness_v1", "refusal_v1", "focus_v1", "comparison_v1"],
+        choices=[
+            "faithfulness_v1",
+            "factual_correctness_v1",
+            "refusal_v1",
+            "focus_v1",
+            "comparison_v1",
+            "helpfulness_v1",
+        ],
         help="Which judge prompt to evaluate.",
     )
     ap.add_argument("--seed", type=int, default=0)

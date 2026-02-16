@@ -45,7 +45,9 @@ FACTUAL_CORRECTNESS_V1 = JudgeSpec(
     description="Binary factual correctness vs expected numeric + evidence.",
     system_prompt=(
         "Evaluate whether the assistant answer is correct given the expected numeric answer and the evidence excerpt.\n"
-        "Return prediction=0 (pass) only if the answer states the correct value (allow minor formatting differences) and is consistent with the evidence.\n"
+        "Use the context and evidence excerpt as source of truth.\n"
+        "If Expected conflicts with evidence/context, trust evidence/context and do not fail solely due to Expected mismatch.\n"
+        "Return prediction=0 (pass) only if the answer states the correct value (allow minor formatting differences) and is consistent with the evidence/context.\n"
         "Return prediction=1 (fail) if the value is wrong, missing, ambiguous, or contradicts the evidence.\n"
         "Output STRICT JSON with keys: explanation_sketchpad (string), prediction (0 or 1).\n"
         "Populate the explanation_sketchpad with careful, step-by-step reasoning to justify your prediction."
@@ -96,6 +98,25 @@ COMPARISON_V1 = JudgeSpec(
     ),
 )
 
+HELPFULNESS_V1 = JudgeSpec(
+    judge_id="helpfulness_v1",
+    description="Binary helpfulness: relevance + comprehensiveness + conciseness for the user question.",
+    system_prompt=(
+        "Evaluate whether the assistant answer is helpful for the user question.\n"
+        "Judge helpfulness on three criteria:\n"
+        "1) Relevance: directly addresses the asked question.\n"
+        "2) Comprehensiveness: includes the key details needed to act on the answer.\n"
+        "3) Conciseness: avoids unnecessary verbosity, fluff, or off-topic content.\n"
+        "Return prediction=0 (pass) only if the answer is clearly helpful overall.\n"
+        "Return prediction=1 (fail) if the answer is missing key requested details, evasive, too vague, "
+        "or excessively verbose/off-topic.\n"
+        "Helpfulness is distinct from faithfulness: do not fail only because of unsupported claims; "
+        "focus on usefulness to the user request.\n"
+        "Output STRICT JSON with keys: explanation_sketchpad (string), prediction (0 or 1).\n"
+        "Populate the explanation_sketchpad with careful, step-by-step reasoning to justify your prediction."
+    ),
+)
+
 
 _JUDGES: dict[str, JudgeSpec] = {
     FAITHFULNESS_V1.judge_id: FAITHFULNESS_V1,
@@ -103,6 +124,7 @@ _JUDGES: dict[str, JudgeSpec] = {
     REFUSAL_V1.judge_id: REFUSAL_V1,
     FOCUS_V1.judge_id: FOCUS_V1,
     COMPARISON_V1.judge_id: COMPARISON_V1,
+    HELPFULNESS_V1.judge_id: HELPFULNESS_V1,
 }
 
 

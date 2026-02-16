@@ -2,7 +2,7 @@ import os
 from typing import Sequence
 
 from finrag.dataclasses import ScoredChunk
-from finrag.generation_controls import AnswerStyle
+from finrag.generation_controls import AnswerStyle, AnsweringEffort
 from finrag.llm_clients import ChatMessage, LLMClient
 from finrag.metadata_models import chunk_metadata_from_value
 
@@ -32,6 +32,24 @@ _REFINE_SYSTEM_PROMPT = (
     "3) clearly state if context is insufficient.\n" + IRRELEVANT_CHUNK_IGNORE_PROMPT
 )
 
+_FAITHFULNESS_SCRUB_SYSTEM_PROMPT = (
+    "You are the final factual editor for an SEC-filing QA assistant. "
+    "Your only job is to remove unsupported claims and return a fully grounded answer."
+)
+
+_EVIDENCE_DISCIPLINE_GUIDANCE = (
+    "Evidence discipline rules:\n"
+    "- Use only the provided context and tool context; do not use prior knowledge.\n"
+    "- Do not infer specific facts, dates, numbers, or events unless they are explicitly supported by context.\n"
+    "- For strategy, growth drivers, and risk questions: include only items explicitly stated in context; "
+    "do not introduce generic industry assumptions.\n"
+    "- Do not reinterpret risk-factor language as positive growth drivers unless the filing explicitly does so.\n"
+    "- If requested information is not explicit in context, state: "
+    "'Not explicitly stated in the provided context.'\n"
+    "- If the question requests a specific period and evidence for that period is missing, state that limitation explicitly.\n"
+    "- If support for a claim is missing, omit the claim and say it is not stated in the provided context."
+)
+
 _STYLE_GUIDANCE: dict[AnswerStyle, str] = {
     "concise": (
         "Write a concise answer. Prefer a short paragraph + bullets. "
@@ -51,14 +69,27 @@ _CITATION_GUIDANCE = (
     "For each claim made, cite sources (chunks) in-line IMMEDIATELY FOLLOWING the claim "
     "using [doc=... chunk=...], "
     "where doc is the source doc_id and chunk is the unique chunk_id. "
+    "Every material claim (numbers, strategy statements, risks, comparisons) must have at least one citation. "
     "Use only the provided context. Remember to ignore irrelevant chunks. "
+    "Do not make uncited factual claims. "
     "Of course, at the very end of your response, please resummarize the sources cited "
     "with a 'Cited Sources' section."
 )
 
+_EFFORT_GUIDANCE: dict[AnsweringEffort, str] = {
+    AnsweringEffort.LOW: "Keep synthesis compact and prioritize the most material differences.",
+    AnsweringEffort.MEDIUM: "Balance breadth and depth; cover key comparisons and caveats.",
+    AnsweringEffort.HIGH: "Be thorough and nuanced; include tradeoffs, caveats, and uncertainty clearly.",
+}
+
 
 def _system_prompt(base: str, *, answer_style: AnswerStyle, extra: str | None) -> str:
-    parts = [base.strip(), _STYLE_GUIDANCE[answer_style].strip(), _CITATION_GUIDANCE.strip()]
+    parts = [
+        base.strip(),
+        _EVIDENCE_DISCIPLINE_GUIDANCE.strip(),
+        _STYLE_GUIDANCE[answer_style].strip(),
+        _CITATION_GUIDANCE.strip(),
+    ]
     if extra and extra.strip():
         parts.append(extra.strip())
     return "\n\n".join(parts)
@@ -70,11 +101,13 @@ def build_context(chunks: Sequence[ScoredChunk], max_tokens: int) -> str:
     used = 0
     context_key = os.getenv("CONTEXT_METADATA_KEY", "retrieval_context").strip() or "retrieval_context"
     for sc in chunks:
-        meta_bits = [f"doc={sc.chunk.doc_id}"]
+        metadata = chunk_metadata_from_value(sc.chunk.metadata)
+        meta_bits = [f"doc={sc.chunk.doc_id}", f"chunk={sc.chunk.id}"]
+        if metadata.section_path:
+            meta_bits.append(f"section={metadata.section_path}")
         # NOTE: page_no is None for all our chunks as the markdown files do not have page numbers
         meta = "[" + " ".join(meta_bits) + "]"
 
-        metadata = chunk_metadata_from_value(sc.chunk.metadata)
         text = (metadata.retrieval_text or sc.chunk.text or "").strip()
         context_raw = metadata.context_for_key(context_key)
         context = context_raw.strip() if context_raw else ""
@@ -134,6 +167,8 @@ def build_draft_prompt(
                 f"{tool_block}"
                 f"Context:\n{ctx1}\n\n"
                 "Write your analysis to address the question based on the provided context. "
+                "Every material claim must be explicitly supported by context; otherwise state "
+                "'Not explicitly stated in the provided context.' "
             ),
         },
     ]
@@ -165,7 +200,170 @@ def build_refine_prompt(
                 f"Draft answer:\n{draft}\n\n"
                 f"{tool_block}"
                 f"Context:\n{ctx2}\n\n"
-                "Now write a refined answer. "
+                "Now write a refined answer with strict evidence discipline. "
+                "Remove any claim that is not explicitly supported by context and replace with "
+                "'Not explicitly stated in the provided context.' when needed. "
+            ),
+        },
+    ]
+
+
+def build_faithfulness_scrub_prompt(
+    question: str,
+    candidate_answer: str,
+    reranked: Sequence[ScoredChunk],
+    *,
+    final_max_tokens: int = 32_768,
+    answer_style: AnswerStyle = "normal",
+    system_extra: str | None = None,
+    tool_context: str | None = None,
+) -> list[ChatMessage]:
+    """
+    Build a strict factual scrub prompt that removes unsupported claims.
+    """
+
+    ctx = build_context(reranked, max_tokens=final_max_tokens)
+    tool_block = ""
+    if tool_context is not None and tool_context.strip():
+        tool_block = f"Tool Context:\n{tool_context.strip()}\n\n"
+    return [
+        {
+            "role": "system",
+            "content": _system_prompt(_FAITHFULNESS_SCRUB_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"User question:\n{question}\n\n"
+                f"Candidate answer:\n{candidate_answer}\n\n"
+                f"{tool_block}"
+                f"Context:\n{ctx}\n\n"
+                "Rewrite the candidate answer so every material claim is explicitly supported by context/tool context. "
+                "Delete unsupported claims instead of softening them. "
+                "If requested information is missing, state exactly: "
+                "'Not explicitly stated in the provided context.' "
+                "Return only the revised final answer."
+            ),
+        },
+    ]
+
+
+def build_ticker_brief_prompt(
+    *,
+    question: str,
+    ticker: str,
+    reranked: Sequence[ScoredChunk],
+    brief_max_tokens: int = 8_000,
+    answer_style: AnswerStyle = "normal",
+    system_extra: str | None = None,
+    tool_context: str | None = None,
+) -> list[ChatMessage]:
+    """
+    Build one-ticker brief prompt for multi-ticker map/reduce answering.
+    """
+
+    ctx = build_context(reranked, max_tokens=brief_max_tokens)
+    tool_block = f"Tool Context:\n{tool_context.strip()}\n\n" if tool_context and tool_context.strip() else ""
+    default_extra = (
+        f"You are writing a standalone investment brief for ticker {ticker}. "
+        "Focus only on this ticker and cite claims from context."
+    )
+    merged_extra = default_extra if not system_extra else f"{default_extra}\n{system_extra.strip()}"
+    return [
+        {
+            "role": "system",
+            "content": _system_prompt(_DRAFT_SYSTEM_PROMPT, answer_style=answer_style, extra=merged_extra),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Question:\n{question}\n\n"
+                f"Target ticker for this brief: {ticker}\n\n"
+                f"{tool_block}"
+                f"Context:\n{ctx}\n\n"
+                "Write an evidence-backed brief for this ticker only."
+            ),
+        },
+    ]
+
+
+def build_multi_ticker_synthesis_prompt(
+    *,
+    question: str,
+    per_ticker_briefs: dict[str, str],
+    final_max_tokens: int = 32_768,
+    answer_style: AnswerStyle = "normal",
+    answering_effort: AnsweringEffort = AnsweringEffort.MEDIUM,
+    tool_context: str | None = None,
+) -> list[ChatMessage]:
+    """
+    Build synthesis prompt that combines per-ticker briefs into one answer.
+    """
+
+    _ = final_max_tokens
+    brief_lines: list[str] = []
+    for ticker, brief in per_ticker_briefs.items():
+        brief_lines.append(f"Ticker {ticker} brief:\n{brief}")
+    brief_block = "\n\n".join(brief_lines) if brief_lines else "(none)"
+    tool_block = f"Tool Context:\n{tool_context.strip()}\n\n" if tool_context and tool_context.strip() else ""
+    system_extra = (
+        "You are synthesizing a final multi-ticker answer from per-ticker briefs. "
+        "Preserve citations from the briefs and do not invent new evidence.\n" + _EFFORT_GUIDANCE[answering_effort]
+    )
+    return [
+        {
+            "role": "system",
+            "content": _system_prompt(_DRAFT_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Question:\n{question}\n\n"
+                f"{tool_block}"
+                f"Per-ticker briefs:\n{brief_block}\n\n"
+                "Write a comparative final answer grounded in the per-ticker briefs."
+            ),
+        },
+    ]
+
+
+def build_multi_ticker_refine_prompt(
+    *,
+    question: str,
+    draft: str,
+    per_ticker_briefs: dict[str, str],
+    final_max_tokens: int = 32_768,
+    answer_style: AnswerStyle = "normal",
+    answering_effort: AnsweringEffort = AnsweringEffort.MEDIUM,
+    tool_context: str | None = None,
+) -> list[ChatMessage]:
+    """
+    Build refine prompt for multi-ticker synthesis.
+    """
+
+    _ = final_max_tokens
+    brief_lines: list[str] = []
+    for ticker, brief in per_ticker_briefs.items():
+        brief_lines.append(f"Ticker {ticker} brief:\n{brief}")
+    brief_block = "\n\n".join(brief_lines) if brief_lines else "(none)"
+    tool_block = f"Tool Context:\n{tool_context.strip()}\n\n" if tool_context and tool_context.strip() else ""
+    system_extra = (
+        "Refine the draft using only the per-ticker briefs and preserve valid citations.\n"
+        + _EFFORT_GUIDANCE[answering_effort]
+    )
+    return [
+        {
+            "role": "system",
+            "content": _system_prompt(_REFINE_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"User question:\n{question}\n\n"
+                f"Draft answer:\n{draft}\n\n"
+                f"{tool_block}"
+                f"Per-ticker briefs:\n{brief_block}\n\n"
+                "Now write a refined final answer."
             ),
         },
     ]

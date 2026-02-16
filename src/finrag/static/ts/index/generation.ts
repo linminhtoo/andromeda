@@ -3,6 +3,8 @@ export type GenerationInputs = {
   topKRerank: HTMLInputElement;
   draftMaxTokens: HTMLInputElement;
   finalMaxTokens: HTMLInputElement;
+  briefMaxTokens: HTMLInputElement;
+  answeringEffort: HTMLSelectElement;
 };
 
 /** Manage generation mode presets and map them into UI control values. */
@@ -55,8 +57,10 @@ export class GenerationModeManager {
             top_k_rerank: 6,
             draft_max_tokens: 16384,
             final_max_tokens: 16384,
+            brief_max_tokens: 6000,
             enable_rerank: false,
             enable_refine: false,
+            answering_effort: 'low',
           },
           {
             key: 'normal',
@@ -66,8 +70,10 @@ export class GenerationModeManager {
             top_k_rerank: 8,
             draft_max_tokens: 65536,
             final_max_tokens: 32768,
+            brief_max_tokens: 8000,
             enable_rerank: true,
             enable_refine: false,
+            answering_effort: 'medium',
           },
           {
             key: 'thinking',
@@ -77,8 +83,10 @@ export class GenerationModeManager {
             top_k_rerank: 12,
             draft_max_tokens: 65536,
             final_max_tokens: 45000,
+            brief_max_tokens: 12000,
             enable_rerank: true,
             enable_refine: false,
+            answering_effort: 'high',
           },
         ],
       });
@@ -118,6 +126,11 @@ export class GenerationModeManager {
       if (preset.top_k_rerank) inputs.topKRerank.value = preset.top_k_rerank;
       if (preset.draft_max_tokens) inputs.draftMaxTokens.value = preset.draft_max_tokens;
       if (preset.final_max_tokens) inputs.finalMaxTokens.value = preset.final_max_tokens;
+      if (preset.brief_max_tokens) inputs.briefMaxTokens.value = preset.brief_max_tokens;
+      const effort = String(preset.answering_effort || '').trim().toLowerCase();
+      if (effort === 'low' || effort === 'medium' || effort === 'high') {
+        inputs.answeringEffort.value = effort;
+      }
     }
   }
 }

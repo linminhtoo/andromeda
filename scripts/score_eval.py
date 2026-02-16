@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import csv
+import json
 import threading
 from tqdm import tqdm
 from pathlib import Path
@@ -69,6 +70,29 @@ def _load_existing_human_labels(path: Path) -> dict[str, tuple[str, str]]:
     return out
 
 
+def _is_multi_ticker_query(query: EvalQuery) -> bool:
+    if query.comparison is not None:
+        tickers = [t.strip().upper() for t in query.comparison.target_tickers if t and t.strip()]
+        return len(set(tickers)) > 1
+    if query.distractor is not None:
+        tickers = [t.strip().upper() for t in query.distractor.target_tickers if t and t.strip()]
+        return len(set(tickers)) > 1
+    return False
+
+
+def _judge_maps(score: EvalScore) -> tuple[dict[str, int], dict[str, str]]:
+    """
+    Build judge-id keyed prediction and explanation maps for one score row.
+    """
+
+    predictions: dict[str, int] = {}
+    explanations: dict[str, str] = {}
+    for judge in score.judges:
+        predictions[judge.judge_id] = int(judge.prediction)
+        explanations[judge.judge_id] = judge.explanation if judge.explanation is not None else ""
+    return predictions, explanations
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Score a run directory produced by scripts/run_eval.py.")
     ap.add_argument("--run-dir", required=True, help="Run directory containing eval_queries.jsonl + generations.jsonl.")
@@ -91,7 +115,12 @@ def main() -> None:
         choices=["factual", "open_ended", "refusal", "distractor", "comparison"],
         help="Optional filter (defaults to all).",
     )
+    ap.add_argument("--single-ticker-only", action="store_true", help="Keep only single-ticker eval queries.")
+    ap.add_argument("--multi-ticker-only", action="store_true", help="Keep only multi-ticker eval queries.")
     args = ap.parse_args()
+
+    if args.single_ticker_only and args.multi_ticker_only:
+        raise SystemExit("Use at most one of --single-ticker-only or --multi-ticker-only.")
 
     run_dir = Path(args.run_dir).expanduser().resolve()
     eval_queries_path = run_dir / "eval_queries.jsonl"
@@ -109,6 +138,10 @@ def main() -> None:
     if args.kinds:
         wanted = set(args.kinds)
         queries = [q for q in queries if q.kind in wanted]
+    if args.single_ticker_only:
+        queries = [q for q in queries if not _is_multi_ticker_query(q)]
+    if args.multi_ticker_only:
+        queries = [q for q in queries if _is_multi_ticker_query(q)]
     if args.max_items is not None:
         queries = queries[: max(0, int(args.max_items))]
     if not queries:
@@ -188,6 +221,9 @@ def main() -> None:
         expected = q.factual.expected_numeric if q.factual is not None else None
         gold = q.factual.golden_evidence if q.factual is not None else None
         judge0 = s.judges[0] if s.judges else None
+        judge_preds, judge_explanations = _judge_maps(s)
+        helpfulness_prediction = judge_preds["helpfulness_v1"] if "helpfulness_v1" in judge_preds else ""
+        helpfulness_explanation = judge_explanations["helpfulness_v1"] if "helpfulness_v1" in judge_explanations else ""
         target_tickers: list[str] = []
         if q.open_ended is not None and q.open_ended.target_ticker:
             target_tickers.append(q.open_ended.target_ticker)
@@ -221,6 +257,10 @@ def main() -> None:
                 "judge_id": (judge0.judge_id if judge0 is not None else ""),
                 "judge_prediction": (judge0.prediction if judge0 is not None else ""),
                 "judge_explanation": (judge0.explanation if judge0 is not None and judge0.explanation else ""),
+                "judge_predictions_json": json.dumps(judge_preds, ensure_ascii=False, sort_keys=True),
+                "judge_explanations_json": json.dumps(judge_explanations, ensure_ascii=False, sort_keys=True),
+                "helpfulness_prediction": helpfulness_prediction,
+                "helpfulness_explanation": helpfulness_explanation,
                 "final_answer": (g.final_answer if g is not None and g.final_answer else ""),
                 "top_chunks_compact": (_compact_top_chunks(g) if g is not None else ""),
                 "human_label": (existing_labels.get(q.id, ("", ""))[0]),

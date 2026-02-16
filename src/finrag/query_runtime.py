@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
@@ -16,11 +18,18 @@ from pydantic import BaseModel, Field, ValidationError
 from finrag.dataclasses import ScoredChunk, TopChunk
 from finrag.db import RetrievalFilters
 from finrag.finance_tools import FinanceToolResult, FinanceToolStatus, FinanceTools
-from finrag.generation_controls import GenerationSettings
+from finrag.generation_controls import AnsweringEffort, GenerationSettings
 from finrag.ingestion_jobs import normalize_ticker
 from finrag.llm_clients import ChatMessage, LLMClient
 from finrag.metadata_models import chunk_metadata_from_value
-from finrag.qa import build_draft_prompt, build_refine_prompt
+from finrag.qa import (
+    build_faithfulness_scrub_prompt,
+    build_draft_prompt,
+    build_multi_ticker_refine_prompt,
+    build_multi_ticker_synthesis_prompt,
+    build_refine_prompt,
+    build_ticker_brief_prompt,
+)
 from finrag.retriever import CrossEncoderReranker, PostgresHybridRetriever
 from finrag.streaming import TextDeltaBatcher, iter_chat_deltas, ndjson_bytes
 
@@ -50,6 +59,8 @@ class QueryRequest(BaseModel):
     top_k_rerank: int | None = None
     draft_max_tokens: int | None = None
     final_max_tokens: int | None = None
+    brief_max_tokens: int | None = None
+    answering_effort: AnsweringEffort | None = None
     enable_rerank: bool | None = None
     enable_refine: bool | None = None
 
@@ -154,6 +165,7 @@ class PlannerDecision(BaseModel):
     clarifying_question: str | None = None
     refusal_reason: str | None = None
     use_per_ticker_retrieval: bool | None = None
+    use_multi_ticker_briefs: bool | None = None
     use_rag: bool | None = None
     use_yfinance: bool | None = None
     use_edgar_financials: bool | None = None
@@ -168,6 +180,7 @@ class PlannedQuery:
     clarifying_question: str | None = None
     refusal_message: str | None = None
     use_per_ticker_retrieval: bool = False
+    use_multi_ticker_briefs: bool = False
     use_rag: bool = True
     use_yfinance: bool = False
     use_edgar_financials: bool = False
@@ -182,10 +195,14 @@ class QueryPipelineExecution:
     tool_results: list[FinanceToolResult] = field(default_factory=list)
     hybrid: list[ScoredChunk] = field(default_factory=list)
     reranked: list[ScoredChunk] = field(default_factory=list)
+    per_ticker_hybrid: dict[str, list[ScoredChunk]] = field(default_factory=dict)
+    per_ticker_reranked: dict[str, list[ScoredChunk]] = field(default_factory=dict)
+    per_ticker_briefs: dict[str, str] = field(default_factory=dict)
     plan_step_ms: float | None = None
     tools_step_ms: float | None = None
     retrieve_step_ms: float | None = None
     rerank_step_ms: float | None = None
+    brief_step_ms: float | None = None
 
 
 class RAGService:
@@ -412,9 +429,54 @@ class RAGService:
         return any(token in lowered for token in tokens)
 
     @staticmethod
+    def _question_has_explicit_period_scope(question: str) -> bool:
+        lowered = f" {question.lower()} "
+        if re.search(r"\b20\d{2}\b", lowered):
+            return True
+        tokens = (
+            " quarter ",
+            " q1 ",
+            " q2 ",
+            " q3 ",
+            " q4 ",
+            " fiscal year ",
+            " fy ",
+            " year ended ",
+            " as of ",
+            " during ",
+            " in the latest filing ",
+            " latest filing ",
+        )
+        return any(token in lowered for token in tokens)
+
+    @staticmethod
+    def _infer_filing_date_window_from_question(question: str) -> tuple[str, str] | None:
+        """
+        Infer an inclusive filing-date window from explicit years in the question.
+        """
+
+        years = sorted({int(token) for token in re.findall(r"\b(20\d{2})\b", question)})
+        if not years:
+            return None
+        start_year = years[0]
+        end_year = years[-1]
+        if end_year - start_year > 6:
+            return None
+        return f"{start_year:04d}-01-01", f"{end_year:04d}-12-31"
+
+    @staticmethod
     def _question_mentions_filing_narrative(question: str) -> bool:
         lowered = f" {question.lower()} "
         tokens = (
+            " sec filing ",
+            " sec filings ",
+            " long-term investment ",
+            " business trajectory ",
+            " growth driver ",
+            " growth drivers ",
+            " key risks ",
+            " material risks ",
+            " competitive positioning ",
             " risk factor ",
             " management discussion ",
             " md&a ",
@@ -428,32 +490,332 @@ class RAGService:
         )
         return any(token in lowered for token in tokens)
 
+    @staticmethod
+    def _question_mentions_growth_or_strategy(question: str) -> bool:
+        lowered = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
+        tokens = (
+            " growth ",
+            " growth driver ",
+            " growth drivers ",
+            " strategy ",
+            " competitive positioning ",
+            " positioning ",
+            " business trajectory ",
+            " long-term investment ",
+            " long term investment ",
+            " outlook ",
+            " opportunities ",
+        )
+        return any(token in lowered for token in tokens)
+
+    @staticmethod
+    def _question_mentions_risk_dimension(question: str) -> bool:
+        lowered = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
+        tokens = (" risk ", " risks ", " uncertainty ", " uncertainties ", " downside ")
+        return any(token in lowered for token in tokens)
+
+    def narrative_retrieval_queries(self, question: str) -> list[str]:
+        """
+        Build diversified retrieval queries for filing-narrative questions.
+        """
+
+        base = question.strip()
+        if not base:
+            return []
+        queries = [base]
+        if self._question_mentions_growth_or_strategy(question):
+            queries.append(
+                f"{base} Focus on explicitly stated growth drivers, strategy, revenue, segment performance, and demand."
+            )
+        if self._question_mentions_risk_dimension(question):
+            queries.append(f"{base} Focus on explicitly stated risk factors, uncertainties, and constraints.")
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for query in queries:
+            key = query.lower().strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(query)
+        return deduped[:3]
+
+    @staticmethod
+    def _chunk_text_signature(sc: ScoredChunk) -> str:
+        parsed = chunk_metadata_from_value(sc.chunk.metadata)
+        section = parsed.section_path or ""
+        headings = " ".join(sc.chunk.headings or [])
+        text = (sc.chunk.text or "")[:300]
+        return f"{section} {headings} {text}".lower()
+
+    def _is_risk_chunk(self, sc: ScoredChunk) -> bool:
+        text = self._chunk_text_signature(sc)
+        tokens = ("risk factor", "risks", "uncertaint", "adverse", "regulatory", "cyber")
+        return any(token in text for token in tokens)
+
+    def _is_growth_or_strategy_chunk(self, sc: ScoredChunk) -> bool:
+        text = self._chunk_text_signature(sc)
+        if self._is_risk_chunk(sc):
+            return False
+        tokens = (
+            "results of operations",
+            "revenue",
+            "segment",
+            "overview",
+            "management discussion",
+            "md&a",
+            "strategy",
+            "competitive",
+            "growth",
+            "demand",
+            "business",
+        )
+        return any(token in text for token in tokens)
+
+    def _enforce_narrative_aspect_coverage(
+        self, *, question: str, primary: list[ScoredChunk], fallback: list[ScoredChunk], limit: int
+    ) -> list[ScoredChunk]:
+        """
+        Ensure narrative contexts include both growth/strategy and risk evidence when requested.
+        """
+
+        need_growth = self._question_mentions_growth_or_strategy(question)
+        need_risk = self._question_mentions_risk_dimension(question)
+        if not need_growth and not need_risk:
+            return primary[:limit]
+
+        selected: list[ScoredChunk] = []
+        selected_ids: set[str] = set()
+
+        def add_first_matching(pool: list[ScoredChunk], predicate) -> bool:
+            for sc in pool:
+                if not predicate(sc):
+                    continue
+                chunk_id = sc.chunk.id
+                if chunk_id in selected_ids:
+                    continue
+                selected.append(sc)
+                selected_ids.add(chunk_id)
+                return True
+            return False
+
+        if need_growth:
+            if not add_first_matching(primary, self._is_growth_or_strategy_chunk):
+                add_first_matching(fallback, self._is_growth_or_strategy_chunk)
+        if need_risk:
+            if not add_first_matching(primary, self._is_risk_chunk):
+                add_first_matching(fallback, self._is_risk_chunk)
+
+        combined = self._dedupe_scored_chunks(primary + fallback)
+        for sc in combined:
+            if len(selected) >= limit:
+                break
+            if sc.chunk.id in selected_ids:
+                continue
+            selected.append(sc)
+            selected_ids.add(sc.chunk.id)
+
+        selected.sort(key=lambda item: item.score, reverse=True)
+        return selected[:limit]
+
+    @staticmethod
+    def _mmr_token_set(sc: ScoredChunk) -> set[str]:
+        parsed = chunk_metadata_from_value(sc.chunk.metadata)
+        text = parsed.retrieval_text or sc.chunk.text or ""
+        text = str(text).lower()
+        tokens = re.findall(r"[a-z0-9]+", text)
+        stopwords = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "that",
+            "this",
+            "from",
+            "were",
+            "are",
+            "was",
+            "have",
+            "has",
+            "had",
+            "into",
+            "than",
+            "over",
+            "under",
+            "their",
+            "they",
+            "its",
+            "our",
+            "you",
+            "your",
+            "also",
+            "may",
+            "can",
+            "could",
+            "would",
+            "should",
+            "will",
+        }
+        return {token for token in tokens[:140] if len(token) > 2 and token not in stopwords}
+
+    @staticmethod
+    def _token_jaccard_similarity(left: set[str], right: set[str]) -> float:
+        if not left or not right:
+            return 0.0
+        inter = len(left.intersection(right))
+        union = len(left.union(right))
+        if union <= 0:
+            return 0.0
+        return inter / union
+
+    def apply_mmr_diversity(
+        self, *, candidates: list[ScoredChunk], limit: int, lambda_mult: float = 0.78
+    ) -> list[ScoredChunk]:
+        """
+        Select a relevance-diverse subset using a bounded MMR pass.
+        """
+
+        if limit <= 0:
+            return []
+        if len(candidates) <= 1:
+            return candidates[:limit]
+
+        pool_size = max(limit, min(len(candidates), limit * 3))
+        pool = candidates[:pool_size]
+        token_sets = [self._mmr_token_set(sc) for sc in pool]
+        raw_scores = [float(sc.score) for sc in pool]
+        score_min = min(raw_scores)
+        score_max = max(raw_scores)
+
+        def normalized_score(index: int) -> float:
+            raw = raw_scores[index]
+            if score_max <= score_min:
+                return 1.0
+            return (raw - score_min) / (score_max - score_min)
+
+        selected_indices: list[int] = []
+        remaining = set(range(len(pool)))
+        while remaining and len(selected_indices) < limit:
+            best_idx: int | None = None
+            best_value = float("-inf")
+            for idx in remaining:
+                relevance = normalized_score(idx)
+                if not selected_indices:
+                    novelty_penalty = 0.0
+                else:
+                    novelty_penalty = max(
+                        self._token_jaccard_similarity(token_sets[idx], token_sets[sel]) for sel in selected_indices
+                    )
+                mmr_value = (lambda_mult * relevance) - ((1.0 - lambda_mult) * novelty_penalty)
+                if mmr_value > best_value:
+                    best_value = mmr_value
+                    best_idx = idx
+            if best_idx is None:
+                break
+            remaining.remove(best_idx)
+            selected_indices.append(best_idx)
+
+        out = [pool[idx] for idx in selected_indices]
+        out.sort(key=lambda item: item.score, reverse=True)
+        return out[:limit]
+
+    @staticmethod
+    def mmr_diversity_enabled() -> bool:
+        """
+        Return whether experimental MMR chunk diversity is enabled.
+        """
+
+        raw = (os.getenv("FINRAG_ENABLE_MMR_DIVERSITY") or "0").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    def _question_is_simple_numeric_metric(self, question: str) -> bool:
+        """
+        Return whether the question is a direct numeric metric lookup.
+        """
+
+        mentions_metrics = self._question_mentions_financial_metrics(question) or self._question_mentions_market_data(
+            question
+        )
+        mentions_narrative = self._question_mentions_filing_narrative(question)
+        mentions_comparison = self._question_mentions_comparison(question)
+        has_period_scope = self._question_has_explicit_period_scope(question)
+        lowered = f" {question.lower()} "
+        has_explicit_numeric_intent = any(
+            token in lowered
+            for token in (
+                " what was ",
+                " what is ",
+                " how much ",
+                " amount ",
+                " total ",
+                " value ",
+                " figure ",
+                " give me ",
+            )
+        )
+        token_count = len(question.split())
+        return (
+            mentions_metrics
+            and not mentions_narrative
+            and not mentions_comparison
+            and not has_period_scope
+            and has_explicit_numeric_intent
+            and token_count <= 24
+        )
+
     def resolve_tool_usage_from_decision(self, *, question: str, decision: PlannerDecision) -> tuple[bool, bool, bool]:
         """
         Resolve planner tool flags into effective `use_rag`, `use_yfinance`, and `use_edgar_financials`.
         """
 
-        use_yfinance = (
-            bool(decision.use_yfinance)
-            if decision.use_yfinance is not None
-            else self._question_mentions_market_data(question)
-        )
+        simple_numeric_query = self._question_is_simple_numeric_metric(question)
+        narrative_query = self._question_mentions_filing_narrative(question)
+        period_scoped_metric_query = self._question_mentions_financial_metrics(
+            question
+        ) and self._question_has_explicit_period_scope(question)
+        market_data_query = self._question_mentions_market_data(question)
+        financial_metric_query = self._question_mentions_financial_metrics(question)
+
+        use_yfinance = bool(decision.use_yfinance) if decision.use_yfinance is not None else market_data_query
         use_edgar_financials = (
-            bool(decision.use_edgar_financials)
-            if decision.use_edgar_financials is not None
-            else self._question_mentions_financial_metrics(question)
+            bool(decision.use_edgar_financials) if decision.use_edgar_financials is not None else financial_metric_query
         )
+
+        if simple_numeric_query:
+            # For direct numeric lookup queries, choose the most relevant finance tool first.
+            if market_data_query and not financial_metric_query:
+                use_yfinance = True
+                use_edgar_financials = False
+            elif financial_metric_query and not market_data_query:
+                use_yfinance = False
+                use_edgar_financials = True
+            else:
+                use_yfinance = market_data_query
+                use_edgar_financials = financial_metric_query or not market_data_query
+        elif narrative_query:
+            # For filing-narrative requests, avoid mixing in external market/tool facts.
+            use_edgar_financials = False
+            use_yfinance = False
 
         if decision.use_rag is not None:
             use_rag = bool(decision.use_rag)
         else:
-            narrative_query = self._question_mentions_filing_narrative(question)
-            if narrative_query:
+            if simple_numeric_query:
+                use_rag = False
+            elif narrative_query:
                 use_rag = True
             elif use_yfinance or use_edgar_financials:
                 use_rag = False
             else:
                 use_rag = True
+
+        if simple_numeric_query:
+            use_rag = False
+        elif narrative_query:
+            use_rag = True
+        elif period_scoped_metric_query:
+            # Period-specific metric questions usually need filing chunks for exact timeframe grounding.
+            use_rag = True
 
         if not use_rag and not use_yfinance and not use_edgar_financials:
             use_rag = True
@@ -520,7 +882,7 @@ class RAGService:
                     "2) If the query is too vague, choose clarification_required (USE SPARINGLY).\n"
                     "3) If the query is out-of-scope for SEC filing analysis, choose refused.\n"
                     "4) For comparisons across multiple entities, include all required tickers and set "
-                    "use_per_ticker_retrieval=true.\n"
+                    "use_per_ticker_retrieval=true and use_multi_ticker_briefs=true.\n"
                     "5) Decide tool mix flags:\n"
                     "- use_yfinance=true for market price/news/valuation style requests.\n"
                     "- use_edgar_financials=true for direct SEC financial metric/statement requests.\n"
@@ -531,7 +893,7 @@ class RAGService:
                     "do NOT ask for clarification on dates unless the question explicitly references time (like 'latest').\n"
                     "Return only JSON with keys:\n"
                     "action, tickers, filing_date_from, filing_date_to, clarifying_question, refusal_reason, "
-                    "use_per_ticker_retrieval, use_rag, use_yfinance, use_edgar_financials."
+                    "use_per_ticker_retrieval, use_multi_ticker_briefs, use_rag, use_yfinance, use_edgar_financials."
                 ),
             },
             {
@@ -641,6 +1003,12 @@ class RAGService:
                 use_per_ticker_retrieval=(
                     True if len(explicit_tickers if explicit_tickers else inferred) > 1 else None
                 ),
+                use_multi_ticker_briefs=(
+                    True
+                    if len(explicit_tickers if explicit_tickers else inferred) > 1
+                    and self._question_mentions_comparison(question)
+                    else None
+                ),
             )
             trace.append(
                 self._tool_event(
@@ -659,6 +1027,7 @@ class RAGService:
                         "use_rag": decision.use_rag,
                         "use_yfinance": decision.use_yfinance,
                         "use_edgar_financials": decision.use_edgar_financials,
+                        "use_multi_ticker_briefs": decision.use_multi_ticker_briefs,
                     },
                     result="Planner produced structured query decision.",
                 )
@@ -742,6 +1111,17 @@ class RAGService:
 
         resolved_filing_date_from = filing_date_from if filing_date_from is not None else decision.filing_date_from
         resolved_filing_date_to = filing_date_to if filing_date_to is not None else decision.filing_date_to
+        if resolved_filing_date_from is None and resolved_filing_date_to is None:
+            inferred_window = self._infer_filing_date_window_from_question(question)
+            if inferred_window is not None:
+                resolved_filing_date_from, resolved_filing_date_to = inferred_window
+                trace.append(
+                    self._tool_event(
+                        "infer_question_date_window",
+                        args={"filing_date_from": resolved_filing_date_from, "filing_date_to": resolved_filing_date_to},
+                        result="Applied year window inferred from question text.",
+                    )
+                )
         filters = self.build_retrieval_filters(
             tickers=planned_tickers, filing_date_from=resolved_filing_date_from, filing_date_to=resolved_filing_date_to
         )
@@ -749,6 +1129,11 @@ class RAGService:
             bool(decision.use_per_ticker_retrieval)
             if decision.use_per_ticker_retrieval is not None
             else (len(planned_tickers) > 1 or self._question_mentions_comparison(question))
+        )
+        use_multi_ticker_briefs = (
+            bool(decision.use_multi_ticker_briefs)
+            if decision.use_multi_ticker_briefs is not None
+            else (use_per_ticker and len(planned_tickers) > 1 and self._question_mentions_comparison(question))
         )
         trace.append(
             self._tool_event(
@@ -765,6 +1150,7 @@ class RAGService:
                     "filing_date_from": (filters.filing_date_from.isoformat() if filters.filing_date_from else None),
                     "filing_date_to": (filters.filing_date_to.isoformat() if filters.filing_date_to else None),
                     "use_per_ticker_retrieval": use_per_ticker,
+                    "use_multi_ticker_briefs": use_multi_ticker_briefs,
                 },
                 result="Prepared RAG function call arguments from planner decision.",
             )
@@ -775,6 +1161,7 @@ class RAGService:
             filters=filters,
             tickers=planned_tickers,
             use_per_ticker_retrieval=use_per_ticker,
+            use_multi_ticker_briefs=use_multi_ticker_briefs,
             use_rag=use_rag,
             use_yfinance=use_yfinance,
             use_edgar_financials=use_edgar_financials,
@@ -855,6 +1242,12 @@ class RAGService:
         Execute finance tools requested by planner for the current plan.
         """
 
+        disable_finance_tools = (os.getenv("FINRAG_DISABLE_FINANCE_TOOLS") or "").strip().lower()
+        if disable_finance_tools in {"1", "true", "yes", "on"}:
+            return [], [
+                self._tool_event("finance_tools_skip", result="Finance tool execution disabled by environment.")
+            ]
+
         if not planned.tickers:
             return [], [self._tool_event("finance_tools_skip", result="Skipped finance tools (no planned tickers).")]
 
@@ -881,6 +1274,17 @@ class RAGService:
         ]
         return tool_results, trace
 
+    @staticmethod
+    def has_actionable_tool_results(results: list[FinanceToolResult]) -> bool:
+        """
+        Return whether tool execution produced at least one usable result.
+        """
+
+        for item in results:
+            if item.status == FinanceToolStatus.OK:
+                return True
+        return False
+
     def retrieve_chunks(
         self, question: str, settings: GenerationSettings, *, filters: RetrievalFilters
     ) -> list[ScoredChunk]:
@@ -888,12 +1292,15 @@ class RAGService:
         Retrieve hybrid candidates for a question.
         """
 
+        return self.retrieve_chunks_with_limit(question=question, top_k=settings.top_k_retrieve, filters=filters)
+
+    def retrieve_chunks_with_limit(self, *, question: str, top_k: int, filters: RetrievalFilters) -> list[ScoredChunk]:
+        """
+        Retrieve hybrid candidates with an explicit retrieval limit.
+        """
+
         return self.retriever.retrieve_hybrid(
-            question,
-            top_k_semantic=settings.top_k_retrieve,
-            top_k_bm25=settings.top_k_retrieve,
-            top_k_final=settings.top_k_retrieve,
-            filters=filters,
+            question, top_k_semantic=top_k, top_k_bm25=top_k, top_k_final=top_k, filters=filters
         )
 
     def retrieve_chunks_for_plan(
@@ -907,13 +1314,29 @@ class RAGService:
             return [], []
 
         if not planned.use_per_ticker_retrieval or len(planned.tickers) <= 1:
-            hybrid = self.retrieve_chunks(question, settings, filters=planned.filters)
+            retrieval_queries = [question]
+            if planned.use_rag and self._question_mentions_filing_narrative(question):
+                retrieval_queries = self.narrative_retrieval_queries(question)
+
+            if len(retrieval_queries) == 1:
+                hybrid = self.retrieve_chunks(question, settings, filters=planned.filters)
+            else:
+                per_query_top_k = max(8, settings.top_k_retrieve // len(retrieval_queries))
+                merged: list[ScoredChunk] = []
+                for retrieval_query in retrieval_queries:
+                    merged.extend(
+                        self.retrieve_chunks_with_limit(
+                            question=retrieval_query, top_k=per_query_top_k, filters=planned.filters
+                        )
+                    )
+                hybrid = self._dedupe_scored_chunks(merged)
             trace = [
                 self._tool_event(
                     "retrieve_chunks",
                     args={
                         "tickers": list(planned.filters.normalized_tickers()),
                         "top_k_retrieve": settings.top_k_retrieve,
+                        "retrieval_queries": retrieval_queries,
                     },
                     result=f"Retrieved {len(hybrid)} chunks.",
                 )
@@ -949,6 +1372,206 @@ class RAGService:
         )
         return deduped, trace
 
+    def _retrieve_and_rerank_for_ticker(
+        self, *, question: str, settings: GenerationSettings, planned: PlannedQuery, ticker: str
+    ) -> tuple[list[ScoredChunk], list[ScoredChunk]]:
+        filing_date_from = (
+            planned.filters.filing_date_from.isoformat()
+            if planned.filters and planned.filters.filing_date_from
+            else None
+        )
+        filing_date_to = (
+            planned.filters.filing_date_to.isoformat() if planned.filters and planned.filters.filing_date_to else None
+        )
+        ticker_filters = self.build_retrieval_filters(
+            tickers=[ticker], filing_date_from=filing_date_from, filing_date_to=filing_date_to
+        )
+        ticker_hybrid = self.retrieve_chunks(question, settings, filters=ticker_filters)
+        ticker_reranked = self.rerank_chunks(question, settings, ticker_hybrid)
+        return ticker_hybrid, ticker_reranked
+
+    def build_ticker_brief_prompt(
+        self,
+        *,
+        question: str,
+        ticker: str,
+        settings: GenerationSettings,
+        reranked: list[ScoredChunk],
+        tool_results: list[FinanceToolResult] | None = None,
+    ) -> list[ChatMessage]:
+        """
+        Build prompt for one ticker brief inside multi-ticker pipeline.
+        """
+
+        return build_ticker_brief_prompt(
+            question=question,
+            ticker=ticker,
+            reranked=reranked,
+            brief_max_tokens=settings.brief_max_tokens,
+            answer_style=settings.answer_style,
+            system_extra=self.compose_prompt_extra(question=question, reranked=reranked),
+            tool_context=self.finance_tools.tool_context_text(tool_results or []),
+        )
+
+    @staticmethod
+    def _effort_temperature(effort: AnsweringEffort) -> float:
+        if effort == AnsweringEffort.LOW:
+            return 0.0
+        if effort == AnsweringEffort.HIGH:
+            return 0.2
+        return 0.1
+
+    def generate_ticker_briefs(
+        self,
+        *,
+        question: str,
+        settings: GenerationSettings,
+        per_ticker_reranked: dict[str, list[ScoredChunk]],
+        tool_results: list[FinanceToolResult] | None = None,
+    ) -> dict[str, str]:
+        """
+        Generate per-ticker briefs in parallel for multi-ticker synthesis.
+        """
+
+        tickers = list(per_ticker_reranked.keys())
+        if not tickers:
+            return {}
+
+        out: dict[str, str] = {}
+
+        def run_for_ticker(ticker: str) -> tuple[str, str]:
+            prompt = self.build_ticker_brief_prompt(
+                question=question,
+                ticker=ticker,
+                settings=settings,
+                reranked=per_ticker_reranked[ticker],
+                tool_results=tool_results,
+            )
+            brief = self.llm.chat(
+                prompt,
+                temperature=self._effort_temperature(settings.answering_effort),
+                max_tokens=settings.brief_max_tokens,
+            )
+            return ticker, brief
+
+        worker_count = max(1, min(len(tickers), 8))
+        with ThreadPoolExecutor(max_workers=worker_count) as ex:
+            futures = [ex.submit(run_for_ticker, ticker) for ticker in tickers]
+            for future in futures:
+                ticker, brief = future.result()
+                out[ticker] = brief
+        return out
+
+    def multi_ticker_synthesis_prompt(
+        self,
+        *,
+        question: str,
+        settings: GenerationSettings,
+        per_ticker_briefs: dict[str, str],
+        tool_results: list[FinanceToolResult] | None = None,
+        draft_answer: str | None = None,
+    ) -> list[ChatMessage]:
+        """
+        Build final synthesis prompt from per-ticker briefs.
+        """
+
+        tool_context = self.finance_tools.tool_context_text(tool_results or [])
+        if settings.enable_refine and draft_answer is not None:
+            return build_multi_ticker_refine_prompt(
+                question=question,
+                draft=draft_answer,
+                per_ticker_briefs=per_ticker_briefs,
+                final_max_tokens=settings.final_max_tokens,
+                answer_style=settings.answer_style,
+                answering_effort=settings.answering_effort,
+                tool_context=tool_context,
+            )
+        return build_multi_ticker_synthesis_prompt(
+            question=question,
+            per_ticker_briefs=per_ticker_briefs,
+            final_max_tokens=settings.final_max_tokens,
+            answer_style=settings.answer_style,
+            answering_effort=settings.answering_effort,
+            tool_context=tool_context,
+        )
+
+    def should_apply_faithfulness_scrub(self, question: str) -> bool:
+        """
+        Return whether strict factual scrub should run for the final answer.
+        """
+
+        return self._question_mentions_filing_narrative(question)
+
+    def scrub_answer_for_faithfulness(
+        self,
+        *,
+        question: str,
+        settings: GenerationSettings,
+        candidate_answer: str,
+        reranked: list[ScoredChunk],
+        tool_results: list[FinanceToolResult] | None = None,
+    ) -> str:
+        """
+        Run one strict editing pass to remove unsupported claims.
+        """
+
+        if not candidate_answer.strip():
+            return candidate_answer
+        if not reranked:
+            return candidate_answer
+        prompt = build_faithfulness_scrub_prompt(
+            question=question,
+            candidate_answer=candidate_answer,
+            reranked=reranked,
+            final_max_tokens=settings.final_max_tokens,
+            answer_style=settings.answer_style,
+            tool_context=self.finance_tools.tool_context_text(tool_results or []),
+        )
+        return self.llm.chat(prompt, temperature=0.0, max_tokens=settings.final_max_tokens)
+
+    def generate_answers_from_ticker_briefs(
+        self,
+        *,
+        question: str,
+        settings: GenerationSettings,
+        per_ticker_briefs: dict[str, str],
+        reranked_context: list[ScoredChunk] | None = None,
+        tool_results: list[FinanceToolResult] | None = None,
+    ) -> tuple[str, str]:
+        """
+        Generate final answer by synthesizing per-ticker briefs.
+        """
+
+        draft = self.llm.chat(
+            self.multi_ticker_synthesis_prompt(
+                question=question, settings=settings, per_ticker_briefs=per_ticker_briefs, tool_results=tool_results
+            ),
+            temperature=self._effort_temperature(settings.answering_effort),
+            max_tokens=settings.final_max_tokens,
+        )
+        final = draft
+        if settings.enable_refine:
+            final = self.llm.chat(
+                self.multi_ticker_synthesis_prompt(
+                    question=question,
+                    settings=settings,
+                    per_ticker_briefs=per_ticker_briefs,
+                    tool_results=tool_results,
+                    draft_answer=draft,
+                ),
+                temperature=0.0,
+                max_tokens=settings.final_max_tokens,
+            )
+        if settings.enable_refine and self.should_apply_faithfulness_scrub(question) and reranked_context:
+            final = self.scrub_answer_for_faithfulness(
+                question=question,
+                settings=settings,
+                candidate_answer=final,
+                reranked=reranked_context,
+                tool_results=tool_results,
+            )
+        return draft, final
+
     def rerank_chunks(
         self, question: str, settings: GenerationSettings, hybrid: list[ScoredChunk]
     ) -> list[ScoredChunk]:
@@ -978,6 +1601,7 @@ class RAGService:
             )
         ]
         if planned.use_per_ticker_retrieval and len(planned.tickers) > 1:
+            # FIXME: current logic is too naive.
             reranked = self._enforce_ticker_coverage(
                 primary=reranked, fallback=hybrid, tickers=planned.tickers, limit=settings.top_k_rerank
             )
@@ -986,6 +1610,28 @@ class RAGService:
                     "enforce_ticker_coverage",
                     args={"tickers": planned.tickers, "top_k_rerank": settings.top_k_rerank},
                     result=f"Adjusted reranked list to {len(reranked)} chunks with ticker coverage constraints.",
+                )
+            )
+        if planned.use_rag and self._question_mentions_filing_narrative(question):
+            if self.mmr_diversity_enabled() and (
+                self._question_mentions_growth_or_strategy(question) or self._question_mentions_risk_dimension(question)
+            ):
+                reranked = self.apply_mmr_diversity(candidates=reranked, limit=settings.top_k_rerank)
+                trace.append(
+                    self._tool_event(
+                        "apply_mmr_diversity",
+                        args={"top_k_rerank": settings.top_k_rerank, "lambda_mult": 0.78},
+                        result=f"Applied bounded MMR diversification (size={len(reranked)}).",
+                    )
+                )
+            reranked = self._enforce_narrative_aspect_coverage(
+                question=question, primary=reranked, fallback=hybrid, limit=settings.top_k_rerank
+            )
+            trace.append(
+                self._tool_event(
+                    "enforce_narrative_aspect_coverage",
+                    args={"top_k_rerank": settings.top_k_rerank},
+                    result=(f"Adjusted reranked list for narrative aspect coverage (size={len(reranked)})."),
                 )
             )
         return reranked, trace
@@ -999,6 +1645,7 @@ class RAGService:
         filing_date_from: str | None = None,
         filing_date_to: str | None = None,
         pre_tool_trace: list[ToolTraceEvent] | None = None,
+        generate_multi_ticker_briefs: bool = True,
     ) -> QueryPipelineExecution:
         """
         Execute plan -> retrieve -> rerank once and return stage outputs.
@@ -1026,14 +1673,109 @@ class RAGService:
         execution.tool_results = tool_results
         execution.tool_trace.extend(finance_tool_trace)
 
-        if not planned.use_rag:
+        use_rag_for_execution = planned.use_rag
+        if not use_rag_for_execution:
+            if self.has_actionable_tool_results(execution.tool_results):
+                execution.tool_trace.append(
+                    self._tool_event(
+                        "rag_function_skip",
+                        args={"reason": "planner_use_rag_false"},
+                        result="Skipped RAG retrieval function per planner tool decision.",
+                    )
+                )
+                return execution
             execution.tool_trace.append(
                 self._tool_event(
-                    "rag_function_skip",
-                    args={"reason": "planner_use_rag_false"},
-                    result="Skipped RAG retrieval function per planner tool decision.",
+                    "rag_function_fallback",
+                    args={"reason": "no_actionable_tool_results"},
+                    result="Planner disabled RAG, but finance tools returned no usable data; falling back to retrieval.",
                 )
             )
+            use_rag_for_execution = True
+
+        if planned.use_multi_ticker_briefs and len(planned.tickers) > 1:
+            retrieve_t0 = time.perf_counter()
+            per_ticker_hybrid: dict[str, list[ScoredChunk]] = {}
+            per_ticker_reranked: dict[str, list[ScoredChunk]] = {}
+            worker_count = max(1, min(len(planned.tickers), 8))
+            with ThreadPoolExecutor(max_workers=worker_count) as ex:
+                futures = {
+                    ticker: ex.submit(
+                        self._retrieve_and_rerank_for_ticker,
+                        question=question,
+                        settings=settings,
+                        planned=planned,
+                        ticker=ticker,
+                    )
+                    for ticker in planned.tickers
+                }
+                for ticker, future in futures.items():
+                    ticker_hybrid, ticker_reranked = future.result()
+                    per_ticker_hybrid[ticker] = ticker_hybrid
+                    per_ticker_reranked[ticker] = ticker_reranked
+                    execution.tool_trace.append(
+                        self._tool_event(
+                            "retrieve_rerank_per_ticker",
+                            args={
+                                "ticker": ticker,
+                                "top_k_retrieve": settings.top_k_retrieve,
+                                "top_k_rerank": settings.top_k_rerank,
+                                "enable_rerank": settings.enable_rerank,
+                            },
+                            result=(
+                                f"Retrieved {len(ticker_hybrid)} and reranked {len(ticker_reranked)} chunks for "
+                                f"{ticker}."
+                            ),
+                        )
+                    )
+            execution.retrieve_step_ms = (time.perf_counter() - retrieve_t0) * 1000.0
+            execution.rerank_step_ms = execution.retrieve_step_ms
+            execution.per_ticker_hybrid = per_ticker_hybrid
+            execution.per_ticker_reranked = per_ticker_reranked
+            execution.hybrid = self._dedupe_scored_chunks(
+                [item for chunks in per_ticker_hybrid.values() for item in chunks]
+            )
+            execution.reranked = self._dedupe_scored_chunks(
+                [item for chunks in per_ticker_reranked.values() for item in chunks]
+            )[: settings.top_k_rerank]
+            execution.tool_trace.append(
+                self._tool_event(
+                    "merge_multi_ticker_candidates",
+                    args={"tickers": list(per_ticker_reranked.keys())},
+                    result=(
+                        "Merged per-ticker candidates into "
+                        f"{len(execution.hybrid)} retrieved and {len(execution.reranked)} reranked chunks."
+                    ),
+                )
+            )
+
+            if generate_multi_ticker_briefs:
+                brief_t0 = time.perf_counter()
+                execution.per_ticker_briefs = self.generate_ticker_briefs(
+                    question=question,
+                    settings=settings,
+                    per_ticker_reranked=per_ticker_reranked,
+                    tool_results=execution.tool_results,
+                )
+                execution.brief_step_ms = (time.perf_counter() - brief_t0) * 1000.0
+                execution.tool_trace.append(
+                    self._tool_event(
+                        "generate_per_ticker_briefs",
+                        args={
+                            "tickers": list(execution.per_ticker_briefs.keys()),
+                            "brief_max_tokens": settings.brief_max_tokens,
+                            "answering_effort": settings.answering_effort.value,
+                        },
+                        result=f"Generated {len(execution.per_ticker_briefs)} per-ticker briefs in parallel.",
+                    )
+                )
+            else:
+                execution.tool_trace.append(
+                    self._tool_event(
+                        "generate_per_ticker_briefs_skip",
+                        result="Skipped per-ticker brief generation during pipeline execution.",
+                    )
+                )
             return execution
 
         retrieve_t0 = time.perf_counter()
@@ -1066,6 +1808,7 @@ class RAGService:
             reranked,
             draft_max_tokens=settings.draft_max_tokens,
             answer_style=settings.answer_style,
+            system_extra=self.compose_prompt_extra(question=question, reranked=reranked),
             tool_context=tool_context,
         )
 
@@ -1093,8 +1836,69 @@ class RAGService:
             reranked,
             final_max_tokens=settings.final_max_tokens,
             answer_style=settings.answer_style,
+            system_extra=self.compose_prompt_extra(question=question, reranked=reranked),
             tool_context=tool_context,
         )
+
+    def prompt_extra_for_question(self, question: str) -> str | None:
+        """
+        Build targeted system prompt guidance for the current question.
+        """
+
+        if self._question_mentions_filing_narrative(question):
+            return (
+                "Narrative evidence mode:\n"
+                "- For each key point, include at least one short direct quote from context or tool context.\n"
+                "- Do not include a point unless a direct quote supports it.\n"
+                "- If a requested point has no explicit quote support, state: "
+                "'Not explicitly stated in the provided context.'"
+            )
+        return None
+
+    def context_coverage_prompt_extra(self, *, question: str, reranked: list[ScoredChunk]) -> str | None:
+        """
+        Add missing-evidence guardrails when requested narrative dimensions are absent in context.
+        """
+
+        if not reranked:
+            return None
+        if not self._question_mentions_filing_narrative(question):
+            return None
+
+        top_window = reranked[: min(len(reranked), 14)]
+        growth_count = sum(1 for sc in top_window if self._is_growth_or_strategy_chunk(sc))
+        risk_count = sum(1 for sc in top_window if self._is_risk_chunk(sc))
+
+        lines: list[str] = []
+        if self._question_mentions_growth_or_strategy(question) and growth_count == 0:
+            lines.append(
+                "Retrieved context does not contain explicit growth/strategy evidence; state that these points are "
+                "not explicitly stated unless directly quoted."
+            )
+        if self._question_mentions_risk_dimension(question) and risk_count == 0:
+            lines.append(
+                "Retrieved context does not contain explicit risk disclosures; state that risk details are not "
+                "explicitly stated unless directly quoted."
+            )
+        if not lines:
+            return None
+        return "Context coverage notes:\n- " + "\n- ".join(lines)
+
+    def compose_prompt_extra(self, *, question: str, reranked: list[ScoredChunk]) -> str | None:
+        """
+        Merge static question guidance and dynamic context-coverage guidance.
+        """
+
+        parts: list[str] = []
+        static_extra = self.prompt_extra_for_question(question)
+        if static_extra:
+            parts.append(static_extra)
+        coverage_extra = self.context_coverage_prompt_extra(question=question, reranked=reranked)
+        if coverage_extra:
+            parts.append(coverage_extra)
+        if not parts:
+            return None
+        return "\n\n".join(parts)
 
     def generate_answers(
         self,
@@ -1111,12 +1915,20 @@ class RAGService:
             self.draft_prompt(question, settings, reranked, tool_results=tool_results),
             temperature=settings.draft_temperature,
         )
-        if not settings.enable_refine:
-            return draft, draft
-        final = self.llm.chat(
-            self.final_prompt(question, settings, reranked, draft_answer=draft, tool_results=tool_results),
-            temperature=0.0,
-        )
+        final = draft
+        if settings.enable_refine:
+            final = self.llm.chat(
+                self.final_prompt(question, settings, reranked, draft_answer=draft, tool_results=tool_results),
+                temperature=0.0,
+            )
+        if settings.enable_refine and self.should_apply_faithfulness_scrub(question):
+            final = self.scrub_answer_for_faithfulness(
+                question=question,
+                settings=settings,
+                candidate_answer=final,
+                reranked=reranked,
+                tool_results=tool_results,
+            )
         return draft, final
 
     def build_query_response(
@@ -1198,9 +2010,18 @@ class RAGService:
                 hybrid=[],
             )
 
-        draft, final = self.generate_answers(
-            pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results
-        )
+        if pipeline.planned.use_multi_ticker_briefs and pipeline.per_ticker_briefs:
+            draft, final = self.generate_answers_from_ticker_briefs(
+                question=pipeline.question,
+                settings=settings,
+                per_ticker_briefs=pipeline.per_ticker_briefs,
+                reranked_context=pipeline.reranked,
+                tool_results=pipeline.tool_results,
+            )
+        else:
+            draft, final = self.generate_answers(
+                pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results
+            )
         return self.build_query_response(
             status=QueryStatus.ANSWERED,
             conversation_id=conversation_id,

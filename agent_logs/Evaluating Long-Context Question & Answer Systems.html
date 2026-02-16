@@ -1,0 +1,1611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!--Load inline css and scripts first-->
+    <style>:root{--c-light-text:#333;--c-light-background:#fff;--c-light-focus:#00ff00;--c-light-interactive:#007bff;--c-dark-text:#fff;--c-dark-subtext:#a6a6a6;--c-dark-background:#333;--c-dark-focus:#00ff00;--c-dark-interactive:#66b0ff;--c-dark-callout:#003166;--c-text:var(--c-light-text);--c-background:var(--c-light-background);--c-focus:var(--c-light-focus);--c-interactive:var(--c-light-interactive)}.dark-mode-checkbox:checked~.theme-container{--c-text:var(--c-dark-text);--c-background:var(--c-dark-background);--c-focus:var(--c-dark-focus);--c-interactive:var(--c-dark-interactive)}html.dark-mode{--c-text:var(--c-dark-text);--c-background:var(--c-dark-background);--c-focus:var(--c-dark-focus);--c-interactive:var(--c-dark-interactive)}html.dark-mode .tag{background-color:#3e3e3e;color:var(--c-dark-interactive)}html.dark-mode a.tag:hover{background-color:var(--c-dark-interactive);color:#3e3e3e}a{text-decoration:none;background-color:transparent;color:var(--c-interactive)}</style>
+    <!-- darkmode JS at start of the doc so to ensure consistent view mode -->
+<link href="/js/darkmode.js" rel="preload" as="script">
+<script src="/js/darkmode.js" type="7d63f5bcb51b80dc4a688d04-text/javascript"></script>
+
+<!--Add active class to nav bar-->
+<link href="/js/navbar.js" rel="preload" as="script">
+<script src="/js/navbar.js" defer type="7d63f5bcb51b80dc4a688d04-text/javascript"></script>
+
+<!-- Load jQuery before anchor.min.js -->
+<link href="/js/jquery-3.7.1.min.js" rel="preload" as="script">
+<script src="/js/jquery-3.7.1.min.js" defer type="7d63f5bcb51b80dc4a688d04-text/javascript"></script>
+
+<!--Add anchors to headers-->
+<link href="/js/anchor.min.js" rel="preload" as="script">
+<script src="/js/anchor.min.js" defer type="7d63f5bcb51b80dc4a688d04-text/javascript"></script>
+
+<!-- Algolia Insights -->
+<script type="7d63f5bcb51b80dc4a688d04-text/javascript">
+  var ALGOLIA_INSIGHTS_SRC = "/js/search-insights.min.js"; // Using local version
+  !function(e,a,t,n,s,i,c){e.AlgoliaAnalyticsObject=s,e[s]=e[s]||function(){
+  (e[s].queue=e[s].queue||[]).push(arguments)},e[s].version=(n.match(/@([^\/]+)\/?.*/) || [])[1],i=a.createElement(t),c=a.getElementsByTagName(t)[0],
+  i.async=1,i.src=n,c.parentNode.insertBefore(i,c)
+  }(window,document,"script",ALGOLIA_INSIGHTS_SRC,"aa");
+</script>
+<script type="7d63f5bcb51b80dc4a688d04-text/javascript">
+  if (typeof aa === 'function') {
+    aa('init', {
+      appId: '2XJCLEABQD',
+      apiKey: 'b61ec4cb64bd32d62c053466fccbfa43',
+      useCookie: true
+    });
+  }
+</script>
+
+    <meta charset="utf-8">
+    <meta name="HandheldFriendly" content="True">
+    <meta name="MobileOptimized" content="320">
+    <meta name="viewport" content="width=device-width, initial-scale=0.86, maximum-scale=3.0, minimum-scale=0.86">
+    <meta name="description" content="Evaluation metrics, how to build eval datasets, eval methodology, and a review of several benchmarks.">
+    <meta name="author" content="Eugene Yan">
+
+    <meta content="eugeneyan.com" property="og:site_name">
+    <meta name=twitter:card content=summary_large_image>
+    <meta name=twitter:domain content=eugeneyan.com>
+
+    <meta content="Evaluating Long-Context Question & Answer Systems" property="og:title">
+    <meta name=twitter:title content="Evaluating Long-Context Question & Answer Systems">
+
+
+    <meta content="article" property="og:type">
+
+
+    <meta content="Evaluation metrics, how to build eval datasets, eval methodology, and a review of several benchmarks." property="og:description">
+    <meta name=twitter:description content="Evaluation metrics, how to build eval datasets, eval methodology, and a review of several benchmarks.">
+
+
+    <meta content="https://eugeneyan.com/writing/qa-evals/" property="og:url">
+
+
+    <meta content="2025-06-22T00:00:00+00:00" property="article:published_time">
+    <meta content="https://eugeneyan.com/about/" property="article:author">
+
+
+    <meta content="https://eugeneyan.com/assets/og_image/qa-evals-v2.jpg" property="og:image">
+    <meta name=twitter:image content="https://eugeneyan.com/assets/og_image/qa-evals-v2.jpg">
+
+
+
+    <meta content="posts" property="article:section">
+
+
+
+
+    <meta content="llm" property="article:tag">
+
+    <meta content="eval" property="article:tag">
+
+    <meta content="survey" property="article:tag">
+
+
+    <title>Evaluating Long-Context Question & Answer Systems</title>
+    <!-- styles -->
+    <script src="/cdn-cgi/scripts/7d0fa10a/cloudflare-static/rocket-loader.min.js" data-cf-settings="7d63f5bcb51b80dc4a688d04-|49"></script><link href="/css/main.min.css" rel="preload" as="style" onload="this.rel='stylesheet'" type="text/css">
+    <link rel="stylesheet" href="/css/main.css" type="text/css">
+
+    <!-- Preconnect to Google Fonts domains to reduce latency -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <script src="/cdn-cgi/scripts/7d0fa10a/cloudflare-static/rocket-loader.min.js" data-cf-settings="7d63f5bcb51b80dc4a688d04-|49"></script><link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&family=Raleway&display=swap"
+          rel="preload" as="style" onload="this.rel='stylesheet'">
+    <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&family=Raleway&display=swap"
+          rel="stylesheet">
+
+    <script src="/cdn-cgi/scripts/7d0fa10a/cloudflare-static/rocket-loader.min.js" data-cf-settings="7d63f5bcb51b80dc4a688d04-|49"></script><link href="/css/monokai.css" rel="preload" as="style" onload="this.rel='stylesheet'" type="text/css">
+    <link href="/css/monokai.css" rel="stylesheet" type="text/css">
+
+    <link rel="shortcut icon" type="image/png" href="https://eugeneyan.com/assets/favicon/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="https://eugeneyan.com/assets/favicon/apple-touch-icon.webp">
+    <link rel="icon" type="image/png" sizes="32x32" href="https://eugeneyan.com/assets/favicon/favicon-32x32.webp">
+    <link rel="icon" type="image/png" sizes="16x16" href="https://eugeneyan.com/assets/favicon/favicon-16x16.webp">
+    <link rel="manifest" href="/assets/favicon/site.webmanifest">
+
+    <link rel="canonical" href="https://eugeneyan.com/writing/qa-evals/"/>
+
+    <!--  Collect tags-->
+
+
+
+
+
+
+
+
+
+    <!-- google analytics - i will not share this data with google -->
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4CKMNLRMCV" type="7d63f5bcb51b80dc4a688d04-text/javascript"></script>
+<script type="7d63f5bcb51b80dc4a688d04-text/javascript">
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4CKMNLRMCV');
+
+</script>
+</head>
+
+<input class="dark-mode-checkbox" id="dark-mode" name="dark-mode-checkbox" type="checkbox"/>
+<label class="dark-mode-label" for="dark-mode"></label>
+<body>
+<div class="theme-container grow">
+    <div class="container" style="width: 95%">
+
+        <div class="header">
+    <div class="row">
+        <div class="col-sm-3">
+            <h1 class="text-muted nav"><a href="/">eugeneyan</a></h1>
+        </div>
+        <div class="col-sm-9">
+            <ul id="nav" class="nav-margin nav nav-pills float-sm-right">
+                <li><a href="/start-here/" title="Start Here">Start Here</a></li>
+                <li><a href="/writing/" title="Writing">Writing</a></li>
+                <li><a href="/speaking/" title="Speaking">Speaking</a></li>
+                <li><a href="/prototyping/" title="Prototyping">Prototyping</a></li>
+                <li><a href="/about/" title="About">About</a></li>
+                <li><a href="/search/" title="Search"><img class="icon icon-search" src="/assets/icon-search.svg" loading="lazy" alt=""/></a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="notes">
+    <div class="note single">
+        <h1 class="title">Evaluating Long-Context Question & Answer Systems</h1>
+
+        <p class="date">
+            <info datetime="2025-06-22 00:00:00 +0000">
+                <span class="no-italics">[
+
+
+        <a class='tag' href="/tag/llm/">llm</a>
+
+
+        <a class='tag' href="/tag/eval/">eval</a>
+
+
+        <a class='tag' href="/tag/survey/">survey</a>
+
+    ]
+</span> · 28 min read
+            </info>
+        </p>
+
+        <!-- Post content -->
+        <div class="notebody">
+            <p>While evaluating Q&amp;A systems is straightforward with short paragraphs, complexity increases as documents grow larger. For example, technical documentation, novels and movies, as well as multi-document scenarios. Although some of these evaluation challenges also appear in shorter contexts, long-context evaluation amplifies issues such as:</p>
+<ul>
+  <li><strong>Information overload:</strong> Irrelevant details in large documents obscure relevant facts, making it harder for retrievers and models to locate the right evidence for the answer.</li>
+  <li><strong>Positional variance:</strong> Evidence may appear at the beginning, middle, or end of documents, making it a challenge for models with limited effective context or those susceptible to the “lost in the middle” problem.</li>
+  <li><strong>Multi-hop reasoning:</strong> The correct answer depends on synthesizing several distinct pieces of evidence scattered throughout the text(s), challenging the model’s ability to retain and integrate information that is far apart.</li>
+  <li><strong>Hallucinations at scale:</strong> Larger contexts increase the risk of models returning plausible yet incorrect responses due to poor retrieval or limited effective context.</li>
+  <li><strong>Open-ended questions:</strong> Queries on broad themes or interpretative topics rarely have a single definitive answer, especially for large documents or corpora.</li>
+</ul>
+
+<p>In this write-up, we’ll explore <a href="#key-evaluation-metrics">key evaluation metrics</a>, how to <a href="#building-an-evaluation-dataset">build evaluation datasets</a>, and <a href="#methods-to-assess-qa-performance">methods to assess Q&amp;A performance</a> through human annotations and LLM-evaluators. We’ll also <a href="#what-we-can-learn-from-existing-benchmarks">review several benchmarks</a> across narrative stories, technical and academic texts, and very long-context, multi-document situations. Finally, we’ll wrap up with advice for evaluating long-context Q&amp;A on our specific use cases.</p>
+
+<p><img style="max-width: 100%" src="/assets/og_image/qa-evals-v2.jpg" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">An overview of what we'll cover in this writeup</p>
+
+<p>By the way, if you want to learn more about evals, my friends Hamel and Shreya are hosting their <em>final</em> cohort of “AI Evals for Engineers and PMs” in July. Here’s a <a href="https://maven.com/parlance-labs/evals?promoCode=eugene-is-all-you-need" target="_blank">35% discount code</a>.</p>
+
+<h2 id="key-evaluation-metrics"><strong>Key Evaluation Metrics</strong></h2>
+
+<p>Evaluating Q&amp;A systems goes beyond just checking for factual accuracy. Specifically, we might want answers to be based solely on the provided text, not the model’s knowledge. But even technically correct answers aren’t necessarily helpful. Thus, to evaluate Q&amp;A systems effectively, we should consider two orthogonal dimensions:</p>
+<ul>
+  <li><strong>Faithfulness:</strong> How strictly the answer relies on only the source document.</li>
+  <li><strong>Helpfulness:</strong> How relevant, comprehensive, and useful the response is for the user.</li>
+</ul>
+
+<p><strong>Faithfulness measures whether an answer strictly relies <em>only</em> on the source document.</strong> This means the model shouldn’t add external information or make things up (aka hallucinate). Faithfulness is especially important for legal agreements, financial contracts, or medical and insurance forms, where answers must be based solely on the given text. Faithfulness is synonymous with groundedness, where answers must be anchored on the original document.</p>
+
+<p>Faithfulness also includes the Q&amp;A system knowing when to say, “I don’t know.” If the source document doesn’t contain the answer, the ideal response is something like, “I don’t have that information in the provided text.” Related to this challenge are two errors by Q&amp;A systems:</p>
+<ul>
+  <li><strong>False positives:</strong> When the system makes up an answer that doesn’t exist in the source document (hallucinations).</li>
+  <li><strong>False negatives:</strong> When the system incorrectly states that the source document doesn’t contain information that actually is present, either due to poor retrieval or attention limitations over large contexts.</li>
+</ul>
+
+<p>We also want to distinguish faithfulness from correctness. An answer might be correct based on general knowledge but still be unfaithful if it contradicts the document. Examples include patient-specific medical instructions that differ from the usual guidelines, definitions in financial or legal agreements that depart from the standard, and historical fiction with alternate timelines. Users depend on Q&amp;A systems to return responses that are faithful to their specific documents, rather than general truths.</p>
+
+<p>For systems that provide citations, we can also assess citation accuracy. This evaluates if the cited text supports the answer. Benchmarks like <a href="https://arxiv.org/abs/2105.03011" target="_blank">QASPER</a> explicitly evaluate whether models reference the right supporting evidence for the answer. This combined assessment—checking both faithfulness and citation accuracy—provides finer-grained metrics on overall faithfulness and evidence retrieval.</p>
+
+<p><em>However, a faithful answer isn’t always a helpful answer.</em> This is where we also want to evaluate the helpfulness of responses.</p>
+
+<p><strong>Helpfulness measures whether an answer is relevant, sufficiently detailed, yet concise.</strong> Relevance means the answer directly addresses the user’s question without straying off-topic. Comprehensiveness ensures the answer contains the necessary details. Conciseness balances comprehensiveness by ensuring the answer is succinct, without unnecessary details or fluff.</p>
+
+<p>While a brief, one-sentence response to a complex question might be faithful, it falls short of being helpful if the answer needs more details. Conversely, overly long responses filled with extraneous details can overwhelm users, making it hard for users to find the core answer they need. An ideal response should contain most, if not all, of the relevant information from the source document, in a concise way that meets the user’s needs.</p>
+
+<p>A study by <a href="https://arxiv.org/abs/2305.18201" target="_blank">Xu et al. (2023)</a> found that domain experts in fields like biology or economics preferred answers that were both comprehensive and faithful, particularly for long-form questions. In contrast, crowd-workers often emphasized surface aspects such as conciseness or detail. Thus, if we’re building our Q&amp;A system for power users and experts, the system should focus on returning faithful and comprehensive answers.</p>
+
+<p>There’s a tension between faithfulness and helpfulness. An answer can be perfectly faithful yet totally unhelpful. For example, if we ask about a legal contract: “What happens if the tenant misses a payment?” A faithful yet unhelpful answer could be, “Clause 4.2 of the lease agreement addresses missed payments.” Although technically accurate, it’s not helpful as it doesn’t tell us what actually happens if a payment is missed. The same goes for Q&amp;A systems that simply copy-paste large sections from documents. A useful system should synthesize the information and return a direct answer that meaningfully addresses the user’s question.</p>
+
+<p>All in all, the best answers achieve both faithfulness and helpfulness by:</p>
+<ul>
+  <li>Staying grounded in the source text (faithful)</li>
+  <li>Directly addressing the user’s question (relevant)</li>
+  <li>Providing sufficient detail and context (comprehensive)</li>
+  <li>Presenting information clearly and succinctly (concise)</li>
+</ul>
+
+<h2 id="building-an-evaluation-dataset"><strong>Building an Evaluation Dataset</strong></h2>
+
+<p>Evaluating long-context Q&amp;A begins with creating a robust evaluation dataset. This involves testing how well a Q&amp;A system can navigate book-length documents to answer questions.</p>
+
+<p>First, we’ll start with creating a variety of realistic, context-specific questions. While human annotators excel at crafting great questions, this is time-consuming and impractical at scale, especially for lengthy documents. A more efficient approach is to use language models to draft questions that annotators can then accept or edit—this augments human judgment with machine speed and scale.</p>
+
+<p>However, just scaling with a language model isn’t enough. We also need to guide the model toward generating natural, useful questions. Thus, instead of vague prompts like “Generate questions about this chapter,” we can be more specific, such as: “Summarize the main characters in this chapter. Then, generate one question about each character’s backstory based on what we’ve read so far.” More precise prompting helps steer models toward producing useful questions for our evaluation dataset.</p>
+
+<p>This approach builds on the methodology of existing benchmarks. <a href="https://arxiv.org/abs/1712.07040" target="_blank">NarrativeQA</a> intentionally generates questions based on summaries rather than full texts. This encourages questions that test narrative comprehension rather than shallow fact recall. For the same reason, <a href="https://arxiv.org/abs/2105.03011" target="_blank">QASPER</a> creates questions based on abstracts from academic papers that models then answer based on the full paper. By learning from these benchmarks, we can construct evaluation datasets that effectively measure meaningful comprehension of long-context documents.</p>
+
+<p><strong>We’ll want to ensure question diversity when creating questions.</strong> Having a range of question types helps us evaluate the Q&amp;A system’s capabilities without overfitting to any single type of question. Depending on our use case, an evaluation dataset could include a mix of:</p>
+<ul>
+  <li><strong>Fact recall:</strong> These evaluate basic fact retrieval, like “Who is the protagonist?”, “When was the treaty signed?”, or “What is the legal clause mentioned in Section 2.1?” While simple, they confirm whether our Q&amp;A system can reliably extract information.</li>
+  <li><strong>Definitions:</strong> These assess a model’s ability to explain domain-specific content based on the document. Examples include “What does this acronym mean in the paper?”, “Explain the magic system introduced in Chapter 7,” or “Define the economic theory discussed on page 203.” This is important for technical documents to ensure the system can handle specialized terminology in context.</li>
+  <li><strong>Summarization:</strong> These measure whether the system can identify the core ideas and coherently summarize them. For example, “Summarize the main findings of the paper”, “Recap what has happened in the book so far”, or “What are the key themes discussed in Part 2?”</li>
+  <li><strong>Inference and reasoning:</strong> These evaluate the ability to reason beyond explicitly stated facts by integrating information from different parts of the document to form a coherent answer. For example, “Why did the character make this choice?” or “What can we infer about the society from these laws?”</li>
+  <li><strong>“No-Info”:</strong> Unlike previous categories, these questions cannot be answered from the document. For example, “What did Gandalf do in the final battle at Hogwarts?” or “What is the penalty for trademark infringement in this residential lease agreement?” A faithful Q&amp;A system should recognize that the required information isn’t present and respond accordingly instead of making up an answer.</li>
+</ul>
+
+<p><strong>Our Q&amp;A evals should also be robust to the position of evidence within the document.</strong> We ensure this by having questions with evidence that appear at the beginning, middle, or end, as well as creating multi-hop questions that require details from several sections or documents. Benchmarks like <a href="https://arxiv.org/abs/2410.02694v1" target="_blank">HELMET</a> evaluate how model accuracy changes based on the location of supporting information, evaluating the model’s ability to pay attention to and combine information from the entire document instead of relying solely on nearby context.</p>
+
+<h2 id="methods-to-assess-qa-performance"><strong>Methods to Assess Q&amp;A Performance</strong></h2>
+
+<p><strong>Human annotators are crucial for building a high-quality, ground-truth dataset</strong>. This is useful for calibrating automated evaluators, and with enough annotated examples, we can also train evaluation classifiers or reward models. Here’s how this might look for the metrics of faithfulness and helpfulness:</p>
+
+<p><strong>Faithfulness annotation</strong> involves evaluating whether an answer accurately reflects the source text. Ideally, we’d like simple binary labels—faithful or unfaithful—but reality is rarely that straightforward. Answers typically exist on a spectrum. As a result, a mostly correct answer that misses a critical detail should be graded differently from one that incorrectly represents minor or peripheral information.</p>
+
+<p>Related to faithfulness is the <strong>“no-info” annotation</strong>. This checks whether the model correctly identifies when the provided context doesn’t contain the information to answer the question. The goal here is to identify hallucinations, where the model invents answers instead of acknowledging the gap. As part of this exercise, we could have the following labels:</p>
+<ul>
+  <li><strong>Incorrect answer / hallucination:</strong> The model tries to answer despite missing information, even if the response sounds plausible.</li>
+  <li><strong>Incorrect refusal:</strong> The model mistakenly claims the information isn’t present, perhaps due to retrieval errors or inadequate attention to the long context.</li>
+  <li><strong>Correct refusal:</strong> The model accurately recognizes the absence of necessary details and appropriately declines to answer.</li>
+</ul>
+
+<p><strong>Helpfulness comparisons</strong> involve annotators judging which of two faithful answers better meets the user’s needs. Rather than asking for absolute ratings, annotators make relative judgments, answering a straightforward question: “Which answer is more helpful?” People find comparing two answers easier than assigning absolute ratings, resulting in greater consistency across annotators. When comparing helpfulness, annotators should consider:</p>
+<ul>
+  <li><strong>Relevance</strong>: Does one answer more directly and precisely address the question?</li>
+  <li><strong>Comprehensiveness</strong>: Does one answer include key information that the other misses?</li>
+  <li><strong>Conciseness</strong>: Is one answer more succinct and easier to understand?</li>
+</ul>
+
+<p>Here are some practical tips for setting up a reliable annotation process:</p>
+<ul>
+  <li>Start with clear guidelines: Include examples for each category and clarify how to handle edge cases. Also, be concise—it makes it easier to read the entire guide.</li>
+  <li>Iterate on the guidelines: Our initial draft won’t be perfect. Collect annotator feedback on unclear or challenging cases to improve our guidelines.</li>
+  <li>Use qualification tasks: Before assigning actual tasks, provide annotators with practice examples with known correct answers. This ensures they understand the guidelines and can apply them consistently.</li>
+  <li>Measure inter-annotator agreement: Check for consistency among annotators using metrics like Cohen’s Kappa. Low agreement can indicate unclear guidelines or ambiguous scenarios needing further clarification.</li>
+  <li>Consider expert annotators for specialized domains: General annotation tasks can usually be handled by crowd-workers, but domains like medicine or law often require subject-matter experts for accurate and meaningful evaluations.</li>
+</ul>
+
+<p>That said, while human annotation is traditionally considered the gold standard, it’s not always practical or scalable, especially for large documents. <strong>This is where LLM-evaluators (also called “LLM-as-Judge”) can help.</strong> Via this approach, we provide clear criteria—or our annotation guidelines—to a model, and have it evaluate the quality of Q&amp;A responses.</p>
+
+<p>But first, it’s important to recognize why older automated metrics fall short. Historically, the language modeling community relied on n-gram-based metrics like BLEU and ROUGE, which measure word overlap between generated responses and reference answers. Although these metrics work somewhat for tasks like machine translation, they correlate poorly with human judgment on open-ended tasks such as Q&amp;A.</p>
+
+<p>For example, the <a href="https://arxiv.org/abs/2307.11088" target="_blank">L-Eval</a> benchmark highlighted the poor correlation between token-overlap metrics and human judgment for Q&amp;A responses. A correct answer using words that differ from the reference answer can get unfairly penalized by a low ROUGE score, leading to a misleading negative signal. This is especially noticeable when model responses and reference answers vary in length. Without length normalization, token-overlap metrics can mistakenly reward verbose yet mediocre answers over concise, accurate ones.</p>
+
+<p>This is why model-based evaluation is increasingly popular—it offers more reliable and nuanced evals than traditional metrics. We typically start by calibrating an LLM-evaluator against a high-quality, human-annotated dataset. With ground truth, we can evaluate our LLM-evaluator by measuring its recall and precision on faithfulness annotations, and its correlation with human judgments on the helpfulness comparisons.</p>
+
+<p><strong>To evaluate faithfulness, we can treat answers as collections of individual claims, each of which can be verified as true or false.</strong> This is similar to approaches used in <a href="https://arxiv.org/abs/2111.09525" target="_blank">NLI-based</a> and <a href="https://aclanthology.org/2022.naacl-main.187/" target="_blank">Q&amp;A-based</a> summarization metrics, and <a href="https://arxiv.org/abs/2405.14486" target="_blank">claim generation and verification</a>. Breaking answers down into atomic claims helps us pinpoint where hallucinations occur. Here’s how it works:</p>
+
+<ul>
+  <li><strong>Extract claims:</strong> Consider this response about a contract dispute: “The tenant breached the lease because they missed three payments, failed to maintain insurance coverage, and sublet the apartment without permission.” This can be split into:
+    <ul>
+      <li>Claim 1: The tenant missed three payments.</li>
+      <li>Claim 2: The tenant failed to maintain required insurance coverage.</li>
+      <li>Claim 3: The tenant sublet the apartment without permission.</li>
+    </ul>
+  </li>
+  <li><strong>Verify each claim:</strong> Check each statement against the source document (in this case, the lease agreement) to confirm its accuracy.</li>
+  <li><strong>Calculate faithfulness:</strong> The proportion of claims supported by the document provides an overall faithfulness score.</li>
+</ul>
+
+<p>This fine-grained approach, as demonstrated by evaluations like <a href="https://arxiv.org/abs/2111.09525" target="_blank">SummaC</a>, <a href="https://aclanthology.org/2022.naacl-main.187/" target="_blank">QAFactEval</a>, and <a href="https://arxiv.org/abs/2405.14486" target="_blank">RefChecker</a>, offers more interpretability and nuance. Rather than labeling an entire answer as faithful or not, we gain a nuanced understanding of which claims are incorrect. This also allows assigning partial credit to mostly faithful answers with minor inaccuracies.</p>
+
+<p>We can also go a step further by requiring the model to provide citations for each claim. This helps distinguish between two different failure modes: hallucinations (making up answers) and retrieval failures (not retrieving relevant information).</p>
+
+<p>To evaluate our evaluator, we can compare its judgments to human annotations on two key metrics: (i) recall (of all unfaithful claims, how many does the evaluator correctly flag?) and (ii) precision (of all claims the evaluator flags as unfaithful, how many are truly unfaithful?)</p>
+
+<p><strong>Evaluating helpfulness requires a more nuanced approach because often, there isn’t a definitively “helpful” way to answer.</strong> Different situations might call for varying levels of detail or explanation styles. Here are several strategies we can consider:</p>
+<ul>
+  <li><strong>Reference-based comparison</strong> works well when we have high-quality reference answers. The LLM-evaluator compares generated answers against these references to assess relevance, detail, and clarity. However, as models improve, their answers may surpass existing references, making this method less effective over time.</li>
+  <li><strong>Criteria-based evaluation</strong> assesses answers using a clearly defined rubric. This approach allows us to directly reuse our annotation guidelines, focusing on criteria like relevance, comprehensiveness, and conciseness.</li>
+  <li><strong>Pairwise comparisons</strong> are particularly useful when iteratively improving Q&amp;A systems. By comparing newly generated answers against previously validated ones, we consistently push quality higher. This method is also ideal for A/B testing different configurations of the Q&amp;A system.</li>
+</ul>
+
+<p>To calibrate an LLM-evaluator on helpfulness, pairwise comparisons are especially reliable. By presenting pairs of answers to annotators and LLM-evaluators, we can measure their alignment—how often they agree on the more helpful answer. Correlation metrics, such as Cohen’s Kappa, quantify this alignment effectively. For example, L-Eval found that GPT-4’s pairwise comparisons correlated strongly with human preferences once properly calibrated.</p>
+
+<h2 id="what-we-can-learn-from-existing-benchmarks"><strong>What We Can Learn from Existing Benchmarks</strong></h2>
+
+<p>To ground our discussion so far, let’s look at some benchmarks for long-context Q&amp;A. Besides providing a common standard, these benchmarks highlight challenges we might encounter in dataset creation and evaluation. Since these datasets are likely already part of model training data, we shouldn’t rely solely on them to evaluate our Q&amp;A system. Instead, we’ll want to create evaluation datasets tailored to our use case.</p>
+
+<p>We’ll cover six benchmarks spanning (i) narrative documents, (ii) technical and academic documents, and (iii) very long or multi-document contexts.</p>
+
+<p><strong>The NarrativeQA dataset</strong>, introduced by <a href="http://arxiv.org/abs/1712.07040" target="_blank">Kočiský et al. in 2017</a>, is designed to test genuine narrative comprehension rather than surface-level pattern matching. Unlike earlier datasets that allowed models to answer by extracting single sentences, NarrativeQA requires synthesizing information scattered across novels and movie scripts to generate answers.</p>
+
+<p>First, the authors collected over 1,500 stories from Project Gutenberg and movie script websites, along with their corresponding plot summaries from Wikipedia. Annotators then generated question-answer pairs based only on these summaries, without viewing the full texts. (Conversely, models answered questions based on the full text but not the summaries.) This deliberate approach ensured that answers couldn’t be found by simple text matching, focusing the evaluation on understanding the entire text. The resulting dataset contains 46,765 question-answer pairs focused on narrative comprehension.</p>
+
+<p><img style="max-width: 100%" src="/assets/narrativeqa.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Statistics of the NarrativeQA dataset</p>
+
+<p>NarrativeQA evaluates whether models can integrate information dispersed throughout long narratives, such as entire books or movies, to produce coherent answers. Answers are evaluated on n-gram matching metrics such as BLEU, METEOR, and ROUGE, comparing machine-generated answers against two reference answers for each question.</p>
+
+<p>NarrativeQA highlights the importance of questions that go beyond simple extraction, requiring models to integrate information across the document. By generating questions from summaries instead of full texts, the authors ensured questions required holistic comprehension of the text, thus reducing superficial, extractive answering strategies.</p>
+
+<p><strong>NovelQA</strong>, introduced by <a href="http://arxiv.org/abs/2403.12766" target="_blank">Wang et al. in 2024</a>, is a benchmark designed for evaluating reading comprehension on very long texts, often exceeding 200,000 tokens. Similar to NarrativeQA but updated for modern times, NovelQA assesses how well models understand and integrate narratives spanning entire novels. Models were evaluated in two formats: multiple-choice and open-ended generation.</p>
+
+<p><img style="max-width: 100%" src="/assets/novelqa-fig2.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Two types of responses in NovelQA</p>
+
+<p>To build the dataset, the authors selected a diverse set of 89 English novels and collaborated closely with English literature students familiar with these works. Annotators created 2,305 questions in two phases. First, annotators used a question template and filled in entities from the novel to form valid questions (templates below).</p>
+
+<p><img style="max-width: 100%" src="/assets/novelqa-table5.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Templates used to generate questions in NovelQA</p>
+
+<p>Then, to enhance question diversity, annotators also freely generated challenging questions. All the questions were then reviewed by the authors, who ultimately accepted 79.4% of the questions. Each question was accompanied by a gold-standard answer and the relevant supporting evidence from the novels to ground evaluations.</p>
+
+<p>NovelQA evaluates a model’s ability to synthesize, integrate, and recall detailed information across extremely long contexts. Questions fall into these categories:</p>
+<ul>
+  <li>Detail-oriented (22.2%): Focus on subtle specifics requiring careful recall.</li>
+  <li>Single-hop (42.8%): Answerable from adjacent sentences or closely related passages.</li>
+  <li>Multi-hop (35%): Requires synthesizing information across multiple chapters.</li>
+</ul>
+
+<p>The questions cover various narrative aspects, such as characters, plot, setting, and deeper thematic meanings. The benchmark supports both multiple-choice and open-ended generative evaluation methods, with GPT-4 serving as evaluator for generative answers (achieving Cohen’s Kappa of 89.25% against human judgments).</p>
+
+<p><img style="max-width: 100%" src="/assets/novelqa-table7.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Data distribution by complexity and aspect in NovelQA</p>
+
+<p>NovelQA’s findings are a shift from the typical “lost in the middle” problem—it showed that model performance declines when evidence appears beyond the 100,000-token mark. The authors also highlighted the importance of rigorous quality control, manually reviewing all crowd-generated questions and accepting only 79.4% of question-answer pairs. Finally, explicitly linking each answer to specific supporting evidence helps with retrieval evals.</p>
+
+<p><img style="max-width: 100%" src="/assets/novelqa-fig3.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Performance of models decline when evidence is beyond 100k tokens</p>
+
+<p>While narrative texts present one kind of challenge, comprehending dense, technical documents introduces an entirely different set of difficulties.</p>
+
+<p><strong>QASPER</strong>, introduced by <a href="https://arxiv.org/abs/2105.03011" target="_blank">Dasigi et al. (2021)</a>, addresses this by testing models on information-seeking questions on academic papers. Specifically, QASPER contains 5,049 questions on 1,585 NLP papers. Similar to NarrativeQA, these questions were crafted by NLP practitioners who had only read paper titles and abstracts. This approach ensures questions often require synthesizing information across the entire paper rather than simple text extraction.</p>
+
+<p><img style="max-width: 60%" src="/assets/qasper-fig1.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Example question, answer, and supporting evidence in QASPER</p>
+
+<p>First, 25 NLP practitioners selected papers that interested them and created questions based solely on titles and abstracts. Then, another group of 51 NLP experts answered these questions using the full texts. The latter group’s task included determining if questions were answerable, pinpointing specific supporting evidence (such as text passages, figures, or tables), and providing clear, concise answers. (10% of questions were marked unanswerable and thus excluded.) Separating question generation from answer annotation reduced biases, as question authors had no prior knowledge of the detailed answers.</p>
+
+<p>QASPER evaluates models on two main aspects: answer accuracy (Answer-F1) and evidence selection (Evidence-F1). Answer-F1 measures the accuracy of model responses, regardless of whether they extract text directly or create new explanations. Evidence-F1 evaluates the model’s ability to identify supporting details. This is particularly challenging, as more than half of the questions require combining evidence from multiple sections or paragraphs.</p>
+
+<p>The Evidence-F1 results in QASPER highlight a significant gap between answer generation and evidence retrieval—even when models give accurate answers, they often struggle to identify the exact supporting passages. Additionally, limiting question creators to only titles and abstracts naturally encouraged questions—and answers—that required a deep understanding of the entire paper, moving beyond superficial extraction.</p>
+
+<p><strong>L-Eval</strong> by <a href="https://arxiv.org/abs/2307.11088" target="_blank">An et al. (2023)</a> covers documents ranging from 3,000 to 200,000 tokens and includes 20 diverse subtasks, 508 extensive documents, and over 2,000 human-annotated question-answer pairs. Unlike previous benchmarks that mainly relied on text-matching metrics, L-Eval also applied LLM-evaluators and measured the difference between both.</p>
+
+<p>To build L-Eval, the authors first created four new datasets: Coursera (educational content), SFiction (science fiction stories), CodeU (Python codebases), and LongFQA (financial earnings). They also improved five existing datasets by adding more challenging synthesis-oriented questions, such as augmenting QuALITY to require deeper comprehension of entire documents. Lastly, they reviewed and corrected 12 tasks from prior benchmarks, using Claude-100k to identify and remove inaccuracies or unanswerable questions.</p>
+
+<p><img style="max-width: 100%" src="/assets/leval-table1.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Statistics of datasets, question types, and domains in L-Eval</p>
+
+<p>L-Eval evaluates two types of tasks: closed-ended (like multiple-choice, code comprehension, true/false, and math), emphasizing precise reasoning, and open-ended (such as narrative synthesis and summarization), focusing on integrating and summarizing long-form content.</p>
+
+<p>Closed-ended tasks were evaluated via exact-match accuracy while open-ended tasks had human annotators rating responses from 1 (poor) to 5 (excellent). Additionally, L-Eval used language models like GPT-4 and GPT-3.5 as evaluators through pairwise comparisons for open-ended tasks. These had carefully designed prompts to reduce bias toward overly detailed answers. Traditional n-gram metrics, including ROUGE-L and F1 scores, were also used for efficiency, despite their known sensitivity to response length.</p>
+
+<p>L-Eval showed that traditional n-gram metrics often fail to reflect true comprehension in long-context scenarios due to mismatched answer lengths. Additionally, the benchmark demonstrated that using LLMs as evaluators in pairwise comparisons provides superior alignment with human assessments compared to traditional metrics, highlighting clear distinctions in model strengths for closed-ended versus open-ended tasks.</p>
+
+<p><strong>HELMET</strong> (How to Evaluate Long-context Models Effectively and Thoroughly), introduced by <a href="https://arxiv.org/abs/2410.02694" target="_blank">Yen et al. (2025)</a>, addresses issues in earlier benchmarks, such as unrealistic tasks and inconsistent metrics, providing a framework for evaluating long-context language models.</p>
+
+<p>To start, the authors identified shortcomings in existing evaluations, including limited context lengths, unreliable methods, and inadequate coverage for non-instruction-tuned models. Then, they created a benchmark with seven task categories: Retrieval-Augmented Generation (RAG), generation with citations, passage re-ranking, many-shot in-context learning, long-document question-answering, summarization, and synthetic recall. Each task contains contexts of up to 128,000 tokens, allowing controlled and consistent assessments with carefully crafted few-shot prompts and model-based metrics.</p>
+
+<p><img style="max-width: 100%" src="/assets/helmet-table3.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Task categories, datasets, and metrics in HELMET</p>
+
+<p>HELMET specifically evaluates these capabilities in long-context models:</p>
+<ul>
+  <li>Retrieval and reasoning: Natural Questions, TriviaQA, and HotpotQA test a model’s ability to find relevant information within extensive contexts containing distractors.</li>
+  <li>Instruction following: Generation tasks requiring citations assess whether models can follow precise formatting guidelines while staying accurate.</li>
+  <li>Comparative reasoning: Passage re-ranking evaluates how well models compare and reason across multiple sections of text.</li>
+  <li>In-context learning: Many-shot tasks measure a model’s ability to quickly adapt and learn from multiple examples provided in-context.</li>
+  <li>Long-form comprehension: Long-document question-answering and summarization tasks assess a model’s capability to synthesize and understand extensive texts.</li>
+</ul>
+
+<p>HELMET showed that synthetic tasks like Needle In a Haystack aren’t as useful, due to their weak correlation with real-world scenarios. Also, by carefully controlling input lengths, HELMET could evaluate model robustness to increasingly long contexts that approached previous models’ limits (≥128K tokens). Similar to previous benchmarks, HELMET replicated the flaws in traditional n-gram metrics such as ROUGE, which can misrepresent quality in longer outputs. Instead, it recommended using model-based evaluations, using models like GPT-4o, for evaluations that align more closely with human judgment.</p>
+
+<p><img style="max-width: 100%" src="/assets/helmet-fig1.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Comparison of benchmark results across NIAH, Ruler, InfinityBench, and HELMET</p>
+
+<p><strong>Loong</strong>, by <a href="https://arxiv.org/abs/2406.17419" target="_blank">Wang et al. (2024)</a>, is a benchmark that evaluates long-context comprehension across <em>multiple</em> documents. While most earlier benchmarks focus on single-document scenarios, Loong presents realistic, multi-document tasks where missing any relevant document results in incorrect answers.</p>
+
+<p><img style="max-width: 60%" src="/assets/loong-fig1.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">Loong focuses on multi-document Q&amp;A</p>
+
+<p>Loong consists of 1,600 evals drawn from financial reports, legal cases, and academic papers in English and Chinese, mainly from 2024. Each task includes evidence spread across multiple documents, mimicking real-world complexity. To generate questions, the authors used two methods: template-based generation, where Q&amp;A pairs were constructed through predefined rules, and free annotation, where GPT-4o was prompted to create additional Q&amp;A pairs.</p>
+
+<p>Loong evaluates a model’s ability to locate, compare, cluster, and reason on evidence spread across multiple documents, typically ranging from 10,000 to over 250,000 tokens. The benchmark covers four task types:</p>
+<ul>
+  <li><strong>Spotlight</strong>: Finding relevant evidence from one specific document among several.</li>
+  <li><strong>Comparison</strong>: Comparing and integrating multiple pieces of information from different documents and returning the right answer.</li>
+  <li><strong>Clustering</strong>: Aggregating and grouping relevant information from multiple sources based on specific criteria.</li>
+  <li><strong>Chain of Reasoning</strong>: Integrating evidence across documents to return answers.</li>
+</ul>
+
+<p><img style="max-width: 100%" src="/assets/loong-fig2.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">The four evaluation tasks in Loong</p>
+
+<p>For evaluation, GPT-4 was used as the LLM-evaluator to score model outputs based on accuracy, hallucinations, and completeness, referencing the golden answer and task requirements. Metrics included (i) average scores (the average evaluation across all questions) and (ii) perfect rate (the percentage of questions receiving a perfect score).</p>
+
+<p>Interestingly, their analysis of retrieval-augmented generation (RAG) showed that using RAG <em>reduced</em> performance on the Loong benchmark. They hypothesized that this is because Loong’s evidence is dispersed across multiple documents. While RAG helped somewhat on spotlight tasks, it performed poorly on tasks demanding deeper synthesis, such as comparison, clustering, and multi-step reasoning.</p>
+
+<p><img style="max-width: 70%" src="/assets/loong-fig3.webp" loading="lazy" title="Image" alt="Image" /></p>
+<p class="image-caption">The use of RAG degrades performance compared to the baseline</p>
+
+<p>Here are some other long-context benchmarks that you may find helpful:</p>
+<ul>
+  <li><a href="http://arxiv.org/abs/2305.18201" target="_blank">A Critical Evaluation of Evaluations for Long-form Question Answering</a></li>
+  <li><a href="http://arxiv.org/abs/2404.06480" target="_blank">Ada-LEval: Evaluating long-context LLMs with length-adaptable benchmarks</a></li>
+  <li><a href="http://arxiv.org/abs/2406.10149" target="_blank">BABILong: Testing the Limits of LLMs with Long Context Reasoning-in-a-Haystack</a></li>
+  <li><a href="http://arxiv.org/abs/2309.13345" target="_blank">BAMBOO: A Comprehensive Benchmark for Evaluating Long Text Modeling Capacities of Large Language Models</a></li>
+  <li><a href="http://arxiv.org/abs/2311.06602" target="_blank">BizBench: A Quantitative Reasoning Benchmark for Business and Finance</a></li>
+  <li><a href="http://arxiv.org/abs/1907.09190" target="_blank">ELI5: Long Form Question Answering</a></li>
+  <li><a href="http://arxiv.org/abs/2007.09878" target="_blank">Frustratingly Hard Evidence Retrieval for QA Over Books</a></li>
+  <li><a href="http://arxiv.org/abs/2402.13718" target="_blank">InfinityBench: Extending Long Context Evaluation Beyond 100K Tokens</a></li>
+  <li><a href="http://arxiv.org/abs/2405.10166" target="_blank">LFED: A Literary Fiction Evaluation Dataset for Large Language Models</a></li>
+  <li><a href="http://arxiv.org/abs/2308.14508" target="_blank">LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding</a></li>
+  <li><a href="http://arxiv.org/abs/2412.15204" target="_blank">LongBench v2: Towards Deeper Understanding and Reasoning on Realistic Long-Context Multitasks</a></li>
+  <li><a href="http://arxiv.org/abs/2501.15089" target="_blank">LongReason: A Synthetic Long-Context Reasoning Benchmark via Context Expansion</a></li>
+  <li><a href="http://arxiv.org/abs/2109.12595" target="_blank">MultiDoc2Dial: Modeling Dialogues Grounded in Multiple Documents</a></li>
+  <li><a href="http://arxiv.org/abs/2112.08608" target="_blank">QuALITY: Question Answering with Long Input Texts, Yes!</a></li>
+</ul>
+
+<p><br /></p>
+<p class="image-caption">• • •</p>
+
+<p>Whew, that was a lot! Here are some key takeaways:</p>
+<ul>
+  <li><strong>Faithfulness and helpfulness are orthogonal dimensions.</strong> An answer can be faithful yet unhelpful, or helpful yet contain hallucinated information.</li>
+  <li><strong>Faithfulness also means knowing when to say “I don’t know”.</strong> Models should decline to answer when the context lacks information and respond correctly when it does.</li>
+  <li><strong>Traditional n-gram metrics struggle on Q&amp;A.</strong> Use LLM-evaluators instead. They’re better at evaluating semantic quality and align more closely with human judgment.</li>
+  <li><strong>The location of evidence matters.</strong> Across the benchmarks discussed, some models struggled with the “lost in the middle” effect while others had poor performance when the evidence was beyond the 100,000 token mark.</li>
+  <li><strong>Using RAG can reduce performance</strong>, especially for tasks requiring cohesive reasoning across evidence dispersed across a single or multiple documents.</li>
+</ul>
+
+<p>Did I miss anything important? Any other metrics, methods, or benchmarks you’d suggest I look into? Please <a href="https://x.com/eugeneyan" target="_blank">let me know</a>!</p>
+
+<p>By the way, if you want to learn more about evals, my friends Hamel and Shreya are hosting their <em>final</em> cohort of “AI Evals for Engineers and PMs” in July. Here’s a <a href="https://maven.com/parlance-labs/evals?promoCode=eugene-is-all-you-need" target="_blank">35% discount code</a>.</p>
+
+<p><br /></p>
+
+<h2 id="references">References</h2>
+
+<p>An, Chenxin, Shansan Gong, Ming Zhong, Xingjian Zhao, Mukai Li, Jun Zhang, Lingpeng Kong, and Xipeng Qiu. 2023. “L-Eval: Instituting Standardized Evaluation for Long Context Language Models.” arXiv. https://doi.org/10.48550/arXiv.2307.11088.</p>
+
+<p>Bai, Yushi, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, et al. 2024. “LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding.” arXiv. https://doi.org/10.48550/arXiv.2308.14508.</p>
+
+<p>Bai, Yushi, Shangqing Tu, Jiajie Zhang, Hao Peng, Xiaozhi Wang, Xin Lv, Shulin Cao, et al. 2025. “LongBench v2: Towards Deeper Understanding and Reasoning on Realistic Long-Context Multitasks.” arXiv. https://doi.org/10.48550/arXiv.2412.15204.</p>
+
+<p>Dasigi, Pradeep, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith, and Matt Gardner. 2021. “A Dataset of Information-Seeking Questions and Answers Anchored in Research Papers.” arXiv. https://doi.org/10.48550/arXiv.2105.03011.</p>
+
+<p>Dong, Zican, Tianyi Tang, Junyi Li, Wayne Xin Zhao, and Ji-Rong Wen. 2024. “BAMBOO: A Comprehensive Benchmark for Evaluating Long Text Modeling Capacities of Large Language Models.” arXiv. https://doi.org/10.48550/arXiv.2309.13345.</p>
+
+<p>Fabbri, Alexander, Chien-Sheng Wu, Wenhao Liu, and Caiming Xiong. 2022. “QAFactEval: Improved QA-Based Factual Consistency Evaluation for Summarization.” In Proceedings of the 2022 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies. Seattle, United States: Association for Computational Linguistics. https://doi.org/10.18653/v1/2022.naacl-main.187.</p>
+
+<p>Fan, Angela, Yacine Jernite, Ethan Perez, David Grangier, Jason Weston, and Michael Auli. 2019. “ELI5: Long Form Question Answering.” arXiv. https://doi.org/10.48550/arXiv.1907.09190.</p>
+
+<p>Feng, Song, Siva Sankalp Patel, Hui Wan, and Sachindra Joshi. 2021. “MultiDoc2Dial: Modeling Dialogues Grounded in Multiple Documents.” In Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, 6162–76. https://doi.org/10.18653/v1/2021.emnlp-main.498.</p>
+
+<p>Hu, Xiangkun, Dongyu Ru, Lin Qiu, Qipeng Guo, Tianhang Zhang, Yang Xu, Yun Luo, Pengfei Liu, Yue Zhang, and Zheng Zhang. 2024. “RefChecker: Reference-Based Fine-Grained Hallucination Checker and Benchmark for Large Language Models.” arXiv. https://doi.org/10.48550/arXiv.2405.14486.</p>
+
+<p>Kočiský, Tomáš, Jonathan Schwarz, Phil Blunsom, Chris Dyer, Karl Moritz Hermann, Gábor Melis, and Edward Grefenstette. 2017. “The NarrativeQA Reading Comprehension Challenge.” arXiv. https://doi.org/10.48550/arXiv.1712.07040.</p>
+
+<p>Koncel-Kedziorski, Rik, Michael Krumdick, Viet Lai, Varshini Reddy, Charles Lovering, and Chris Tanner. 2024. “BizBench: A Quantitative Reasoning Benchmark for Business and Finance.” arXiv. https://doi.org/10.48550/arXiv.2311.06602.</p>
+
+<p>Kuratov, Yuri, Aydar Bulatov, Petr Anokhin, Ivan Rodkin, Dmitry Sorokin, Artyom Sorokin, and Mikhail Burtsev. 2024. “BABILong: Testing the Limits of LLMs with Long Context Reasoning-in-a-Haystack.” arXiv. https://doi.org/10.48550/arXiv.2406.10149.</p>
+
+<p>Laban, Philippe, Tobias Schnabel, Paul N. Bennett, and Marti A. Hearst. 2021. “SummaC: Re-Visiting NLI-Based Models for Inconsistency Detection in Summarization.” arXiv. https://doi.org/10.48550/arXiv.2111.09525.</p>
+
+<p>Ling, Zhan, Kang Liu, Kai Yan, Yifan Yang, Weijian Lin, Ting-Han Fan, Lingfeng Shen, Zhengyin Du, and Jiecao Chen. 2025. “LongReason: A Synthetic Long-Context Reasoning Benchmark via Context Expansion.” arXiv. https://doi.org/10.48550/arXiv.2501.15089.</p>
+
+<p>Mou, Xiangyang, Mo Yu, Bingsheng Yao, Chenghao Yang, Xiaoxiao Guo, Saloni Potdar, and Hui Su. 2020. “Frustratingly Hard Evidence Retrieval for QA Over Books.” arXiv. https://doi.org/10.48550/arXiv.2007.09878.</p>
+
+<p>Pang, Richard Yuanzhe, Alicia Parrish, Nitish Joshi, Nikita Nangia, Jason Phang, Angelica Chen, Vishakh Padmakumar, et al. 2022. “QuALITY: Question Answering with Long Input Texts, Yes!” arXiv. https://doi.org/10.48550/arXiv.2112.08608.</p>
+
+<p>Wang, Chonghua, Haodong Duan, Songyang Zhang, Dahua Lin, and Kai Chen. 2024. “Ada-LEval: Evaluating Long-Context LLMs with Length-Adaptable Benchmarks.” arXiv. https://doi.org/10.48550/arXiv.2404.06480.</p>
+
+<p>Wang, Cunxiang, Ruoxi Ning, Boqi Pan, Tonghui Wu, Qipeng Guo, Cheng Deng, Guangsheng Bao, et al. 2024. “NovelQA: Benchmarking Question Answering on Documents Exceeding 200K Tokens.” arXiv. https://doi.org/10.48550/arXiv.2403.12766.</p>
+
+<p>Wang, Minzheng, Longze Chen, Cheng Fu, Shengyi Liao, Xinghua Zhang, Bingli Wu, Haiyang Yu, et al. 2024. “Leave No Document Behind: Benchmarking Long-Context LLMs with Extended Multi-Doc QA.” arXiv. https://doi.org/10.48550/arXiv.2406.17419.</p>
+
+<p>Xu, Fangyuan, Yixiao Song, Mohit Iyyer, and Eunsol Choi. 2023. “A Critical Evaluation of Evaluations for Long-Form Question Answering.” arXiv. https://doi.org/10.48550/arXiv.2305.18201.</p>
+
+<p>Yen, Howard, Tianyu Gao, Minmin Hou, Ke Ding, Daniel Fleischer, Peter Izsak, Moshe Wasserblat, and Danqi Chen. 2025. “HELMET: How to Evaluate Long-Context Language Models Effectively and Thoroughly.” arXiv. https://doi.org/10.48550/arXiv.2410.02694.</p>
+
+<p>Yu, Linhao, Qun Liu, and Deyi Xiong. 2024. “LFED: A Literary Fiction Evaluation Dataset for Large Language Models.” arXiv. https://doi.org/10.48550/arXiv.2405.10166.</p>
+
+<p>Zhang, Xinrong, Yingfa Chen, Shengding Hu, Zihang Xu, Junhao Chen, Moo Khai Hao, Xu Han, et al. 2024. “InfinityBench: Extending Long Context Evaluation Beyond 100K Tokens.” arXiv. https://doi.org/10.48550/arXiv.2402.13718.</p>
+
+
+
+            <br>
+<p>If you found this useful, please cite this write-up as:</p>
+
+<blockquote class="blockquote-citation">
+    <p>Yan, Ziyou. (Jun 2025). Evaluating Long-Context Question & Answer Systems. eugeneyan.com.
+        https://eugeneyan.com/writing/qa-evals/.</p>
+</blockquote>
+
+<p>or</p>
+
+<div class="citation"><pre><code>@article{yan2025qa,
+  title   = {Evaluating Long-Context Question & Answer Systems},
+  author  = {Yan, Ziyou},
+  journal = {eugeneyan.com},
+  year    = {2025},
+  month   = {Jun},
+  url     = {https://eugeneyan.com/writing/qa-evals/}
+}</code></pre>
+</div>
+
+
+            <br>
+
+
+<style>
+    #share-buttons {
+        display: inline-block;
+        vertical-align: middle;
+    }
+
+    #share-buttons:after {
+        content: "";
+        display: block;
+        clear: both;
+    }
+
+    #share-buttons > div {
+        position: relative;
+        text-align: left;
+        height: 36px;
+        width: 32px;
+        float: left;
+        text-align: center;
+    }
+
+    #share-buttons > div > svg {
+        height: 16px;
+        fill: #808080;
+        margin-top: 10px;
+    }
+
+    #share-buttons > div:hover {
+        cursor: pointer;
+    }
+</style>
+
+<span style="font-size: 18px">Share on:  </span>
+<div id="share-buttons">
+    <div class="twitter" title="Share this on Twitter" onclick="if (!window.__cfRLUnblockHandlers) return false; window.open('https://twitter.com/intent/tweet?text=Great read! Evaluating Long-Context Question & Answer Systems&url=https://eugeneyan.com/writing/qa-evals/&via=eugeneyan', 'pop-up', 'left=20,top=20,width=500,height=500,toolbar=1,resizable=0');" data-cf-modified-7d63f5bcb51b80dc4a688d04-="">
+        <img class="icon about-icon-large" src="/assets/icon-twitter.svg" loading="lazy" alt=""/>
+    </div>
+    <div class="linkedin" title="Share this on Linkedin" onclick="if (!window.__cfRLUnblockHandlers) return false; window.open('https://www.linkedin.com/shareArticle?mini=true&url=https://eugeneyan.com/writing/qa-evals/&source=eugeneyan.com', 'pop-up', 'left=20,top=20,width=500,height=500,toolbar=1,resizable=0');" data-cf-modified-7d63f5bcb51b80dc4a688d04-="">
+        <img class="icon about-icon-large" src="/assets/icon-linkedin.svg" loading="lazy" alt=""/>
+    </div>
+    <div class="bluesky" title="Share this on Bluesky" onclick="if (!window.__cfRLUnblockHandlers) return false; window.open('https://bsky.app/intent/compose?text=Great read! Evaluating Long-Context Question & Answer Systems https://eugeneyan.com/writing/qa-evals/', 'pop-up', 'left=20,top=20,width=500,height=500,toolbar=1,resizable=0');" data-cf-modified-7d63f5bcb51b80dc4a688d04-="">
+        <img class="icon about-icon-large" src="/assets/bluesky.svg" loading="lazy" alt=""/>
+    </div>
+    <div class="facebook fb-share-button" title="Share this on Facebook" onclick="if (!window.__cfRLUnblockHandlers) return false; window.open('https://www.facebook.com/dialog/share?app_id=249237293114028&display=popup&href=https://eugeneyan.com/writing/qa-evals/&&redirect_uri=https://eugeneyan.com/writing/qa-evals/', 'pop-up', 'left=20,top=20,width=500,height=500,toolbar=1,resizable=0');" data-cf-modified-7d63f5bcb51b80dc4a688d04-="">
+        <img class="icon about-icon-large" src="/assets/icon-facebook.svg" loading="lazy" alt=""/>
+    </div>
+    <div class="mail" title="Share this through Email" onclick="if (!window.__cfRLUnblockHandlers) return false; window.open('mailto:?subject=Great read! Evaluating Long-Context Question & Answer Systems&body=https://eugeneyan.com/writing/qa-evals/');" data-cf-modified-7d63f5bcb51b80dc4a688d04-="">
+        <img class="icon about-icon-large" src="/assets/icon-mail.svg" loading="lazy" alt=""/>
+    </div>
+</div>
+
+        </div>
+        <!-- Page navigation -->
+
+        <hr>
+
+        <div id="algolia-recs-container" style="display: none;">
+          <div id="algolia-related-products" style="margin-bottom: 2em;"></div>
+          <div id="algolia-fbt"></div>
+
+<style>
+  /* Common styles for both recommendation widgets */
+  .algolia-recs-section-header {
+    font-family: 'Raleway', Helvetica, sans-serif;
+    font-size: 1em; /* Adjust as needed, smaller than default h3 */
+    font-weight: bold;
+    margin-top: 0; /* Remove or reduce top margin */
+    margin-bottom: 15px; /* Space between header and recommendation cards */
+    color: var(--c-text); /* Use theme's text color */
+    font-style: italic;
+  }
+
+  /* Related Products Widget Styles */
+  #algolia-related-products .ais-RelatedProducts-list {
+    display: flex;
+    flex-direction: row; /* Arrange items horizontally */
+    flex-wrap: nowrap;   /* Prevent wrapping to new lines, if possible */
+    justify-content: flex-start; /* Align items to the start of the container */
+    padding-left: 0;     /* Remove default list padding */
+    list-style-type: none; /* Remove list bullets */
+    margin: 0;
+  }
+
+  #algolia-related-products .ais-RelatedProducts-item {
+    width: 32%; /* Adjust for 3 items: 32% * 3 items + 2% * 2 margins = 100% */
+    margin-right: 2%;
+    box-sizing: border-box; /* Include padding and border in the element's total width */
+
+    /* Optional: Basic card styling (uncomment to use) */
+    border: 1px solid color-mix(in srgb, var(--c-background) 85%, var(--c-text) 15%); /* Theme-aware light grey border */
+    padding: 0; /* Remove overall card padding, will be handled by elements */
+    text-align: left; /* Or 'center' if you prefer */
+    background-color: var(--c-background);
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+
+  #algolia-related-products .ais-RelatedProducts-item:last-child {
+    margin-right: 0; /* No margin for the last item in the row */
+  }
+
+  /* Styling for images within recommendation items */
+  #algolia-related-products .ais-RelatedProducts-item img {
+    display: block;     /* Can help remove extra space below image */
+    width: calc(100% - 4px); /* Full width minus 2px L/R margins */
+    max-width: 100%;    /* Ensures image does not exceed container if intrinsically smaller */
+    /* height: auto; -- Controlled by inline style's max-height and object-fit */
+    object-fit: cover;  /* Ensure image covers the area, also in inline style */
+    margin: 2px;        /* 2px margin on top, left, right. Bottom is overridden by inline style. */
+    /* margin-bottom: 8px; -- This is set by inline style in JS template */
+  }
+
+  /* Styling for the wrapper link to make the whole card clickable */
+  #algolia-related-products .ais-RelatedProducts-item a.ais-RelatedProducts-item-link-wrapper {
+    display: block; /* Make the link fill the list item */
+    text-decoration: none; /* Remove underline */
+    color: inherit; /* Use parent's text color */
+  }
+
+  #algolia-related-products .related-product-title {
+    font-family: 'Raleway', Helvetica, sans-serif;
+    font-size: 0.75em;
+    display: -webkit-box;
+    -webkit-line-clamp: 2; /* Limit to 2 lines for WebKit browsers */
+    line-clamp: 2; /* Standard property */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 7px 7px 7px; /* 0 top, 7px L/R/B for text area */
+    line-height: 1.5; /* Adjust for better readability */
+    height: 3.3em; /* Current height: 3.3em. For 2 lines with 0.75em font & 1.5 line-height, calculated height would be 2.25em. */
+    color: var(--c-interactive); /* Use theme's interactive color */
+  }
+
+  /* This container will wrap the image and score, taking the original image's layout space. */
+  #algolia-related-products .ais-RelatedProducts-item .recommendation-image-container {
+    position: relative; /* For positioning the score absolutely within */
+    display: block; /* Matches original image display and ensures proper block layout */
+    width: calc(100% - 4px); /* Adopts width from original image styling */
+    margin: 2px;             /* Adopts margin from original image styling */
+    margin-bottom: 8px;      /* Adopts specific bottom margin from original image's inline style */
+    line-height: 0; /* Prevents unexpected space if child elements are treated as inline */
+  }
+
+  /* The image itself, now filling the container */
+  #algolia-related-products .ais-RelatedProducts-item .recommendation-image-container img {
+    display: block;
+    width: 100%;       /* Fill the container's width */
+    max-width: 20em;   /* Optional: retain original max-width constraint for the image content */
+    height: auto;      /* Maintain aspect ratio by default */
+    max-height: 12em;  /* Constrain image height (adjust as needed) */
+    object-fit: cover; /* Ensures image covers the allocated space, cropping if necessary */
+    margin: 0 auto;    /* Center image if max-width kicks in and it's narrower than container */
+  }
+
+  /* The score overlay box */
+  #algolia-related-products .ais-RelatedProducts-item .recommendation-score {
+    position: absolute;
+    bottom: 3px;  /* Padding from the bottom edge of the container */
+    right: 3px;   /* Padding from the right edge of the container */
+    background-color: color-mix(in srgb, var(--c-background) 85%, var(--green) 15%); /* Theme-aware light green */
+    color: var(--green); /* Theme's green color for text */
+    padding: 3px 6px; /* Slightly adjusted padding */
+    font-family: 'Raleway', Helvetica, sans-serif;
+    font-size: 0.75em;
+    font-weight: bold;
+    border-radius: 10px; /* More rounded corners like the example */
+    border: 1px solid var(--green); /* Theme's green color for border */
+    line-height: 1; /* Critical for small text in a small box */
+    z-index: 10; /* Ensure it's above the image */
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15); /* Softer shadow */
+    display: flex; /* To align icon and text nicely */
+    align-items: center; /* Vertically center icon and text */
+  }
+
+  /* Styling for the SVG icon within the score box */
+  #algolia-related-products .ais-RelatedProducts-item .recommendation-score-icon {
+    width: 0.9em; /* Scale with score's font size */
+    height: 0.9em;
+    vertical-align: -0.1em; /* Fine-tune vertical alignment */
+    margin-right: 4px; /* Space between icon and score number */
+    fill: var(--green); /* Theme's green color for icon */
+  }
+
+  /* Frequently Bought Together Widget Styles */
+  #algolia-fbt .ais-FrequentlyBoughtTogether-list {
+    display: flex;
+    flex-direction: row; /* Arrange items horizontally */
+    flex-wrap: nowrap;   /* Prevent wrapping to new lines, if possible */
+    justify-content: flex-start; /* Align items to the start of the container */
+    padding-left: 0;     /* Remove default list padding */
+    list-style-type: none; /* Remove list bullets */
+    margin: 0;
+  }
+
+  #algolia-fbt .ais-FrequentlyBoughtTogether-item {
+    width: 32%; /* Adjust for 3 items: 32% * 3 items + 2% * 2 margins = 100% */
+    margin-right: 2%;
+    box-sizing: border-box; /* Include padding and border in the element's total width */
+
+    /* Optional: Basic card styling (uncomment to use) */
+    border: 1px solid color-mix(in srgb, var(--c-background) 85%, var(--c-text) 15%); /* Theme-aware light grey border */
+    padding: 0; /* Remove overall card padding, will be handled by elements */
+    text-align: left; /* Or 'center' if you prefer */
+    background-color: var(--c-background);
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+
+  #algolia-fbt .ais-FrequentlyBoughtTogether-item:last-child {
+    margin-right: 0; /* No margin for the last item in the row */
+  }
+
+  /* Styling for images within recommendation items */
+  #algolia-fbt .ais-FrequentlyBoughtTogether-item img {
+    display: block;     /* Can help remove extra space below image */
+    width: calc(100% - 4px); /* Full width minus 2px L/R margins */
+    max-width: 100%;    /* Ensures image does not exceed container if intrinsically smaller */
+    /* height: auto; -- Controlled by inline style's max-height and object-fit */
+    object-fit: cover;  /* Ensure image covers the area, also in inline style */
+    margin: 2px;        /* 2px margin on top, left, right. Bottom is overridden by inline style. */
+    /* margin-bottom: 8px; -- This is set by inline style in JS template */
+  }
+
+  /* Styling for the wrapper link to make the whole card clickable */
+  #algolia-fbt .ais-FrequentlyBoughtTogether-item a.ais-FrequentlyBoughtTogether-item-link-wrapper {
+    display: block; /* Make the link fill the list item */
+    text-decoration: none; /* Remove underline */
+    color: inherit; /* Use parent's text color */
+  }
+
+  #algolia-fbt .fbt-product-title {
+    font-family: 'Raleway', Helvetica, sans-serif;
+    font-size: 0.75em;
+    display: -webkit-box;
+    -webkit-line-clamp: 2; /* Limit to 2 lines for WebKit browsers */
+    line-clamp: 2; /* Standard property */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 7px 7px 7px; /* 0 top, 7px L/R/B for text area */
+    line-height: 1.5; /* Adjust for better readability */
+    height: 3.3em; /* Current height: 3.3em. For 2 lines with 0.75em font & 1.5 line-height, calculated height would be 2.25em. */
+    color: var(--c-interactive); /* Use theme's interactive color */
+  }
+
+  /* This container will wrap the image and score, taking the original image's layout space. */
+  #algolia-fbt .ais-FrequentlyBoughtTogether-item .recommendation-image-container {
+    position: relative; /* For positioning the score absolutely within */
+    display: block; /* Matches original image display and ensures proper block layout */
+    width: calc(100% - 4px); /* Adopts width from original image styling */
+    margin: 2px;             /* Adopts margin from original image styling */
+    margin-bottom: 8px;      /* Adopts specific bottom margin from original image's inline style */
+    line-height: 0; /* Prevents unexpected space if child elements are treated as inline */
+  }
+
+  /* The image itself, now filling the container */
+  #algolia-fbt .ais-FrequentlyBoughtTogether-item .recommendation-image-container img {
+    display: block;
+    width: 100%;       /* Fill the container's width */
+    max-width: 20em;   /* Optional: retain original max-width constraint for the image content */
+    height: auto;      /* Maintain aspect ratio by default */
+    max-height: 12em;  /* Constrain image height (adjust as needed) */
+    object-fit: cover; /* Ensures image covers the allocated space, cropping if necessary */
+    margin: 0 auto;    /* Center image if max-width kicks in and it's narrower than container */
+  }
+
+  /* The score overlay box */
+  #algolia-fbt .ais-FrequentlyBoughtTogether-item .recommendation-score {
+    position: absolute;
+    bottom: 3px;  /* Padding from the bottom edge of the container */
+    right: 3px;   /* Padding from the right edge of the container */
+    background-color: color-mix(in srgb, var(--c-background) 85%, var(--green) 15%); /* Theme-aware light green */
+    color: var(--green); /* Theme's green color for text */
+    padding: 3px 6px; /* Slightly adjusted padding */
+    font-family: 'Raleway', Helvetica, sans-serif;
+    font-size: 0.75em;
+    font-weight: bold;
+    border-radius: 10px; /* More rounded corners like the example */
+    border: 1px solid var(--green); /* Theme's green color for border */
+    line-height: 1; /* Critical for small text in a small box */
+    z-index: 10; /* Ensure it's above the image */
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15); /* Softer shadow */
+    display: flex; /* To align icon and text nicely */
+    align-items: center; /* Vertically center icon and text */
+  }
+
+  /* Styling for the SVG icon within the score box */
+  #algolia-fbt .ais-FrequentlyBoughtTogether-item .recommendation-score-icon {
+    width: 0.9em; /* Scale with score's font size */
+    height: 0.9em;
+    vertical-align: -0.1em; /* Fine-tune vertical alignment */
+    margin-right: 4px; /* Space between icon and score number */
+    fill: var(--green); /* Theme's green color for icon */
+  }
+</style>
+<script type="7d63f5bcb51b80dc4a688d04-text/javascript">
+  // Function to load a script and return a promise
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) {
+        resolve(); // Already loaded
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = src;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Script load error for ${src}`));
+      document.head.appendChild(script);
+    });
+  }
+
+  function initAlgoliaRecommendations() {
+    Promise.all([
+      loadScript('https://cdn.jsdelivr.net/npm/algoliasearch@4/dist/algoliasearch-lite.umd.js'),
+      loadScript('https://cdn.jsdelivr.net/npm/instantsearch.js@4')
+    ])
+    .then(() => {
+      // Initialize the Related Products widget
+      initRelatedProducts();
+
+      // Initialize the Frequently Bought Together widget
+      initFrequentlyBoughtTogether();
+    })
+    .catch(error => {
+      // Handle error silently
+    });
+  }
+
+  function initRelatedProducts() {
+    // Ensure container exists
+    if (!document.getElementById('algolia-related-products')) {
+      // Container not found, stopping initialization
+      return;
+    }
+
+    const recSearchClient = algoliasearch(
+      '2XJCLEABQD',
+      'b61ec4cb64bd32d62c053466fccbfa43'
+    );
+
+    const relatedSearch = instantsearch({
+      indexName: 'eugeneyan.com',
+      searchClient: recSearchClient,
+      clickAnalytics: true,
+      insights: true, // Enable insights for click tracking on recommendations
+    });
+
+    relatedSearch.addWidgets([
+      instantsearch.widgets.relatedProducts({
+        container: '#algolia-related-products',
+        objectIDs: ['/writing/qa-evals/'],
+        limit: 3,
+        queryParameters: {
+          attributesToRetrieve: ['title', 'url', 'image', 'score', '_score'], // Specify only needed attributes
+          attributesToHighlight: [], // Disable highlighting
+          attributesToSnippet: []    // Disable snippeting
+        },
+        translations: {
+          title: '', // Custom title is in _layouts/post.html
+        },
+        transformItems: function(items) {
+
+
+          const containerElement = document.getElementById('algolia-recs-container');
+          const relatedElement = document.getElementById('algolia-related-products');
+
+          // Hide the Related Products container element first if there are no items
+          if (items.length === 0 && relatedElement) {
+            relatedElement.style.display = 'none';
+
+          } else if (relatedElement) {
+            relatedElement.style.display = 'block';
+          }
+
+          // Then handle the main recommendations container visibility
+          if (items.length > 0 && containerElement) {
+            containerElement.style.display = 'block';
+
+          } else if (containerElement && !document.getElementById('algolia-fbt').hasChildNodes()) {
+            containerElement.style.display = 'none';
+
+          } else {
+
+          }
+          return items;
+        },
+        templates: {
+          header() { // Removed unused results, html parameters
+
+            // Return a PLAIN string for the header
+            return '<h4 class="algolia-recs-section-header">You Might Also Like (content-based)</h4>';
+          },
+          item: function(hit, { html, sendEvent }) { // Added sendEvent to params
+
+            const itemUrl = `${hit.url || '#'}`;
+            const indexName = 'eugeneyan.com'; // Get index name for insights
+
+            let imageUrl;
+            // Ensure hit.image is not null, undefined, or an empty/whitespace string before using it.
+            if (hit.image && typeof hit.image === 'string' && hit.image.trim() !== '') {
+              imageUrl = `/assets/og_image/${hit.image}`;
+            } else {
+              imageUrl = `/assets/og_image/default-v4.jpg`; // Default image
+            }
+
+            let scoreValue = null;
+            if (typeof hit.score === 'number') scoreValue = hit.score.toFixed(2);
+            else if (typeof hit._score === 'number') scoreValue = hit._score.toFixed(2);
+            // else if (typeof hit.your_custom_score_field === 'number') scoreValue = hit.your_custom_score_field.toFixed(2);
+
+            const scoreElement = scoreValue ? `<div class="recommendation-score"><svg viewbox="0 0 24 24" class="recommendation-score-icon" xmlns="http://www.w3.org/2000/svg"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"></path></svg>${scoreValue}</div>` : '';
+
+            const imageAndScoreTag = `
+              <div class="recommendation-image-container">
+                <img src="${imageUrl}" alt="${hit.title || 'Recommendation cover image'}">
+                ${scoreElement}
+              </div>`;
+
+            const title = hit.title || 'Untitled Post';
+
+            return `
+              <a href="${itemUrl}"
+                 class="ais-RelatedProducts-item-link-wrapper"
+                 onClick="${() => {
+                  sendEvent('click', hit, 'Related Item Clicked');
+                 }}"
+              >
+                ${imageAndScoreTag}
+                <div class="related-product-title">${title}</div>
+              </a>
+            `;
+          },
+          empty(results, { html }) {
+
+            const containerElement = document.getElementById('algolia-recs-container');
+            const relatedElement = document.getElementById('algolia-related-products');
+
+            // Hide Related Products container since there are no results
+            if (relatedElement) {
+              relatedElement.style.display = 'none';
+
+            }
+
+            // Check if the FBT widget also has no items before hiding the main container
+            const fbtWidgetContainer = document.getElementById('algolia-fbt');
+            if (containerElement && (!fbtWidgetContainer || !fbtWidgetContainer.hasChildNodes())) {
+              containerElement.style.display = 'none';
+
+            }
+
+            // Return an empty string to prevent rendering 'undefined'
+            return '';
+          }
+        }
+      })
+    ]);
+
+    relatedSearch.start();
+  }
+
+  function initFrequentlyBoughtTogether() {
+    // Ensure container exists
+    if (!document.getElementById('algolia-fbt')) {
+      // Container not found, stopping initialization
+      return;
+    }
+
+    const recSearchClient = algoliasearch(
+      '2XJCLEABQD',
+      'b61ec4cb64bd32d62c053466fccbfa43'
+    );
+
+    const fbtSearch = instantsearch({
+      indexName: 'eugeneyan.com',
+      searchClient: recSearchClient,
+      clickAnalytics: true,
+      insights: true, // Enable insights for click tracking on recommendations
+    });
+
+    fbtSearch.addWidgets([
+      instantsearch.widgets.frequentlyBoughtTogether({
+        container: '#algolia-fbt',
+        objectIDs: ['/writing/qa-evals/'],
+        limit: 3,
+        queryParameters: {
+          attributesToRetrieve: ['title', 'url', 'image', 'score', '_score'], // Specify only needed attributes
+          attributesToHighlight: [], // Disable highlighting
+          attributesToSnippet: []    // Disable snippeting
+        },
+        translations: {
+          title: '', // Custom title is in _layouts/post.html
+        },
+        transformItems: function(items) {
+
+
+          const containerElement = document.getElementById('algolia-recs-container');
+          if (items.length > 0 && containerElement) {
+            containerElement.style.display = 'block';
+
+          } else if (containerElement && !document.getElementById('algolia-related-products').hasChildNodes()) {
+            containerElement.style.display = 'none';
+
+          } else {
+
+          }
+          return items;
+        },
+        templates: {
+          header() {
+
+            // Return a PLAIN string for the header - only if we have items to display
+            // The header should not render if there's no content
+            return '<h4 class="algolia-recs-section-header">Frequently Read Together (behavioral-based)</h4>';
+          },
+          item: function(hit, { html, sendEvent }) {
+
+            const itemUrl = `${hit.url || '#'}`;
+            const indexName = 'eugeneyan.com'; // Get index name for insights
+
+            let imageUrl;
+            // Ensure hit.image is not null, undefined, or an empty/whitespace string before using it.
+            if (hit.image && typeof hit.image === 'string' && hit.image.trim() !== '') {
+              imageUrl = `/assets/og_image/${hit.image}`;
+            } else {
+              imageUrl = `/assets/og_image/default-v4.jpg`; // Default image
+            }
+
+            let scoreValue = null;
+            if (typeof hit.score === 'number') scoreValue = hit.score.toFixed(2);
+            else if (typeof hit._score === 'number') scoreValue = hit._score.toFixed(2);
+            // else if (typeof hit.your_custom_score_field === 'number') scoreValue = hit.your_custom_score_field.toFixed(2);
+
+            const scoreElement = scoreValue ? `<div class="recommendation-score"><svg viewbox="0 0 24 24" class="recommendation-score-icon" xmlns="http://www.w3.org/2000/svg"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"></path></svg>${scoreValue}</div>` : '';
+
+            const imageAndScoreTag = `
+              <div class="recommendation-image-container">
+                <img src="${imageUrl}" alt="${hit.title || 'Recommendation cover image'}">
+                ${scoreElement}
+              </div>`;
+
+            const title = hit.title || 'Untitled Post';
+
+            return `
+              <a href="${itemUrl}"
+                 class="ais-FrequentlyBoughtTogether-item-link-wrapper"
+                 onClick="${() => {
+                  sendEvent('click', hit, 'FBT Item Clicked');
+                 }}"
+              >
+                ${imageAndScoreTag}
+                <div class="fbt-product-title">${title}</div>
+              </a>
+            `;
+          },
+          empty(results, { html }) {
+
+            const containerElement = document.getElementById('algolia-recs-container');
+            const fbtElement = document.getElementById('algolia-fbt');
+
+            // Hide FBT container since there are no results
+            if (fbtElement) {
+              fbtElement.style.display = 'none';
+
+            }
+
+            // Check if the Related Products widget also has no items before hiding the main container
+            const relatedWidgetContainer = document.getElementById('algolia-related-products');
+            if (containerElement && (!relatedWidgetContainer || !relatedWidgetContainer.hasChildNodes())) {
+              containerElement.style.display = 'none';
+
+
+            }
+
+            // Return an empty string to prevent rendering 'undefined'
+            return '';
+          }
+        }
+      })
+    ]);
+
+    fbtSearch.start();
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    let recsLoaded = false;
+    function checkLoad() {
+      if (recsLoaded) return;
+      if ((window.scrollY + window.innerHeight) >= document.body.scrollHeight - 500) {
+        recsLoaded = true;
+        window.removeEventListener('scroll', checkLoad);
+        initAlgoliaRecommendations();
+      }
+    }
+    window.addEventListener('scroll', checkLoad, { passive: true });
+    checkLoad();
+  });
+</script>
+
+
+        </div>
+        <br>
+
+        <!-- <div id="algolia-recs-container" style="display: none;">
+            <div id="algolia-related-products" style="margin-bottom: 2em;"></div>
+
+<style>
+  /* Common styles for both recommendation widgets */
+  .algolia-recs-section-header {
+    font-family: 'Raleway', Helvetica, sans-serif;
+    font-size: 1em; /* Adjust as needed, smaller than default h3 */
+    font-weight: bold;
+    margin-top: 0; /* Remove or reduce top margin */
+    margin-bottom: 15px; /* Space between header and recommendation cards */
+    color: var(--c-text); /* Use theme's text color */
+    font-style: italic;
+  }
+
+  /* Related Products Widget Styles */
+  #algolia-related-products .ais-RelatedProducts-list {
+    display: flex;
+    flex-direction: row; /* Arrange items horizontally */
+    flex-wrap: nowrap;   /* Prevent wrapping to new lines, if possible */
+    justify-content: flex-start; /* Align items to the start of the container */
+    padding-left: 0;     /* Remove default list padding */
+    list-style-type: none; /* Remove list bullets */
+    margin: 0;
+  }
+
+  #algolia-related-products .ais-RelatedProducts-item {
+    width: 32%; /* Adjust for 3 items: 32% * 3 items + 2% * 2 margins = 100% */
+    margin-right: 2%;
+    box-sizing: border-box; /* Include padding and border in the element's total width */
+
+    /* Optional: Basic card styling (uncomment to use) */
+    border: 1px solid color-mix(in srgb, var(--c-background) 85%, var(--c-text) 15%); /* Theme-aware light grey border */
+    padding: 0; /* Remove overall card padding, will be handled by elements */
+    text-align: left; /* Or 'center' if you prefer */
+    background-color: var(--c-background);
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+
+  #algolia-related-products .ais-RelatedProducts-item:last-child {
+    margin-right: 0; /* No margin for the last item in the row */
+  }
+
+  /* Styling for images within recommendation items */
+  #algolia-related-products .ais-RelatedProducts-item img {
+    display: block;     /* Can help remove extra space below image */
+    width: calc(100% - 4px); /* Full width minus 2px L/R margins */
+    max-width: 100%;    /* Ensures image does not exceed container if intrinsically smaller */
+    /* height: auto; -- Controlled by inline style's max-height and object-fit */
+    object-fit: cover;  /* Ensure image covers the area, also in inline style */
+    margin: 2px;        /* 2px margin on top, left, right. Bottom is overridden by inline style. */
+    /* margin-bottom: 8px; -- This is set by inline style in JS template */
+  }
+
+  /* Styling for the wrapper link to make the whole card clickable */
+  #algolia-related-products .ais-RelatedProducts-item a.ais-RelatedProducts-item-link-wrapper {
+    display: block; /* Make the link fill the list item */
+    text-decoration: none; /* Remove underline */
+    color: inherit; /* Use parent's text color */
+  }
+
+  #algolia-related-products .related-product-title {
+    font-family: 'Raleway', Helvetica, sans-serif;
+    font-size: 0.75em;
+    display: -webkit-box;
+    -webkit-line-clamp: 2; /* Limit to 2 lines for WebKit browsers */
+    line-clamp: 2; /* Standard property */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 7px 7px 7px; /* 0 top, 7px L/R/B for text area */
+    line-height: 1.5; /* Adjust for better readability */
+    height: 3.3em; /* Current height: 3.3em. For 2 lines with 0.75em font & 1.5 line-height, calculated height would be 2.25em. */
+    color: var(--c-interactive); /* Use theme's interactive color */
+  }
+
+  /* This container will wrap the image and score, taking the original image's layout space. */
+  #algolia-related-products .ais-RelatedProducts-item .recommendation-image-container {
+    position: relative; /* For positioning the score absolutely within */
+    display: block; /* Matches original image display and ensures proper block layout */
+    width: calc(100% - 4px); /* Adopts width from original image styling */
+    margin: 2px;             /* Adopts margin from original image styling */
+    margin-bottom: 8px;      /* Adopts specific bottom margin from original image's inline style */
+    line-height: 0; /* Prevents unexpected space if child elements are treated as inline */
+  }
+
+  /* The image itself, now filling the container */
+  #algolia-related-products .ais-RelatedProducts-item .recommendation-image-container img {
+    display: block;
+    width: 100%;       /* Fill the container's width */
+    max-width: 20em;   /* Optional: retain original max-width constraint for the image content */
+    height: auto;      /* Maintain aspect ratio by default */
+    max-height: 12em;  /* Constrain image height (adjust as needed) */
+    object-fit: cover; /* Ensures image covers the allocated space, cropping if necessary */
+    margin: 0 auto;    /* Center image if max-width kicks in and it's narrower than container */
+  }
+
+  /* The score overlay box */
+  #algolia-related-products .ais-RelatedProducts-item .recommendation-score {
+    position: absolute;
+    bottom: 3px;  /* Padding from the bottom edge of the container */
+    right: 3px;   /* Padding from the right edge of the container */
+    background-color: color-mix(in srgb, var(--c-background) 85%, var(--green) 15%); /* Theme-aware light green */
+    color: var(--green); /* Theme's green color for text */
+    padding: 3px 6px; /* Slightly adjusted padding */
+    font-family: 'Raleway', Helvetica, sans-serif;
+    font-size: 0.75em;
+    font-weight: bold;
+    border-radius: 10px; /* More rounded corners like the example */
+    border: 1px solid var(--green); /* Theme's green color for border */
+    line-height: 1; /* Critical for small text in a small box */
+    z-index: 10; /* Ensure it's above the image */
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15); /* Softer shadow */
+    display: flex; /* To align icon and text nicely */
+    align-items: center; /* Vertically center icon and text */
+  }
+
+  /* Styling for the SVG icon within the score box */
+  #algolia-related-products .ais-RelatedProducts-item .recommendation-score-icon {
+    width: 0.9em; /* Scale with score's font size */
+    height: 0.9em;
+    vertical-align: -0.1em; /* Fine-tune vertical alignment */
+    margin-right: 4px; /* Space between icon and score number */
+    fill: var(--green); /* Theme's green color for icon */
+  }
+
+</style>
+<script>
+  // Function to load a script and return a promise
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) {
+        resolve(); // Already loaded
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = src;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Script load error for ${src}`));
+      document.head.appendChild(script);
+    });
+  }
+
+  function initAlgoliaRecommendations() {
+    Promise.all([
+      loadScript('https://cdn.jsdelivr.net/npm/algoliasearch@4/dist/algoliasearch-lite.umd.js'),
+      loadScript('https://cdn.jsdelivr.net/npm/instantsearch.js@4')
+    ])
+    .then(() => {
+      // Initialize the Related Products widget
+      initRelatedProducts();
+
+    })
+    .catch(error => {
+      // Handle error silently
+    });
+  }
+
+  function initRelatedProducts() {
+    // Ensure container exists
+    if (!document.getElementById('algolia-related-products')) {
+      // Container not found, stopping initialization
+      return;
+    }
+
+    const recSearchClient = algoliasearch(
+      '2XJCLEABQD',
+      'b61ec4cb64bd32d62c053466fccbfa43'
+    );
+
+    const relatedSearch = instantsearch({
+      indexName: 'eugeneyan.com',
+      searchClient: recSearchClient,
+      clickAnalytics: true,
+      insights: true, // Enable insights for click tracking on recommendations
+    });
+
+    relatedSearch.addWidgets([
+      instantsearch.widgets.relatedProducts({
+        container: '#algolia-related-products',
+        objectIDs: ['/writing/qa-evals/'],
+        limit: 3,
+        queryParameters: {
+          attributesToRetrieve: ['title', 'url', 'image', 'score', '_score'], // Specify only needed attributes
+          attributesToHighlight: [], // Disable highlighting
+          attributesToSnippet: []    // Disable snippeting
+        },
+        translations: {
+          title: '', // Custom title is in _layouts/post.html
+        },
+        transformItems: function(items) {
+          const containerElement = document.getElementById('algolia-recs-container');
+          const relatedElement = document.getElementById('algolia-related-products');
+
+          if (items.length === 0) {
+            if (relatedElement) relatedElement.style.display = 'none';
+            if (containerElement) containerElement.style.display = 'none';
+          } else {
+            if (relatedElement) relatedElement.style.display = 'block';
+            if (containerElement) containerElement.style.display = 'block';
+          }
+          return items;
+        },
+        templates: {
+          header() { // Removed unused results, html parameters
+
+            // Return a PLAIN string for the header
+            return '<h4 class="algolia-recs-section-header">You Might Also Like</h4>';
+          },
+          item: function(hit, { html, sendEvent }) { // Added sendEvent to params
+
+            const itemUrl = `${hit.url || '#'}`;
+            const indexName = 'eugeneyan.com'; // Get index name for insights
+
+            let imageUrl;
+            // Ensure hit.image is not null, undefined, or an empty/whitespace string before using it.
+            if (hit.image && typeof hit.image === 'string' && hit.image.trim() !== '') {
+              imageUrl = `/assets/og_image/${hit.image}`;
+            } else {
+              imageUrl = `/assets/og_image/default-v4.jpg`; // Default image
+            }
+
+            let scoreValue = null;
+            if (typeof hit.score === 'number') scoreValue = hit.score.toFixed(2);
+            else if (typeof hit._score === 'number') scoreValue = hit._score.toFixed(2);
+            // else if (typeof hit.your_custom_score_field === 'number') scoreValue = hit.your_custom_score_field.toFixed(2);
+
+            const scoreElement = scoreValue ? `<div class="recommendation-score"><svg viewbox="0 0 24 24" class="recommendation-score-icon" xmlns="http://www.w3.org/2000/svg"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"></path></svg>${scoreValue}</div>` : '';
+
+            const imageAndScoreTag = `
+              <div class="recommendation-image-container">
+                <img src="${imageUrl}" alt="${hit.title || 'Recommendation cover image'}">
+                ${scoreElement}
+              </div>`;
+
+            const title = hit.title || 'Untitled Post';
+
+            return `
+              <a href="${itemUrl}"
+                 class="ais-RelatedProducts-item-link-wrapper"
+                 onClick="${() => {
+                  sendEvent('click', hit, 'Related Item Clicked');
+                 }}"
+              >
+                ${imageAndScoreTag}
+                <div class="related-product-title">${title}</div>
+              </a>
+            `;
+          },
+          empty(results, { html }) {
+            const containerElement = document.getElementById('algolia-recs-container');
+            const relatedElement = document.getElementById('algolia-related-products');
+
+            if (relatedElement) {
+              relatedElement.style.display = 'none';
+            }
+            // If this 'empty' template is called, it means related products are empty.
+            // So, the main container should also be hidden.
+            if (containerElement) {
+              containerElement.style.display = 'none';
+            }
+
+            // Return an empty string to prevent rendering 'undefined'
+            return '';
+          }
+        }
+      })
+    ]);
+
+    relatedSearch.start();
+  }
+
+
+  document.addEventListener('DOMContentLoaded', function() {
+    let recsLoaded = false;
+    function checkLoad() {
+      if (recsLoaded) return;
+      if ((window.scrollY + window.innerHeight) >= document.body.scrollHeight - 500) {
+        recsLoaded = true;
+        window.removeEventListener('scroll', checkLoad);
+        initAlgoliaRecommendations();
+      }
+    }
+    window.addEventListener('scroll', checkLoad, { passive: true });
+    checkLoad();
+  });
+</script>
+
+
+        </div> -->
+
+        <span style="font-family: 'Raleway', Helvetica, sans-serif;">Browse related tags:</span> <span class="no-italics">[
+
+
+        <a class='tag' href="/tag/llm/">llm</a>
+
+
+        <a class='tag' href="/tag/eval/">eval</a>
+
+
+        <a class='tag' href="/tag/survey/">survey</a>
+
+    ]
+</span> <span style="font-family: 'Raleway', Helvetica, sans-serif;"> or </span><a href="/search/" title="Search" style="text-decoration: none; font-family: 'Raleway', Helvetica, sans-serif;"><img class="icon icon-search" src="/assets/icon-search.svg" loading="lazy" alt="" style="vertical-align: middle; margin-right: 0.25em;"/>Search</a>
+        <div class="PageNavigation">
+
+    <a class="prev sans-serif" href="/speaking/aie-2025/">&laquo; AI Engineer 2025 - Improving RecSys & Search with LLM techniques</a>
+
+
+    <a class="next sans-serif" href="/writing/semantic-ids/">Training an LLM-RecSys Hybrid for Steerable Recs with Semantic IDs &raquo;</a>
+
+</div>
+
+        <hr>
+
+        <p style="font-size: 15px; text-align: center; margin: 2em 0 0.5em">Join <b>11,800+</b> readers getting updates on machine learning, RecSys, LLMs, and engineering.</p>
+<script src="https://f.convertkit.com/ckjs/ck.6.js" type="7d63f5bcb51b80dc4a688d04-text/javascript"></script>
+<form action="https://app.convertkit.com/forms/4004980/subscriptions" class="seva-form formkit-form" method="post" data-sv-form="4004980" data-uid="96a310b6ce" data-format="inline" data-version="6" data-options="{&quot;settings&quot;:{&quot;after_subscribe&quot;:{&quot;action&quot;:&quot;message&quot;,&quot;success_message&quot;:&quot;Just sent a confirmation! Look for an email from eugene@eugeneyan.com.&quot;,&quot;redirect_url&quot;:&quot;&quot;},&quot;analytics&quot;:{&quot;google&quot;:null,&quot;fathom&quot;:null,&quot;facebook&quot;:null,&quot;segment&quot;:null,&quot;pinterest&quot;:null,&quot;sparkloop&quot;:null,&quot;googletagmanager&quot;:null},&quot;modal&quot;:{&quot;trigger&quot;:&quot;timer&quot;,&quot;scroll_percentage&quot;:null,&quot;timer&quot;:5,&quot;devices&quot;:&quot;all&quot;,&quot;show_once_every&quot;:15},&quot;powered_by&quot;:{&quot;show&quot;:false,&quot;url&quot;:&quot;https://convertkit.com/features/forms?utm_campaign=poweredby&amp;utm_content=form&amp;utm_medium=referral&amp;utm_source=dynamic&quot;},&quot;recaptcha&quot;:{&quot;enabled&quot;:false},&quot;return_visitor&quot;:{&quot;action&quot;:&quot;show&quot;,&quot;custom_content&quot;:&quot;&quot;},&quot;slide_in&quot;:{&quot;display_in&quot;:&quot;bottom_right&quot;,&quot;trigger&quot;:&quot;timer&quot;,&quot;scroll_percentage&quot;:null,&quot;timer&quot;:5,&quot;devices&quot;:&quot;all&quot;,&quot;show_once_every&quot;:15},&quot;sticky_bar&quot;:{&quot;display_in&quot;:&quot;top&quot;,&quot;trigger&quot;:&quot;timer&quot;,&quot;scroll_percentage&quot;:null,&quot;timer&quot;:5,&quot;devices&quot;:&quot;all&quot;,&quot;show_once_every&quot;:15}},&quot;version&quot;:&quot;6&quot;}" min-width="400 500 600 700 800"><div data-style="clean"><ul class="formkit-alert formkit-alert-error" data-element="errors" data-group="alert"></ul><div data-element="fields" data-stacked="false" class="seva-fields formkit-fields"><div class="formkit-field"><input class="formkit-input" name="email_address" style="color: rgb(0, 0, 0); border-color: rgb(227, 227, 227); border-radius: 4px; font-weight: 400;" aria-label="Your email address..." placeholder="Your email address..." required="" type="email"></div><button data-element="submit" class="formkit-submit formkit-submit" style="color: rgb(255, 255, 255); background-color: rgb(0, 123, 255); border-radius: 5px; font-weight: 400;"><div class="formkit-spinner"><div></div><div></div><div></div></div><span class="">Get email updates</span></button></div></div><style>.formkit-form[data-uid="96a310b6ce"] *{box-sizing:border-box;}.formkit-form[data-uid="96a310b6ce"]{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}.formkit-form[data-uid="96a310b6ce"] legend{border:none;font-size:inherit;margin-bottom:10px;padding:0;position:relative;display:table;}.formkit-form[data-uid="96a310b6ce"] fieldset{border:0;padding:0.01em 0 0 0;margin:0;min-width:0;}.formkit-form[data-uid="96a310b6ce"] body:not(:-moz-handler-blocked) fieldset{display:table-cell;}.formkit-form[data-uid="96a310b6ce"] h1,.formkit-form[data-uid="96a310b6ce"] h2,.formkit-form[data-uid="96a310b6ce"] h3,.formkit-form[data-uid="96a310b6ce"] h4,.formkit-form[data-uid="96a310b6ce"] h5,.formkit-form[data-uid="96a310b6ce"] h6{color:inherit;font-size:inherit;font-weight:inherit;}.formkit-form[data-uid="96a310b6ce"] h2{font-size:1.5em;margin:1em 0;}.formkit-form[data-uid="96a310b6ce"] h3{font-size:1.17em;margin:1em 0;}.formkit-form[data-uid="96a310b6ce"] p{color:inherit;font-size:inherit;font-weight:inherit;}.formkit-form[data-uid="96a310b6ce"] ol:not([template-default]),.formkit-form[data-uid="96a310b6ce"] ul:not([template-default]),.formkit-form[data-uid="96a310b6ce"] blockquote:not([template-default]){text-align:left;}.formkit-form[data-uid="96a310b6ce"] p:not([template-default]),.formkit-form[data-uid="96a310b6ce"] hr:not([template-default]),.formkit-form[data-uid="96a310b6ce"] blockquote:not([template-default]),.formkit-form[data-uid="96a310b6ce"] ol:not([template-default]),.formkit-form[data-uid="96a310b6ce"] ul:not([template-default]){color:inherit;font-style:initial;}.formkit-form[data-uid="96a310b6ce"] .ordered-list,.formkit-form[data-uid="96a310b6ce"] .unordered-list{list-style-position:outside !important;padding-left:1em;}.formkit-form[data-uid="96a310b6ce"] .list-item{padding-left:0;}.formkit-form[data-uid="96a310b6ce"][data-format="modal"]{display:none;}.formkit-form[data-uid="96a310b6ce"][data-format="slide in"]{display:none;}.formkit-form[data-uid="96a310b6ce"][data-format="sticky bar"]{display:none;}.formkit-sticky-bar .formkit-form[data-uid="96a310b6ce"][data-format="sticky bar"]{display:block;}.formkit-form[data-uid="96a310b6ce"] .formkit-input,.formkit-form[data-uid="96a310b6ce"] .formkit-select,.formkit-form[data-uid="96a310b6ce"] .formkit-checkboxes{width:100%;}.formkit-form[data-uid="96a310b6ce"] .formkit-button,.formkit-form[data-uid="96a310b6ce"] .formkit-submit{border:0;border-radius:5px;color:#ffffff;cursor:pointer;display:inline-block;text-align:center;font-size:15px;font-weight:500;cursor:pointer;margin-bottom:15px;overflow:hidden;padding:0;position:relative;vertical-align:middle;}.formkit-form[data-uid="96a310b6ce"] .formkit-button:hover,.formkit-form[data-uid="96a310b6ce"] .formkit-submit:hover,.formkit-form[data-uid="96a310b6ce"] .formkit-button:focus,.formkit-form[data-uid="96a310b6ce"] .formkit-submit:focus{outline:none;}.formkit-form[data-uid="96a310b6ce"] .formkit-button:hover > span,.formkit-form[data-uid="96a310b6ce"] .formkit-submit:hover > span,.formkit-form[data-uid="96a310b6ce"] .formkit-button:focus > span,.formkit-form[data-uid="96a310b6ce"] .formkit-submit:focus > span{background-color:rgba(0,0,0,0.1);}.formkit-form[data-uid="96a310b6ce"] .formkit-button > span,.formkit-form[data-uid="96a310b6ce"] .formkit-submit > span{display:block;-webkit-transition:all 300ms ease-in-out;transition:all 300ms ease-in-out;padding:12px 24px;}.formkit-form[data-uid="96a310b6ce"] .formkit-input{background:#ffffff;font-size:15px;padding:12px;border:1px solid #e3e3e3;-webkit-flex:1 0 auto;-ms-flex:1 0 auto;flex:1 0 auto;line-height:1.4;margin:0;-webkit-transition:border-color ease-out 300ms;transition:border-color ease-out 300ms;}.formkit-form[data-uid="96a310b6ce"] .formkit-input:focus{outline:none;border-color:#1677be;-webkit-transition:border-color ease 300ms;transition:border-color ease 300ms;}.formkit-form[data-uid="96a310b6ce"] .formkit-input::-webkit-input-placeholder{color:inherit;opacity:0.8;}.formkit-form[data-uid="96a310b6ce"] .formkit-input::-moz-placeholder{color:inherit;opacity:0.8;}.formkit-form[data-uid="96a310b6ce"] .formkit-input:-ms-input-placeholder{color:inherit;opacity:0.8;}.formkit-form[data-uid="96a310b6ce"] .formkit-input::placeholder{color:inherit;opacity:0.8;}.formkit-form[data-uid="96a310b6ce"] [data-group="dropdown"]{position:relative;display:inline-block;width:100%;}.formkit-form[data-uid="96a310b6ce"] [data-group="dropdown"]::before{content:"";top:calc(50% - 2.5px);right:10px;position:absolute;pointer-events:none;border-color:#4f4f4f transparent transparent transparent;border-style:solid;border-width:6px 6px 0 6px;height:0;width:0;z-index:999;}.formkit-form[data-uid="96a310b6ce"] [data-group="dropdown"] select{height:auto;width:100%;cursor:pointer;color:#333333;line-height:1.4;margin-bottom:0;padding:0 6px;-webkit-appearance:none;-moz-appearance:none;appearance:none;font-size:15px;padding:12px;padding-right:25px;border:1px solid #e3e3e3;background:#ffffff;}.formkit-form[data-uid="96a310b6ce"] [data-group="dropdown"] select:focus{outline:none;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"]{text-align:left;margin:0;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"]{margin-bottom:10px;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] *{cursor:pointer;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"]:last-of-type{margin-bottom:0;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] input[type="checkbox"]{display:none;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] input[type="checkbox"] + label::after{content:none;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] input[type="checkbox"]:checked + label::after{border-color:#ffffff;content:"";}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] input[type="checkbox"]:checked + label::before{background:#10bf7a;border-color:#10bf7a;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] label{position:relative;display:inline-block;padding-left:28px;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] label::before,.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] label::after{position:absolute;content:"";display:inline-block;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] label::before{height:16px;width:16px;border:1px solid #e3e3e3;background:#ffffff;left:0px;top:3px;}.formkit-form[data-uid="96a310b6ce"] [data-group="checkboxes"] [data-group="checkbox"] label::after{height:4px;width:8px;border-left:2px solid #4d4d4d;border-bottom:2px solid #4d4d4d;-webkit-transform:rotate(-45deg);-ms-transform:rotate(-45deg);transform:rotate(-45deg);left:4px;top:8px;}.formkit-form[data-uid="96a310b6ce"] .formkit-alert{background:#f9fafb;border:1px solid #e3e3e3;border-radius:5px;-webkit-flex:1 0 auto;-ms-flex:1 0 auto;flex:1 0 auto;list-style:none;margin:25px auto;padding:12px;text-align:center;width:100%;}.formkit-form[data-uid="96a310b6ce"] .formkit-alert:empty{display:none;}.formkit-form[data-uid="96a310b6ce"] .formkit-alert-success{background:#d3fbeb;border-color:#10bf7a;color:#0c905c;}.formkit-form[data-uid="96a310b6ce"] .formkit-alert-error{background:#fde8e2;border-color:#f2643b;color:#ea4110;}.formkit-form[data-uid="96a310b6ce"] .formkit-spinner{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;height:0px;width:0px;margin:0 auto;position:absolute;top:0;left:0;right:0;width:0px;overflow:hidden;text-align:center;-webkit-transition:all 300ms ease-in-out;transition:all 300ms ease-in-out;}.formkit-form[data-uid="96a310b6ce"] .formkit-spinner > div{margin:auto;width:12px;height:12px;background-color:#fff;opacity:0.3;border-radius:100%;display:inline-block;-webkit-animation:formkit-bouncedelay-formkit-form-data-uid-96a310b6ce- 1.4s infinite ease-in-out both;animation:formkit-bouncedelay-formkit-form-data-uid-96a310b6ce- 1.4s infinite ease-in-out both;}.formkit-form[data-uid="96a310b6ce"] .formkit-spinner > div:nth-child(1){-webkit-animation-delay:-0.32s;animation-delay:-0.32s;}.formkit-form[data-uid="96a310b6ce"] .formkit-spinner > div:nth-child(2){-webkit-animation-delay:-0.16s;animation-delay:-0.16s;}.formkit-form[data-uid="96a310b6ce"] .formkit-submit[data-active] .formkit-spinner{opacity:1;height:100%;width:50px;}.formkit-form[data-uid="96a310b6ce"] .formkit-submit[data-active] .formkit-spinner ~ span{opacity:0;}.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by[data-active="false"]{opacity:0.35;}.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by-convertkit-container{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;width:100%;z-index:5;margin:10px 0;position:relative;}.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by-convertkit-container[data-active="false"]{opacity:0.35;}.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by-convertkit{-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;background-color:#ffffff;border:1px solid #dde2e7;border-radius:4px;color:#373f45;cursor:pointer;display:block;height:36px;margin:0 auto;opacity:0.95;padding:0;-webkit-text-decoration:none;text-decoration:none;text-indent:100%;-webkit-transition:ease-in-out all 200ms;transition:ease-in-out all 200ms;white-space:nowrap;overflow:hidden;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none;width:190px;background-repeat:no-repeat;background-position:center;background-image:url("data:image/svg+xml;charset=utf8,%3Csvg width='162' height='20' viewBox='0 0 162 20' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M83.0561 15.2457C86.675 15.2457 89.4722 12.5154 89.4722 9.14749C89.4722 5.99211 86.8443 4.06563 85.1038 4.06563C82.6801 4.06563 80.7373 5.76407 80.4605 8.28551C80.4092 8.75244 80.0387 9.14403 79.5686 9.14069C78.7871 9.13509 77.6507 9.12841 76.9314 9.13092C76.6217 9.13199 76.3658 8.88106 76.381 8.57196C76.4895 6.38513 77.2218 4.3404 78.618 2.76974C80.1695 1.02445 82.4289 0 85.1038 0C89.5979 0 93.8406 4.07791 93.8406 9.14749C93.8406 14.7608 89.1832 19.3113 83.1517 19.3113C78.8502 19.3113 74.5179 16.5041 73.0053 12.5795C72.9999 12.565 72.9986 12.5492 73.0015 12.534C73.0218 12.4179 73.0617 12.3118 73.1011 12.2074C73.1583 12.0555 73.2143 11.907 73.2062 11.7359L73.18 11.1892C73.174 11.0569 73.2075 10.9258 73.2764 10.8127C73.3452 10.6995 73.4463 10.6094 73.5666 10.554L73.7852 10.4523C73.9077 10.3957 74.0148 10.3105 74.0976 10.204C74.1803 10.0974 74.2363 9.97252 74.2608 9.83983C74.3341 9.43894 74.6865 9.14749 75.0979 9.14749C75.7404 9.14749 76.299 9.57412 76.5088 10.1806C77.5188 13.1 79.1245 15.2457 83.0561 15.2457Z' fill='%23373F45'/%3E%3Cpath d='M155.758 6.91365C155.028 6.91365 154.804 6.47916 154.804 5.98857C154.804 5.46997 154.986 5.06348 155.758 5.06348C156.53 5.06348 156.712 5.46997 156.712 5.98857C156.712 6.47905 156.516 6.91365 155.758 6.91365ZM142.441 12.9304V9.32833L141.415 9.32323V8.90392C141.415 8.44719 141.786 8.07758 142.244 8.07986L142.441 8.08095V6.55306L144.082 6.09057V8.08073H145.569V8.50416C145.569 8.61242 145.548 8.71961 145.506 8.81961C145.465 8.91961 145.404 9.01047 145.328 9.08699C145.251 9.16351 145.16 9.2242 145.06 9.26559C144.96 9.30698 144.853 9.32826 144.745 9.32822H144.082V12.7201C144.082 13.2423 144.378 13.4256 144.76 13.4887C145.209 13.5629 145.583 13.888 145.583 14.343V14.9626C144.029 14.9626 142.441 14.8942 142.441 12.9304Z' fill='%23373F45'/%3E%3Cpath d='M110.058 7.92554C108.417 7.88344 106.396 8.92062 106.396 11.5137C106.396 14.0646 108.417 15.0738 110.058 15.0318C111.742 15.0738 113.748 14.0646 113.748 11.5137C113.748 8.92062 111.742 7.88344 110.058 7.92554ZM110.07 13.7586C108.878 13.7586 108.032 12.8905 108.032 11.461C108.032 10.1013 108.878 9.20569 110.071 9.20569C111.263 9.20569 112.101 10.0995 112.101 11.459C112.101 12.8887 111.263 13.7586 110.07 13.7586Z' fill='%23373F45'/%3E%3Cpath d='M118.06 7.94098C119.491 7.94098 120.978 8.33337 120.978 11.1366V14.893H120.063C119.608 14.893 119.238 14.524 119.238 14.0689V10.9965C119.238 9.66506 118.747 9.16047 117.891 9.16047C117.414 9.16047 116.797 9.52486 116.502 9.81915V14.069C116.502 14.1773 116.481 14.2845 116.44 14.3845C116.398 14.4845 116.337 14.5753 116.261 14.6519C116.184 14.7284 116.093 14.7891 115.993 14.8305C115.893 14.8719 115.786 14.8931 115.678 14.8931H114.847V8.10918H115.773C115.932 8.10914 116.087 8.16315 116.212 8.26242C116.337 8.36168 116.424 8.50033 116.46 8.65577C116.881 8.19328 117.428 7.94098 118.06 7.94098ZM122.854 8.09713C123.024 8.09708 123.19 8.1496 123.329 8.2475C123.468 8.34541 123.574 8.48391 123.631 8.64405L125.133 12.8486L126.635 8.64415C126.692 8.48402 126.798 8.34551 126.937 8.2476C127.076 8.1497 127.242 8.09718 127.412 8.09724H128.598L126.152 14.3567C126.091 14.5112 125.986 14.6439 125.849 14.7374C125.711 14.831 125.549 14.881 125.383 14.8809H124.333L121.668 8.09713H122.854Z' fill='%23373F45'/%3E%3Cpath d='M135.085 14.5514C134.566 14.7616 133.513 15.0416 132.418 15.0416C130.496 15.0416 129.024 13.9345 129.024 11.4396C129.024 9.19701 130.451 7.99792 132.191 7.99792C134.338 7.99792 135.254 9.4378 135.158 11.3979C135.139 11.8029 134.786 12.0983 134.38 12.0983H130.679C130.763 13.1916 131.562 13.7662 132.615 13.7662C133.028 13.7662 133.462 13.7452 133.983 13.6481C134.535 13.545 135.085 13.9375 135.085 14.4985V14.5514ZM133.673 10.949C133.785 9.87621 133.061 9.28752 132.191 9.28752C131.321 9.28752 130.734 9.93979 130.679 10.9489L133.673 10.949Z' fill='%23373F45'/%3E%3Cpath d='M137.345 8.11122C137.497 8.11118 137.645 8.16229 137.765 8.25635C137.884 8.35041 137.969 8.48197 138.005 8.62993C138.566 8.20932 139.268 7.94303 139.759 7.94303C139.801 7.94303 140.068 7.94303 140.489 7.99913V8.7265C140.489 9.11748 140.15 9.4147 139.759 9.4147C139.31 9.4147 138.651 9.5829 138.131 9.8773V14.8951H136.462V8.11112L137.345 8.11122ZM156.6 14.0508V8.09104H155.769C155.314 8.09104 154.944 8.45999 154.944 8.9151V14.8748H155.775C156.23 14.8748 156.6 14.5058 156.6 14.0508ZM158.857 12.9447V9.34254H157.749V8.91912C157.749 8.46401 158.118 8.09506 158.574 8.09506H158.857V6.56739L160.499 6.10479V8.09506H161.986V8.51848C161.986 8.97359 161.617 9.34254 161.161 9.34254H160.499V12.7345C160.499 13.2566 160.795 13.44 161.177 13.503C161.626 13.5774 162 13.9024 162 14.3574V14.977C160.446 14.977 158.857 14.9086 158.857 12.9447ZM98.1929 10.1124C98.2033 6.94046 100.598 5.16809 102.895 5.16809C104.171 5.16809 105.342 5.44285 106.304 6.12953L105.914 6.6631C105.654 7.02011 105.16 7.16194 104.749 6.99949C104.169 6.7702 103.622 6.7218 103.215 6.7218C101.335 6.7218 99.9169 7.92849 99.9068 10.1123C99.9169 12.2959 101.335 13.5201 103.215 13.5201C103.622 13.5201 104.169 13.4717 104.749 13.2424C105.16 13.0799 105.654 13.2046 105.914 13.5615L106.304 14.0952C105.342 14.7819 104.171 15.0566 102.895 15.0566C100.598 15.0566 98.2033 13.2842 98.1929 10.1124ZM147.619 5.21768C148.074 5.21768 148.444 5.58663 148.444 6.04174V9.81968L151.82 5.58131C151.897 5.47733 151.997 5.39282 152.112 5.3346C152.227 5.27638 152.355 5.24607 152.484 5.24611H153.984L150.166 10.0615L153.984 14.8749H152.484C152.355 14.8749 152.227 14.8446 152.112 14.7864C151.997 14.7281 151.897 14.6436 151.82 14.5397L148.444 10.3025V14.0508C148.444 14.5059 148.074 14.8749 147.619 14.8749H146.746V5.21768H147.619Z' fill='%23373F45'/%3E%3Cpath d='M0.773438 6.5752H2.68066C3.56543 6.5752 4.2041 6.7041 4.59668 6.96191C4.99219 7.21973 5.18994 7.62695 5.18994 8.18359C5.18994 8.55859 5.09326 8.87061 4.8999 9.11963C4.70654 9.36865 4.42822 9.52539 4.06494 9.58984V9.63379C4.51611 9.71875 4.84717 9.88721 5.05811 10.1392C5.27197 10.3882 5.37891 10.7266 5.37891 11.1543C5.37891 11.7314 5.17676 12.1841 4.77246 12.5122C4.37109 12.8374 3.81152 13 3.09375 13H0.773438V6.5752ZM1.82373 9.22949H2.83447C3.27393 9.22949 3.59473 9.16064 3.79688 9.02295C3.99902 8.88232 4.1001 8.64502 4.1001 8.31104C4.1001 8.00928 3.99023 7.79102 3.77051 7.65625C3.55371 7.52148 3.20801 7.4541 2.7334 7.4541H1.82373V9.22949ZM1.82373 10.082V12.1167H2.93994C3.37939 12.1167 3.71045 12.0332 3.93311 11.8662C4.15869 11.6963 4.27148 11.4297 4.27148 11.0664C4.27148 10.7324 4.15723 10.4849 3.92871 10.3237C3.7002 10.1626 3.35303 10.082 2.88721 10.082H1.82373Z' fill='%23373F45'/%3E%3Cpath d='M13.011 6.5752V10.7324C13.011 11.207 12.9084 11.623 12.7034 11.9805C12.5012 12.335 12.2068 12.6089 11.8201 12.8022C11.4363 12.9927 10.9763 13.0879 10.4402 13.0879C9.6433 13.0879 9.02368 12.877 8.5813 12.4551C8.13892 12.0332 7.91772 11.4531 7.91772 10.7148V6.5752H8.9724V10.6401C8.9724 11.1704 9.09546 11.5615 9.34155 11.8135C9.58765 12.0654 9.96557 12.1914 10.4753 12.1914C11.4656 12.1914 11.9607 11.6714 11.9607 10.6313V6.5752H13.011Z' fill='%23373F45'/%3E%3Cpath d='M15.9146 13V6.5752H16.9649V13H15.9146Z' fill='%23373F45'/%3E%3Cpath d='M19.9255 13V6.5752H20.9758V12.0991H23.696V13H19.9255Z' fill='%23373F45'/%3E%3Cpath d='M28.2828 13H27.2325V7.47607H25.3428V6.5752H30.1724V7.47607H28.2828V13Z' fill='%23373F45'/%3E%3Cpath d='M41.9472 13H40.8046L39.7148 9.16796C39.6679 9.00097 39.6093 8.76074 39.539 8.44727C39.4687 8.13086 39.4262 7.91113 39.4116 7.78809C39.3823 7.97559 39.3339 8.21875 39.2665 8.51758C39.2021 8.81641 39.1479 9.03905 39.1039 9.18554L38.0405 13H36.8979L36.0673 9.7832L35.2236 6.5752H36.2958L37.2143 10.3193C37.3578 10.9199 37.4604 11.4502 37.5219 11.9102C37.5541 11.6611 37.6025 11.3828 37.6669 11.0752C37.7314 10.7676 37.79 10.5186 37.8427 10.3281L38.8886 6.5752H39.9301L41.0024 10.3457C41.1049 10.6943 41.2133 11.2158 41.3276 11.9102C41.3715 11.4912 41.477 10.958 41.644 10.3105L42.558 6.5752H43.6215L41.9472 13Z' fill='%23373F45'/%3E%3Cpath d='M45.7957 13V6.5752H46.846V13H45.7957Z' fill='%23373F45'/%3E%3Cpath d='M52.0258 13H50.9755V7.47607H49.0859V6.5752H53.9155V7.47607H52.0258V13Z' fill='%23373F45'/%3E%3Cpath d='M61.2312 13H60.1765V10.104H57.2146V13H56.1643V6.5752H57.2146V9.20312H60.1765V6.5752H61.2312V13Z' fill='%23373F45'/%3E%3C/svg%3E");}.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by-convertkit:hover,.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by-convertkit:focus{background-color:#ffffff;-webkit-transform:scale(1.025) perspective(1px);-ms-transform:scale(1.025) perspective(1px);transform:scale(1.025) perspective(1px);opacity:1;}.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by-convertkit[data-variant="dark"],.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by-convertkit[data-variant="light"]{background-color:transparent;border-color:transparent;width:166px;}.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by-convertkit[data-variant="light"]{color:#ffffff;background-image:url("data:image/svg+xml;charset=utf8,%3Csvg width='162' height='20' viewBox='0 0 162 20' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M83.0561 15.2457C86.675 15.2457 89.4722 12.5154 89.4722 9.14749C89.4722 5.99211 86.8443 4.06563 85.1038 4.06563C82.6801 4.06563 80.7373 5.76407 80.4605 8.28551C80.4092 8.75244 80.0387 9.14403 79.5686 9.14069C78.7871 9.13509 77.6507 9.12841 76.9314 9.13092C76.6217 9.13199 76.3658 8.88106 76.381 8.57196C76.4895 6.38513 77.2218 4.3404 78.618 2.76974C80.1695 1.02445 82.4289 0 85.1038 0C89.5979 0 93.8406 4.07791 93.8406 9.14749C93.8406 14.7608 89.1832 19.3113 83.1517 19.3113C78.8502 19.3113 74.5179 16.5041 73.0053 12.5795C72.9999 12.565 72.9986 12.5492 73.0015 12.534C73.0218 12.4179 73.0617 12.3118 73.1011 12.2074C73.1583 12.0555 73.2143 11.907 73.2062 11.7359L73.18 11.1892C73.174 11.0569 73.2075 10.9258 73.2764 10.8127C73.3452 10.6995 73.4463 10.6094 73.5666 10.554L73.7852 10.4523C73.9077 10.3957 74.0148 10.3105 74.0976 10.204C74.1803 10.0974 74.2363 9.97252 74.2608 9.83983C74.3341 9.43894 74.6865 9.14749 75.0979 9.14749C75.7404 9.14749 76.299 9.57412 76.5088 10.1806C77.5188 13.1 79.1245 15.2457 83.0561 15.2457Z' fill='white'/%3E%3Cpath d='M155.758 6.91365C155.028 6.91365 154.804 6.47916 154.804 5.98857C154.804 5.46997 154.986 5.06348 155.758 5.06348C156.53 5.06348 156.712 5.46997 156.712 5.98857C156.712 6.47905 156.516 6.91365 155.758 6.91365ZM142.441 12.9304V9.32833L141.415 9.32323V8.90392C141.415 8.44719 141.786 8.07758 142.244 8.07986L142.441 8.08095V6.55306L144.082 6.09057V8.08073H145.569V8.50416C145.569 8.61242 145.548 8.71961 145.506 8.81961C145.465 8.91961 145.404 9.01047 145.328 9.08699C145.251 9.16351 145.16 9.2242 145.06 9.26559C144.96 9.30698 144.853 9.32826 144.745 9.32822H144.082V12.7201C144.082 13.2423 144.378 13.4256 144.76 13.4887C145.209 13.5629 145.583 13.888 145.583 14.343V14.9626C144.029 14.9626 142.441 14.8942 142.441 12.9304Z' fill='white'/%3E%3Cpath d='M110.058 7.92554C108.417 7.88344 106.396 8.92062 106.396 11.5137C106.396 14.0646 108.417 15.0738 110.058 15.0318C111.742 15.0738 113.748 14.0646 113.748 11.5137C113.748 8.92062 111.742 7.88344 110.058 7.92554ZM110.07 13.7586C108.878 13.7586 108.032 12.8905 108.032 11.461C108.032 10.1013 108.878 9.20569 110.071 9.20569C111.263 9.20569 112.101 10.0995 112.101 11.459C112.101 12.8887 111.263 13.7586 110.07 13.7586Z' fill='white'/%3E%3Cpath d='M118.06 7.94098C119.491 7.94098 120.978 8.33337 120.978 11.1366V14.893H120.063C119.608 14.893 119.238 14.524 119.238 14.0689V10.9965C119.238 9.66506 118.747 9.16047 117.891 9.16047C117.414 9.16047 116.797 9.52486 116.502 9.81915V14.069C116.502 14.1773 116.481 14.2845 116.44 14.3845C116.398 14.4845 116.337 14.5753 116.261 14.6519C116.184 14.7284 116.093 14.7891 115.993 14.8305C115.893 14.8719 115.786 14.8931 115.678 14.8931H114.847V8.10918H115.773C115.932 8.10914 116.087 8.16315 116.212 8.26242C116.337 8.36168 116.424 8.50033 116.46 8.65577C116.881 8.19328 117.428 7.94098 118.06 7.94098ZM122.854 8.09713C123.024 8.09708 123.19 8.1496 123.329 8.2475C123.468 8.34541 123.574 8.48391 123.631 8.64405L125.133 12.8486L126.635 8.64415C126.692 8.48402 126.798 8.34551 126.937 8.2476C127.076 8.1497 127.242 8.09718 127.412 8.09724H128.598L126.152 14.3567C126.091 14.5112 125.986 14.6439 125.849 14.7374C125.711 14.831 125.549 14.881 125.383 14.8809H124.333L121.668 8.09713H122.854Z' fill='white'/%3E%3Cpath d='M135.085 14.5514C134.566 14.7616 133.513 15.0416 132.418 15.0416C130.496 15.0416 129.024 13.9345 129.024 11.4396C129.024 9.19701 130.451 7.99792 132.191 7.99792C134.338 7.99792 135.254 9.4378 135.158 11.3979C135.139 11.8029 134.786 12.0983 134.38 12.0983H130.679C130.763 13.1916 131.562 13.7662 132.615 13.7662C133.028 13.7662 133.462 13.7452 133.983 13.6481C134.535 13.545 135.085 13.9375 135.085 14.4985V14.5514ZM133.673 10.949C133.785 9.87621 133.061 9.28752 132.191 9.28752C131.321 9.28752 130.734 9.93979 130.679 10.9489L133.673 10.949Z' fill='white'/%3E%3Cpath d='M137.345 8.11122C137.497 8.11118 137.645 8.16229 137.765 8.25635C137.884 8.35041 137.969 8.48197 138.005 8.62993C138.566 8.20932 139.268 7.94303 139.759 7.94303C139.801 7.94303 140.068 7.94303 140.489 7.99913V8.7265C140.489 9.11748 140.15 9.4147 139.759 9.4147C139.31 9.4147 138.651 9.5829 138.131 9.8773V14.8951H136.462V8.11112L137.345 8.11122ZM156.6 14.0508V8.09104H155.769C155.314 8.09104 154.944 8.45999 154.944 8.9151V14.8748H155.775C156.23 14.8748 156.6 14.5058 156.6 14.0508ZM158.857 12.9447V9.34254H157.749V8.91912C157.749 8.46401 158.118 8.09506 158.574 8.09506H158.857V6.56739L160.499 6.10479V8.09506H161.986V8.51848C161.986 8.97359 161.617 9.34254 161.161 9.34254H160.499V12.7345C160.499 13.2566 160.795 13.44 161.177 13.503C161.626 13.5774 162 13.9024 162 14.3574V14.977C160.446 14.977 158.857 14.9086 158.857 12.9447ZM98.1929 10.1124C98.2033 6.94046 100.598 5.16809 102.895 5.16809C104.171 5.16809 105.342 5.44285 106.304 6.12953L105.914 6.6631C105.654 7.02011 105.16 7.16194 104.749 6.99949C104.169 6.7702 103.622 6.7218 103.215 6.7218C101.335 6.7218 99.9169 7.92849 99.9068 10.1123C99.9169 12.2959 101.335 13.5201 103.215 13.5201C103.622 13.5201 104.169 13.4717 104.749 13.2424C105.16 13.0799 105.654 13.2046 105.914 13.5615L106.304 14.0952C105.342 14.7819 104.171 15.0566 102.895 15.0566C100.598 15.0566 98.2033 13.2842 98.1929 10.1124ZM147.619 5.21768C148.074 5.21768 148.444 5.58663 148.444 6.04174V9.81968L151.82 5.58131C151.897 5.47733 151.997 5.39282 152.112 5.3346C152.227 5.27638 152.355 5.24607 152.484 5.24611H153.984L150.166 10.0615L153.984 14.8749H152.484C152.355 14.8749 152.227 14.8446 152.112 14.7864C151.997 14.7281 151.897 14.6436 151.82 14.5397L148.444 10.3025V14.0508C148.444 14.5059 148.074 14.8749 147.619 14.8749H146.746V5.21768H147.619Z' fill='white'/%3E%3Cpath d='M0.773438 6.5752H2.68066C3.56543 6.5752 4.2041 6.7041 4.59668 6.96191C4.99219 7.21973 5.18994 7.62695 5.18994 8.18359C5.18994 8.55859 5.09326 8.87061 4.8999 9.11963C4.70654 9.36865 4.42822 9.52539 4.06494 9.58984V9.63379C4.51611 9.71875 4.84717 9.88721 5.05811 10.1392C5.27197 10.3882 5.37891 10.7266 5.37891 11.1543C5.37891 11.7314 5.17676 12.1841 4.77246 12.5122C4.37109 12.8374 3.81152 13 3.09375 13H0.773438V6.5752ZM1.82373 9.22949H2.83447C3.27393 9.22949 3.59473 9.16064 3.79688 9.02295C3.99902 8.88232 4.1001 8.64502 4.1001 8.31104C4.1001 8.00928 3.99023 7.79102 3.77051 7.65625C3.55371 7.52148 3.20801 7.4541 2.7334 7.4541H1.82373V9.22949ZM1.82373 10.082V12.1167H2.93994C3.37939 12.1167 3.71045 12.0332 3.93311 11.8662C4.15869 11.6963 4.27148 11.4297 4.27148 11.0664C4.27148 10.7324 4.15723 10.4849 3.92871 10.3237C3.7002 10.1626 3.35303 10.082 2.88721 10.082H1.82373Z' fill='white'/%3E%3Cpath d='M13.011 6.5752V10.7324C13.011 11.207 12.9084 11.623 12.7034 11.9805C12.5012 12.335 12.2068 12.6089 11.8201 12.8022C11.4363 12.9927 10.9763 13.0879 10.4402 13.0879C9.6433 13.0879 9.02368 12.877 8.5813 12.4551C8.13892 12.0332 7.91772 11.4531 7.91772 10.7148V6.5752H8.9724V10.6401C8.9724 11.1704 9.09546 11.5615 9.34155 11.8135C9.58765 12.0654 9.96557 12.1914 10.4753 12.1914C11.4656 12.1914 11.9607 11.6714 11.9607 10.6313V6.5752H13.011Z' fill='white'/%3E%3Cpath d='M15.9146 13V6.5752H16.9649V13H15.9146Z' fill='white'/%3E%3Cpath d='M19.9255 13V6.5752H20.9758V12.0991H23.696V13H19.9255Z' fill='white'/%3E%3Cpath d='M28.2828 13H27.2325V7.47607H25.3428V6.5752H30.1724V7.47607H28.2828V13Z' fill='white'/%3E%3Cpath d='M41.9472 13H40.8046L39.7148 9.16796C39.6679 9.00097 39.6093 8.76074 39.539 8.44727C39.4687 8.13086 39.4262 7.91113 39.4116 7.78809C39.3823 7.97559 39.3339 8.21875 39.2665 8.51758C39.2021 8.81641 39.1479 9.03905 39.1039 9.18554L38.0405 13H36.8979L36.0673 9.7832L35.2236 6.5752H36.2958L37.2143 10.3193C37.3578 10.9199 37.4604 11.4502 37.5219 11.9102C37.5541 11.6611 37.6025 11.3828 37.6669 11.0752C37.7314 10.7676 37.79 10.5186 37.8427 10.3281L38.8886 6.5752H39.9301L41.0024 10.3457C41.1049 10.6943 41.2133 11.2158 41.3276 11.9102C41.3715 11.4912 41.477 10.958 41.644 10.3105L42.558 6.5752H43.6215L41.9472 13Z' fill='white'/%3E%3Cpath d='M45.7957 13V6.5752H46.846V13H45.7957Z' fill='white'/%3E%3Cpath d='M52.0258 13H50.9755V7.47607H49.0859V6.5752H53.9155V7.47607H52.0258V13Z' fill='white'/%3E%3Cpath d='M61.2312 13H60.1765V10.104H57.2146V13H56.1643V6.5752H57.2146V9.20312H60.1765V6.5752H61.2312V13Z' fill='white'/%3E%3C/svg%3E");}@-webkit-keyframes formkit-bouncedelay-formkit-form-data-uid-96a310b6ce-{0%,80%,100%{-webkit-transform:scale(0);-ms-transform:scale(0);transform:scale(0);}40%{-webkit-transform:scale(1);-ms-transform:scale(1);transform:scale(1);}}@keyframes formkit-bouncedelay-formkit-form-data-uid-96a310b6ce-{0%,80%,100%{-webkit-transform:scale(0);-ms-transform:scale(0);transform:scale(0);}40%{-webkit-transform:scale(1);-ms-transform:scale(1);transform:scale(1);}}.formkit-form[data-uid="96a310b6ce"] blockquote{padding:10px 20px;margin:0 0 20px;border-left:5px solid #e1e1e1;}.formkit-form[data-uid="96a310b6ce"] .seva-custom-content{padding:15px;font-size:16px;color:#fff;mix-blend-mode:difference;}.formkit-form[data-uid="96a310b6ce"] .formkit-modal.guard{max-width:420px;width:100%;} .formkit-form[data-uid="96a310b6ce"]{max-width:700px;}.formkit-form[data-uid="96a310b6ce"] [data-style="clean"]{width:100%;}.formkit-form[data-uid="96a310b6ce"] .formkit-fields{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-wrap:wrap;-ms-flex-wrap:wrap;flex-wrap:wrap;margin:0 auto;}.formkit-form[data-uid="96a310b6ce"] .formkit-field,.formkit-form[data-uid="96a310b6ce"] .formkit-submit{margin:0 0 15px 0;-webkit-flex:1 0 100%;-ms-flex:1 0 100%;flex:1 0 100%;}.formkit-form[data-uid="96a310b6ce"] .formkit-powered-by-convertkit-container{margin:0;}.formkit-form[data-uid="96a310b6ce"] .formkit-submit{position:static;}.formkit-form[data-uid="96a310b6ce"][min-width~="700"] [data-style="clean"],.formkit-form[data-uid="96a310b6ce"][min-width~="800"] [data-style="clean"]{padding:10px;}.formkit-form[data-uid="96a310b6ce"][min-width~="700"] .formkit-fields[data-stacked="false"],.formkit-form[data-uid="96a310b6ce"][min-width~="800"] .formkit-fields[data-stacked="false"]{margin-left:-5px;margin-right:-5px;}.formkit-form[data-uid="96a310b6ce"][min-width~="700"] .formkit-fields[data-stacked="false"] .formkit-field,.formkit-form[data-uid="96a310b6ce"][min-width~="800"] .formkit-fields[data-stacked="false"] .formkit-field,.formkit-form[data-uid="96a310b6ce"][min-width~="700"] .formkit-fields[data-stacked="false"] .formkit-submit,.formkit-form[data-uid="96a310b6ce"][min-width~="800"] .formkit-fields[data-stacked="false"] .formkit-submit{margin:0 5px 15px 5px;}.formkit-form[data-uid="96a310b6ce"][min-width~="700"] .formkit-fields[data-stacked="false"] .formkit-field,.formkit-form[data-uid="96a310b6ce"][min-width~="800"] .formkit-fields[data-stacked="false"] .formkit-field{-webkit-flex:100 1 auto;-ms-flex:100 1 auto;flex:100 1 auto;}.formkit-form[data-uid="96a310b6ce"][min-width~="700"] .formkit-fields[data-stacked="false"] .formkit-submit,.formkit-form[data-uid="96a310b6ce"][min-width~="800"] .formkit-fields[data-stacked="false"] .formkit-submit{-webkit-flex:1 1 auto;-ms-flex:1 1 auto;flex:1 1 auto;} </style></form>
+
+        <hr>
+
+        <!-- Post comments -->
+        <script src="https://utteranc.es/client.js" repo="eugeneyan/eugeneyan-comments" issue-term="url" theme="github-light" crossorigin="anonymous" type="7d63f5bcb51b80dc4a688d04-text/javascript">
+</script>
+    </div>
+</div>
+
+        <footer class="footer">
+    <div class="footer-col-wrapper">
+        <div class="col-sm-3 footer-col">
+            <ul class="contact-list">
+                <!-- <li>
+                    <img class="icon" src="/assets/bluesky.svg" loading="lazy" alt=""/>
+                    <a rel="me" href="https://bsky.app/profile/eugeneyan.com" target="_blank" title="Bluesky">Bluesky</a>
+                </li> -->
+                <li>
+                    <img class="icon" src="/assets/icon-twitter.svg" loading="lazy" alt=""/>
+                    <a href="https://twitter.com/eugeneyan" target="_blank" title="Twitter">Twitter</a>
+                </li>
+                <li>
+                    <img class="icon" src="/assets/icon-linkedin.svg" loading="lazy" alt=""/>
+                    <a href="https://www.linkedin.com/in/eugeneyan/" target="_blank" title="Linkedin">LinkedIn</a>
+                </li>
+                <!-- <li>
+                    <img class="icon" src="/assets/icon-threads.svg" loading="lazy" alt=""/>
+                    <a href="https://www.threads.net/@eugeneyan" target="_blank" title="Threads">Threads</a>
+                </li> -->
+                <li>
+                    <img class="icon" src="/assets/icon-github.svg" loading="lazy" alt=""/>
+                    <a href="https://github.com/eugeneyan/" target="_blank" title="GitHub">GitHub</a>
+                </li>
+            </ul>
+        </div>
+
+        <div class="col-sm-9 footer-col">
+            <p>I'm a Principal Applied Scientist at Amazon building recommendation systems and AI-powered products that serve customers at scale. I've led ML/AI teams at Alibaba, Lazada, and a Healthtech Series A, and write about RecSys, LLMs, and engineering at <a href="https://eugeneyan.com/" target="_blank">eugeneyan.com</a>.</p>
+        </div>
+    </div>
+    <p class="copyright">© Eugene Yan 2015 - 2026
+        • <a href="/site-feedback/">Feedback</a>
+        • <a href="/rss/">RSS</a>
+    </p>
+</footer>
+
+
+    </div> <!-- /container -->
+</div>
+<script src="/cdn-cgi/scripts/7d0fa10a/cloudflare-static/rocket-loader.min.js" data-cf-settings="7d63f5bcb51b80dc4a688d04-|49" defer></script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015" integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4ba4ab6acad14218941be7fa4aaad127","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+
+<script type="7d63f5bcb51b80dc4a688d04-text/javascript">
+  // Ensure aa is loaded
+  document.addEventListener('DOMContentLoaded', function() {
+    if (typeof aa === 'function') {
+      // Get the current page path for more specific tracking
+      const pagePath = '/writing/qa-evals/';
+
+      // Determine a specific event name based on the current page
+      let eventName;
+      if (pagePath.startsWith('/tag/')) {
+        eventName = 'Tag Page Link Clicked';
+      } else {
+        // Count the number of segments to determine if it's a site page or post page
+        const pathSegments = pagePath.split('/').filter(Boolean);
+        if (pathSegments.length <= 1) {
+          // Zero or one level deep (e.g., '/', '/writing/', '/speaking/')
+          eventName = 'Site Page Link Clicked';
+        } else {
+          // Two or more levels deep - considered a post
+          eventName = 'Post Link Clicked';
+        }
+      }
+
+      // Track clicks on internal links in the main container
+      const container = document.querySelector('div.container');
+      if (container) {
+        container.addEventListener('click', function(e) {
+          const link = e.target.closest('a');
+          if (link && link.href && link.origin === window.location.origin) {
+            const objectID = link.pathname;
+
+            aa('clickedObjectIDs', {
+              index: 'eugeneyan.com',
+              eventName: eventName,
+              objectIDs: [objectID]
+            });
+          }
+        });
+      }
+    }
+  });
+
+  // Track page read depth for conversion tracking
+  let hasTrackedPageRead = false;
+  window.addEventListener('scroll', function() {
+    if (hasTrackedPageRead) return; // Only track once per page view
+
+    // Calculate read depth as percentage
+    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+    const scrollHeight = document.documentElement.scrollHeight;
+    const clientHeight = document.documentElement.clientHeight;
+    const readPercentage = (scrollTop + clientHeight) / scrollHeight * 100;
+
+    // If user has read at least 50% of the page
+    if (readPercentage >= 50 && typeof aa === 'function') {
+      hasTrackedPageRead = true;
+      const objectID = window.location.pathname; // Use current page path as objectID
+      const pagePath = '/writing/qa-evals/';
+
+      // Create a meaningful event name
+      let eventName;
+      if (pagePath.startsWith('/tag/')) {
+        eventName = 'Tag Page Read 50%';
+      } else {
+        // Count the number of segments to determine if it's a site page or post page
+        const pathSegments = pagePath.split('/').filter(Boolean);
+        if (pathSegments.length <= 1) {
+          // Zero or one level deep (e.g., '/', '/writing/', '/speaking/')
+          eventName = 'Site Page Read 50%';
+        } else {
+          // Two or more levels deep - considered a post
+          eventName = 'Post Read 50%';
+        }
+      }
+
+      // Send the convertedObjectIDs event to Algolia
+      aa('convertedObjectIDs', {
+        index: 'eugeneyan.com',
+        eventName: eventName,
+        objectIDs: [objectID]
+      });
+    }
+  });
+</script>
+</html>

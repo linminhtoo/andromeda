@@ -1299,3 +1299,608 @@
 ### Scripts preserved under `agent_logs/`
 - `agent_logs/20260215_211245_validate_generation_controls_tools_ui.sh`
   - Replays TypeScript build + pre-commit + full tests.
+
+## 2026-02-16 - README rewrite for tools-first architecture positioning
+
+### Previous state
+- `README.md` was still heavily framed around earlier rewrite/migration history and did not present the current system as a cohesive tools-first design document.
+
+### What changed
+- Rewrote `README.md` as an implementation-backed technical overview focused on:
+  - tools-first query orchestration (planner decisions, execution order, statuses)
+  - finance tool integration (`yfinance` + `edgar`) and structured tool payloads
+  - PostgreSQL hybrid retrieval model and sparse-method compatibility safeguards
+  - profile-scoped ingestion/indexing pipeline and on-the-fly ticker ingestion jobs
+  - API surface, streaming event contract, and concise local runbook/test gates
+- Removed obsolete rewrite-process detail from primary documentation, preserving historical context in changelog/logbook only.
+
+### Why
+- Improve technical communication quality for external review/interview usage while keeping claims tied to current code and tests.
+
+### Validation experiments and results
+- Pending in this entry: run required repository checks after doc update.
+
+### Validation experiments and results (completed)
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `87 passed, 2 warnings`.
+
+## 2026-02-16 - README diagram enhancement for architecture communication
+
+### Previous state
+- The rewritten README had clear technical prose but no Mermaid diagrams.
+
+### What changed
+- Added Mermaid diagrams to `README.md` for:
+  - high-level runtime architecture (UI -> planner -> tools/RAG -> synthesis)
+  - app logic flow (`/query` and `/query_stream` decision path)
+  - ingestion/indexing flow (`download -> process -> chunk -> build_index -> PostgreSQL`)
+  - PostgreSQL ER model (`documents`, `chunks`, `retrieval_runtime_config`)
+
+### Why
+- Improve visual communication of system design and execution flow for interview and technical review contexts.
+
+### Validation experiments and results
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: `87 passed, 2 warnings`.
+
+## 2026-02-16 - Multi-ticker root-fix with parallel per-ticker briefs + streamed subagent output
+
+### Previous state
+- Multi-ticker handling depended on merged rerank output and `_enforce_ticker_coverage(...)`, which could still produce imbalanced evidence distribution.
+- There was no dedicated map/reduce flow where each ticker gets its own brief before synthesis.
+- Streaming UI had no concept of per-ticker subagent output and no controls for per-brief budget or synthesis effort.
+
+### What changed
+- Added dedicated multi-ticker map/reduce pipeline in `src/finrag/query_runtime.py`:
+  - planner schema extended with `use_multi_ticker_briefs`
+  - `PlannedQuery` and pipeline execution state now carry multi-ticker-brief branch data
+  - per-ticker retrieval + rerank run in parallel with `ThreadPoolExecutor`
+  - per-ticker brief generation runs in parallel
+  - final answer synthesis consumes per-ticker briefs (with refine support when enabled).
+- Added generation controls in `src/finrag/generation_controls.py`:
+  - `brief_max_tokens`
+  - `AnsweringEffort` enum (`low`, `medium`, `high`) surfaced as `answering_effort`.
+- Added prompt builders in `src/finrag/qa.py`:
+  - `build_ticker_brief_prompt(...)`
+  - `build_multi_ticker_synthesis_prompt(...)`
+  - `build_multi_ticker_refine_prompt(...)`.
+- Updated request plumbing in `src/finrag/main.py` and query models to pass/resolve new controls.
+- Added streamed per-ticker brief events in `src/finrag/query_streaming.py`:
+  - `briefs_start`
+  - `ticker_brief_delta`
+  - `ticker_brief_done`
+  - `briefs_done`
+  with interleaved token deltas emitted by parallel ticker threads.
+- Updated UI in `src/finrag/static/index.html` + `src/finrag/static/ts/index/*`:
+  - advanced options now include `brief_max_tokens` and `answering_effort`
+  - progress pipeline includes `briefs` stage
+  - answer pane includes a dedicated per-ticker briefs panel that updates live during stream.
+- Added/updated tests:
+  - `tests/test_query_runtime_tools_first.py` new coverage for multi-ticker brief path
+  - `tests/test_generation_controls.py` new coverage for `answering_effort` + `brief_max_tokens` parsing.
+
+### Why
+- This addresses the root imbalance issue by removing dependence on one blended global top-K list for comparative answers.
+- It improves answer quality and fairness by forcing ticker-local reasoning before cross-ticker synthesis.
+- It improves UX transparency by showing per-ticker subagent outputs as they stream.
+
+### Surprising findings
+- `pre-commit` initially failed due readonly default cache path (`/home/mlin/.cache/pre-commit`); setting `PRE_COMMIT_HOME=/tmp/pre-commit-cache` fixed it in this sandbox.
+- Existing stream event handling in frontend was tolerant to unknown types, so adding new brief events required no compatibility shim.
+
+### Validation experiments and results
+- `npm run -s build:ts`
+  - Result: pass.
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - First run: formatter changed files; second run: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: pass (`89 passed, 2 warnings`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260216_153900_validate_multi_ticker_briefs_frontend_build.sh`
+  - Replays TypeScript build command used in this change.
+
+## 2026-02-16 - Eval pipeline revamp (helpfulness + factual GT validation + concurrency prep)
+
+### Previous state
+- Eval scoring used single-judge assumptions in summaries and did not expose helpfulness consistently across all relevant query kinds.
+- Factual eval generation relied on silver numeric extraction only; no external validation pass.
+- Eval runner parallelism used multiprocessing only, which is blocked in this sandbox due semaphore permission limits.
+- Open-ended eval failures showed a recurring pattern of over-assertive claims and year-misaligned retrieval.
+
+### What changed
+- Helpfulness integration and scoring/reporting updates (already implemented earlier in this revamp sequence):
+  - Added `helpfulness_v1` judge in `src/finrag/eval/judges.py`.
+  - Updated default judge sets + per-judge fail-rate reporting in `src/finrag/eval/scoring.py`.
+  - Extended review/scoring outputs in `scripts/score_eval.py`.
+- Factual GT validation wiring:
+  - Added Edgar validation CLI flow to `scripts/make_eval_set.py`:
+    - `--validate-factual-with-edgar`
+    - `--edgar-drop-mismatched`
+    - `--edgar-rel-tol`
+    - `--factual-candidate-multiplier`
+  - Added/expanded validator logic in `src/finrag/eval/ground_truth_validation.py`.
+  - Added scale-robust matching (tries plausible scale normalizations when extraction misses scale hints).
+- Throughput/concurrency changes for next runs:
+  - Added `parallel_backend` to eval runner config (`process` | `thread`) in `src/finrag/eval/runner.py`.
+  - Added CLI switch `--parallel-backend` in `scripts/run_eval.py`.
+  - Added thread backend execution path to avoid multiprocessing semaphore dependency.
+  - Guarded signal timeout logic so it is a no-op in non-main threads.
+- Retrieval/prompt grounding improvements:
+  - Added year-window inference from question text in `src/finrag/query_runtime.py`:
+    - if no explicit date filters, infer `YYYY-01-01`..`YYYY-12-31` from question years.
+  - Strengthened grounding/citation discipline in `src/finrag/qa.py` to reduce uncited or inferred claims.
+- Added/updated tests:
+  - `tests/test_eval_ground_truth_validation.py` (new)
+  - `tests/test_eval_runner.py` (expanded)
+  - `tests/test_query_runtime_tools_first.py` (year-window inference coverage)
+
+### Surprising findings
+- EdgarTools cache writes failed under default home path (`/home/mlin/.edgar`) in this sandbox; setting `HOME=/tmp` was required for validator runs.
+- Even with scale fallback, only a minority of supported factual candidates matched Edgar metrics at strict tolerances, indicating substantial extraction/period mismatch noise.
+
+### Experiments and results
+1. **Single baseline (pre-validation set)**
+- Run dir: `eval/results_revamp/single/eval_run.single_balanced_baseline_v1.20260216_162459`
+- Score summary:
+  - factual: `gold_hit=0.35`, `numeric_accuracy=0.20`, `factual_correctness_fail=0.60`, `helpfulness_fail=0.45`
+  - open_ended: `faithfulness_fail=0.4667`, `helpfulness_fail=0.0667`
+
+2. **Edgar validation tolerance sweep (candidate factual pool)**
+- Script: `agent_logs/20260216_164925_edgar_validation_tolerance_sweep.sh`
+- Candidate factual count: `211`
+- Matched counts by `rel_tol`:
+  - `0.15`: 9
+  - `0.20`: 9
+  - `0.25`: 11
+  - `0.30`: 13
+  - `0.40`: 17
+  - `0.50`: 24
+
+3. **Validated eval set build (tol=0.5, keep statuses)**
+- Script: `agent_logs/20260216_165030_generate_eval_set_validated_tol05_v3.sh`
+- Output: `eval/eval_queries_revamp_validated_tol05_20260216.jsonl`
+- Distribution:
+  - total `359`
+  - factual `211` with status breakdown:
+    - `matched=24`
+    - `mismatched=52`
+    - `skipped_unsupported_metric=135`
+
+4. **Validated single subset (factual matched-only)**
+- Script: `agent_logs/20260216_165235_build_eval_subsets_from_validated_tol05_v1.sh`
+- Output: `eval/eval_queries_revamp_single_balanced_validated_tol05_20260216.jsonl`
+- factual subset status: `20/20 matched`
+
+5. **Single baseline on validated subset (clean run)**
+- Script: `agent_logs/20260216_165322_eval_single_balanced_validated_baseline_v2.sh`
+- Run dir: `eval/results_revamp/single/eval_run.single_balanced_validated_baseline_v2.20260216_165302`
+- Score summary:
+  - factual: `gold_hit=0.40`, `numeric_accuracy=0.45`, `factual_correctness_fail=0.30`, `helpfulness_fail=0.05`
+  - open_ended: `faithfulness_fail=0.6667`, `helpfulness_fail=0.0`
+  - refusal fail: `0.0`
+- Interpretation:
+  - factual quality improved strongly after matched-only factual subset construction.
+  - open-ended faithfulness remained weak and motivated prompt/runtime grounding improvements.
+
+6. **Threaded concurrency dry run after backend updates (invalid for quality)**
+- Script: `agent_logs/20260216_171130_eval_single_balanced_validated_improved_v3_thread.sh`
+- Generation run dir: `eval/results_revamp/single/eval_run.single_balanced_validated_improved_v3.20260216_171320`
+- Generation summary:
+  - `n=50`, `n_ok=8`, `n_err=42`, `wall_total_ms~39.1s`
+- This run is **invalid for quality comparison** because vLLM server was stopped mid-run (connection refused); scoring also failed for same reason.
+
+### Validation checks after code edits
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - Result: pass.
+- `source .venv/bin/activate && pytest -vvv tests/`
+  - Result: pass (`101 passed, 2 warnings`).
+
+### Scripts preserved under `agent_logs/`
+- `agent_logs/20260216_164610_generate_eval_set_validated_v1.sh`
+- `agent_logs/20260216_164640_generate_eval_set_validated_v2_home_tmp.sh`
+- `agent_logs/20260216_164925_edgar_validation_tolerance_sweep.sh`
+- `agent_logs/20260216_165030_generate_eval_set_validated_tol05_v3.sh`
+- `agent_logs/20260216_165235_build_eval_subsets_from_validated_tol05_v1.sh`
+- `agent_logs/20260216_165322_eval_single_balanced_validated_baseline_v2.sh`
+- `agent_logs/20260216_171130_eval_single_balanced_validated_improved_v3_thread.sh`
+
+### Handoff notes
+- Multi-ticker evaluation phase is pending restart of vLLM.
+- Recommended restart point:
+  1) rerun `single_balanced_validated_improved_v3` end-to-end with server healthy;
+  2) then run `eval/eval_queries_revamp_multi_comparison_validated_tol05_20260216.jsonl` with same settings.
+
+## 2026-02-16 (late) - Iteration-by-iteration eval log (N=1 cadence enabled)
+
+### Process update
+- Switched logging cadence to **N=1** (append after each iteration/run).
+- Goal of this block: retroactively capture each run with (a) what changed, (b) observed metrics, (c) surprising finding, (d) concrete next action.
+
+### Iteration log (single-ticker unless specified)
+
+1) **`v9` baseline tools-first, no refine**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v9_tools8_norefine.20260216_220225`
+- What changed: stabilized 8-thread threaded generation path; no refine; tools enabled.
+- Metrics:
+  - factual numeric accuracy: `0.55`
+  - factual correctness fail: `0.20`
+  - open-ended faithfulness fail: `0.7333`
+- Surprising finding: factual numerics were reasonable but open-ended hallucination rate remained high.
+- Action taken next: test retrieval-diversity intervention (MMR).
+
+2) **`v10` MMR diversity ON**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v10_tools8_norefine_mmr.20260216_221157`
+- What changed: enabled bounded MMR rerank diversification for narrative questions.
+- Metrics:
+  - factual numeric accuracy: `0.45` (down)
+  - factual correctness fail: `0.25` (worse)
+  - open-ended faithfulness fail: `0.7333` (no gain)
+- Surprising finding: MMR did not improve faithfulness and hurt factual metrics at this configuration.
+- Action taken next: gated MMR off by default.
+
+3) **`v11` narrative quote-guidance prompt**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v11_tools8_norefine_promptquote.20260216_223248`
+- What changed: added narrative quote-grounding guidance in prompt extras.
+- Metrics:
+  - factual numeric accuracy: `0.45`
+  - factual correctness fail: `0.15`
+  - open-ended faithfulness fail: `0.6667`
+- Surprising finding: prompt-only change improved faithfulness relative to v9/v10 without refine.
+- Action taken next: align eval serialization to deployed full-chunk behavior.
+
+4) **`v13` deploy-match run (full chunk defaults, no chunk truncation flags)**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch.20260216_224314`
+- What changed: removed chunk text/context truncation overrides; used deploy-matching defaults.
+- Metrics (original harness):
+  - factual numeric accuracy: `0.45`
+  - factual correctness fail: `0.25`
+  - open-ended faithfulness fail: `0.5333`
+- Surprising finding: deploy-match settings improved open-ended faithfulness materially vs earlier runs.
+- Action taken next: build dashboard + deeper per-failure trace analysis.
+
+5) **`v14` numeric-guard generation intervention (failed)**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v14_tools8_norefine_numguard.20260216_230154`
+- What changed: added strict numeric-claim sanitization and stronger narrative prompt constraints.
+- Metrics:
+  - factual numeric accuracy: `0.45`
+  - factual correctness fail: `0.15`
+  - open-ended faithfulness fail: `0.9333`
+  - open-ended helpfulness fail: `0.9333`
+  - distractor focus fail: `0.8571`
+- Surprising finding: severe over-correction; model output collapsed into repetitive “Not explicitly stated...” leading to broad quality regressions.
+- Action taken next: treat this as a negative control; start judge-harness isolation before further generation edits.
+
+6) **Judge-harness isolation pass on v13 generations**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness.20260216_231114`
+- What changed: same generations as v13; changed scorer context assembly to prioritize cited chunks under context budget.
+- Metrics delta vs original v13 scoring:
+  - factual correctness fail: `0.25 -> 0.40` (revealed expected/evidence tension)
+  - open-ended faithfulness fail: `0.5333 -> 0.2667` (large improvement)
+  - distractor focus fail: `0.0 -> 0.0`
+- Surprising finding: prior faithfulness failures were inflated by judge-context truncation that omitted cited evidence.
+- Action taken next: calibrate factual judge prompt to trust evidence/context when Expected conflicts.
+
+7) **Judge prompt v2 (factual judge reliability improvement)**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430`
+- What changed: updated `factual_correctness_v1` judge prompt to treat evidence/context as source-of-truth if Expected conflicts.
+- Metrics (same v13 generations):
+  - factual correctness fail: `0.05`
+  - open-ended faithfulness fail: `0.2667`
+- Surprising finding: large factual fail-rate drop indicates residual GT/period ambiguity in the eval set; judge needed explicit conflict-resolution policy.
+- Action taken next: keep judge v2 wording; continue generation iterations with calibrated harness.
+
+8) **`v15` softened prompt + sanitizer still on (failed)**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v15_tools8_norefine_softprompt.20260216_231728`
+- What changed: reduced prompt strictness but sanitizer still active.
+- Metrics:
+  - factual correctness fail: `0.05`
+  - open-ended faithfulness fail: `0.9333`
+  - open-ended helpfulness fail: `0.9333`
+- Surprising finding: sanitizer remained the dominant regression source.
+- Action taken next: remove sanitizer from answer path.
+
+9) **`v16` no-sanitizer recovery pass**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v16_tools8_norefine_nosanitize.20260216_232700`
+- What changed: removed sanitizer from generation path; retained calibrated judge harness.
+- Metrics:
+  - factual numeric accuracy: `0.45`
+  - factual correctness fail: `0.05`
+  - open-ended faithfulness fail: `0.4667`
+- Surprising finding: large recovery from v14/v15 collapse, but still behind best calibrated v13 re-score (`0.2667`).
+- Action taken next: revert narrative prompt phrasing to strongest prior variant.
+
+10) **`v17` prompt revert + no sanitizer (current stable)**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v17_tools8_norefine_revertprompt.20260216_233713`
+- What changed: restored prior narrative prompt wording; sanitizer removed; judge harness remained calibrated.
+- Metrics:
+  - factual numeric accuracy: `0.50`
+  - factual correctness fail: `0.05`
+  - open-ended faithfulness fail: `0.40`
+  - open-ended helpfulness fail: `0.0`
+- Surprising finding: improved over v16 on both factual numeric and open-ended faithfulness, but still above best observed faithfulness from calibrated v13 re-score.
+- Action taken next: use calibrated harness for multi-ticker run and continue prompt-only improvements incrementally.
+
+11) **Multi-ticker baseline (earlier in sequence, for reference)**
+- Run: `eval/results_revamp/multi/eval_run.multi_holistic_normal_v1_tools8_norefine.20260216_222132`
+- Metrics:
+  - comparison fail: `0.0417`
+  - comparison helpfulness fail: `0.0`
+- Action taken next: rerun multi-ticker after single-ticker stabilization using current calibrated harness.
+
+### Judge reliability conclusions (explicit)
+- Cited-chunk-priority in judge context was necessary; without it, faithfulness was over-penalized on long answers with lower-ranked but cited evidence.
+- Factual judge required explicit instruction to resolve `Expected` vs `Evidence/Context` conflicts; otherwise it over-failed evidence-grounded answers on noisy GT rows.
+- Current harness choice:
+  - keep cited-chunk-priority context assembly
+  - keep factual judge v2 prompt wording
+  - keep high judge context budget (`80000` chars in these runs)
+
+### Literature notes (papers reviewed + actionability)
+1) **Lost in the Middle (Liu et al., 2023)** - long-context models underuse mid-context evidence.
+- Actionable now: keep context ordering intentional (prioritize cited/critical chunks in eval harness; keep retrieval ordering interpretable).
+- Future: add retrieval ordering ablations (front-load table chunks + risk chunks) with latency tracking.
+
+2) **RefChecker (Li et al., 2024)** - claim-level verification improves factuality diagnostics.
+- Actionable now: maintain per-case failure analysis at claim granularity in `review.csv` workflows.
+- Future: add optional claim-splitting + verifier pass as an *analysis* tool (not default generation path) to avoid latency hit.
+
+3) **QAFactEval (Fabbri et al., NAACL 2022)** - QA-based factual consistency evaluation provides better error localization.
+- Actionable now: continue judge explanations + per-judge fail-rates rather than single scalar.
+- Future: add automatic claim-question generation for targeted faithfulness triage on failed answers.
+
+4) **Self-RAG (Asai et al., 2023)** / **CRAG-like correction ideas**
+- Actionable now: keep tools-first routing with RAG fallback policy explicit and measured.
+- Future: evaluate lightweight reflection tokens / retrieval correction only on uncertain cases (confidence-gated), not all queries.
+
+### Scripts preserved in this block
+- `agent_logs/20260216_231500_eval_single_holistic_normal_v14_tools8_norefine_numguard.sh`
+- `agent_logs/20260216_232000_rescore_v13_with_cited_chunk_priority.sh`
+- `agent_logs/20260216_232620_rescore_v13_harness_plus_factual_prompt_v2.sh`
+- `agent_logs/20260216_233050_eval_single_holistic_normal_v15_tools8_norefine_softprompt.sh`
+- `agent_logs/20260216_234000_eval_single_holistic_normal_v16_tools8_norefine_nosanitize.sh`
+- `agent_logs/20260216_235200_eval_single_holistic_normal_v17_tools8_norefine_revertprompt.sh`
+
+
+## 2026-02-16 (N=1 iteration entry) - Multi-ticker calibrated rerun (`v2`)
+
+### Iteration
+- Run: `eval/results_revamp/multi/eval_run.multi_holistic_normal_v2_tools8_norefine_calibrated.20260216_234717`
+- Script: `agent_logs/20260217_000700_eval_multi_holistic_normal_v2_tools8_norefine_calibrated.sh`
+- Config:
+  - mode=`normal`
+  - concurrency=`8`
+  - parallel backend=`thread`
+  - refine=`off`
+  - tools=`enabled`
+  - judge context chars=`80000`
+  - harness uses cited-chunk-priority context + factual judge v2 wording.
+
+### Metrics observed
+- generation: `n=24`, `n_ok=24`, `n_err=0`, `wall_total_ms=428985.97`
+- comparison fail rate: `0.0417`
+- comparison helpfulness fail rate: `0.0`
+
+### Surprising findings
+- Quality metrics were effectively unchanged vs earlier multi baseline despite substantial harness work on single-ticker faithfulness.
+- Throughput remains bounded by long-tail multi-ticker query latency (map/reduce retrieval + synthesis), not by thread-worker count.
+
+### Action taken afterwards
+- Keep multi-ticker defaults unchanged for now (already strong on comparison quality).
+- Focus future quality iterations on single-ticker narrative faithfulness where remaining failure mass exists.
+- Keep N=1 logging cadence for every subsequent run.
+
+
+## 2026-02-16 (N=1 iteration entry) - Single-ticker `v17` validation
+
+### Iteration
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v17_tools8_norefine_revertprompt.20260216_233713`
+- Script: `agent_logs/20260216_235200_eval_single_holistic_normal_v17_tools8_norefine_revertprompt.sh`
+- What changed vs prior iteration: restored prior narrative prompt phrasing; no sanitizer; judge harness remained calibrated.
+
+### Metrics observed
+- generation: `n=50`, `n_ok=50`, `n_err=0`, `wall_total_ms=333231.64`
+- factual numeric accuracy: `0.50`
+- factual correctness fail: `0.05`
+- open-ended faithfulness fail: `0.40`
+- open-ended helpfulness fail: `0.0`
+- distractor focus/helpfulness fail: `0.0 / 0.0`
+
+### Surprising findings
+- `v17` improved over `v16` on both factual numeric and faithfulness, but remained worse than calibrated `v13` re-score (`faithfulness fail=0.2667`).
+
+### Action taken afterwards
+- Proceeded to multi-ticker rerun under same calibrated harness.
+
+
+## 2026-02-16 (N=1 iteration entry) - Dashboard refresh after latest runs
+
+### Iteration
+- Command: `bash agent_logs/20260216_223015_build_eval_dashboard_all.sh`
+- Output artifacts:
+  - `eval/results_revamp/dashboard/metrics_runs.csv`
+  - `eval/results_revamp/dashboard/metrics_runs.json`
+  - `eval/results_revamp/dashboard/index.html`
+
+### Metrics observed
+- Dashboard now includes `30` runs across single + multi scopes.
+
+### Action taken afterwards
+- Used dashboard to select current best calibrated single-ticker reference (`v13` rescore + judgev2) and compare against latest single run (`v17`).
+
+
+## 2026-02-17 (retroactive backfill) - Early single-ticker holistic iterations (`v4` to `v8`)
+
+### Why this backfill
+- This section retroactively captures the missing early runs before the `v9+` N=1 block.
+- Source of truth used for reconstruction: run artifacts in `eval/results_revamp/single/*` and dashboard rows in `eval/results_revamp/dashboard/metrics_runs.csv`.
+
+### Iteration log (what changed -> metrics observed -> action taken)
+
+1) **`v4_notools` first scored run**
+- Run: `eval/results_revamp/single/eval_run.single_validated_faithfulness_v4_notools.20260216_204046`
+- What changed:
+  - disabled finance tools (`--disable-finance-tools`)
+  - constrained generation (`top_k=30/18`, `draft/final max tokens=2200`, timeout `30s`, concurrency `2`)
+- Metrics observed:
+  - generation: `n_ok=11/50`, `n_err=39`, `wall_total_ms=93438.53`
+  - open-ended: `faithfulness_fail=0.0`, `helpfulness_fail=0.0` on only `open_ended_n_ok=2` (not reliable)
+  - factual had `factual_n_ok=0` (no usable factual scoring signal)
+- Action taken afterwards:
+  - treated this run as infrastructure/timeout-limited and not quality-representative;
+  - increased concurrency and moved back to tools-enabled holistic runs.
+
+2) **`v4_notools` second attempt (partial)**
+- Run: `eval/results_revamp/single/eval_run.single_validated_faithfulness_v4_notools.20260216_210531`
+- What changed:
+  - reran same run-name family to recover from prior failures.
+- Metrics observed:
+  - status `partial_generation`, progress `0.64` (`n_generated_rows=32/50`), no score output.
+- Action taken afterwards:
+  - stopped pursuing this no-tools branch;
+  - switched to tools-enabled holistic baseline (`v5`).
+
+3) **`v5_tools8` attempt A (hard fail)**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v5_tools8.20260216_211742`
+- What changed:
+  - tools enabled, normal generation controls, concurrency `8`, thread backend.
+- Metrics observed:
+  - generation: `n_ok=0/50`, `n_err=50`, `wall_total_ms=9807.21`
+  - scored artifact exists but not meaningful because no successful generations.
+- Action taken afterwards:
+  - immediate rerun under same family to isolate transient server/runtime errors.
+
+4) **`v5_tools8` attempt B (partial)**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v5_tools8.20260216_211830`
+- What changed:
+  - same run family; rerun for stability.
+- Metrics observed:
+  - status `partial_generation`, `n_generated_rows=18/50`, no score output.
+- Action taken afterwards:
+  - ran a third attempt before drawing quality conclusions.
+
+5) **`v5_tools8` stable scored run**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v5_tools8.20260216_212541`
+- What changed:
+  - stable tools-enabled holistic run (normal controls profile).
+- Metrics observed:
+  - generation: `n_ok=50/50`, `wall_total_ms=284638.40`, throughput `0.176 qps`
+  - factual: `numeric_accuracy=0.50`, `factual_correctness_fail=0.25`
+  - open-ended: `faithfulness_fail=0.9333`, `helpfulness_fail=0.0`
+- Action taken afterwards:
+  - prioritized faithfulness error analysis (not numeric pipeline) because open-ended grounding was the dominant failure mode.
+
+6) **`v6_tools8_routing`**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v6_tools8_routing.20260216_213525`
+- What changed:
+  - runtime routing adjustments (tools/retrieval behavior in this iteration family).
+- Metrics observed:
+  - generation: `n_ok=50/50`, `wall_total_ms=215869.17`, throughput `0.232 qps` (best throughput in early block)
+  - factual: `numeric_accuracy=0.40`, `factual_correctness_fail=0.70`, `factual_helpfulness_fail=0.60`
+  - open-ended: `faithfulness_fail=0.9333` (no improvement vs v5 stable)
+- Action taken afterwards:
+  - did not keep this routing variant due severe factual regression;
+  - moved to refinement-assisted experiment to check if faithfulness could be recovered.
+
+7) **`v7_tools8_refine`**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v7_tools8_refine.20260216_214227`
+- What changed:
+  - enabled refine (`--enable-refine 1`), increased timeout (`120s`), used larger chunk truncation params (`6000/4000`) in this branch.
+- Metrics observed:
+  - generation: `n_ok=50/50`, `wall_total_ms=335293.59`, throughput `0.149 qps` (slower)
+  - factual: `numeric_accuracy=0.35`, `factual_correctness_fail=0.75`, `factual_helpfulness_fail=0.70`
+  - open-ended: `faithfulness_fail=0.7333` (better than v5/v6 but still high)
+- Action taken afterwards:
+  - flagged refine as a non-preferred metric boost path;
+  - reverted focus to no-refine improvements (prompt + retrieval/harness) for deploy-match realism.
+
+8) **`v8_tools8_scrub` (partial / inconclusive)**
+- Run: `eval/results_revamp/single/eval_run.single_holistic_normal_v8_tools8_scrub.20260216_215447`
+- What changed:
+  - experimental “scrub” branch attempted after refine path.
+- Metrics observed:
+  - status `partial_generation`, progress `0.28` (`n_generated_rows=14/50`), no score output.
+- Action taken afterwards:
+  - treated as inconclusive due partial execution;
+  - reset to clean no-refine baseline iteration (`v9`), which starts the already-documented N=1 sequence.
+
+### Summary of lessons from `v4-v8`
+- Early low-timeout/no-tools or unstable runs created misleading score artifacts; generation completeness (`n_ok`) must be checked before interpreting judge metrics.
+- The major bottleneck was open-ended faithfulness, not raw numeric extraction.
+- Routing/refine-only interventions were not durable quality wins; later improvements were correctly shifted to calibrated judge harness + prompt/rag-grounding changes.
+
+## 2026-02-17 (N=1 reproduction) - Reproduced `v13 + harness + judgev2` best score
+
+### Request
+- Reproduce: `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430/score_summary.json`
+
+### What happened
+1) **Direct rerun via original script**
+- Script: `agent_logs/20260216_232620_rescore_v13_harness_plus_factual_prompt_v2.sh`
+- New run: `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260217_001319`
+- Observed mismatch vs target:
+  - open-ended faithfulness fail: `0.4667` (target `0.2667`)
+  - factual correctness fail: `0.0` (target `0.05`)
+
+2) **Root-cause check**
+- Compared old/new score rows and found only 5 judge-decision flips.
+- Identified harness drift: `src/finrag/eval/scoring.py` had later chunk-level context compaction changes after the original run timestamp.
+
+3) **Back-compat reproduction (no per-chunk context truncation, same v13 generations + judgev2 settings)**
+- Repro run A: `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2_repro_notrunc.20260217_001849`
+  - recovered open-ended faithfulness fail `0.2667`, factual correctness fail `0.10`
+- Repro run B: `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2_repro_notrunc.20260217_002146`
+  - **exact match with target summary**
+
+### Verification
+- Exact JSON equality check between target and reproduced run B score summary:
+  - `equal True`
+- Reproduced file:
+  - `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2_repro_notrunc.20260217_002146/score_summary.json`
+
+### Action taken
+- Kept both reproduction artifacts for traceability.
+- For strict reproducibility claims, pinning the judge-context serialization behavior is necessary.
+- Saved reusable repro harness script: `agent_logs/20260217_002500_reproduce_v13_judgev2_notrunc.sh`.
+
+## 2026-02-17 - Added exact eval reproduction guide (`README_EVAL.md`)
+
+### Previous state
+- Reproduction details for best `v13` score existed across many scripts and logbook entries but not in one canonical runbook.
+
+### What changed
+- Added `README_EVAL.md` with an end-to-end, command-accurate path for reproducing the best `v13` result:
+  - profile rebuild/index commands
+  - query generation and Edgar validation flow
+  - tolerance filtering details (`--edgar-rel-tol 0.5`) and matched-only factual subset construction
+  - v13 generation + `judgev2` rescoring
+  - exact historical reproduction path via back-compat no-trunc judge-context script.
+
+### Why
+- Make reproduction deterministic and interview/demo-friendly for another engineer.
+- Make the filtering/tolerance step explicit (the main source of confusion).
+
+### Key artifacts referenced
+- `eval/eval_queries_revamp_validated_tol05_20260216.jsonl`
+- `eval/eval_queries_revamp_single_balanced_validated_tol05_20260216.jsonl`
+- `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430/score_summary.json`
+- `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2_repro_notrunc.20260217_002146/score_summary.json`
+
+## 2026-02-17 - Removed eval chunk truncation CLI args
+
+### Previous state
+- `scripts/run_eval.py` accepted `--chunk-text-chars` and `--chunk-context-chars`, and passed values through `RunConfig`.
+- `src/finrag/eval/runner.py` used those fields to truncate persisted retrieved chunk `text` and `context`.
+
+### What changed
+- Removed `--chunk-text-chars` and `--chunk-context-chars` from `scripts/run_eval.py`.
+- Removed corresponding `RunConfig` fields and truncation usage in `src/finrag/eval/runner.py`.
+- Retrieved chunk payloads now always persist full `text` and `context` (preview remains capped separately).
+
+### Why
+- Simplify eval runner surface area and eliminate options that are no longer wanted.
+- Avoid accidental truncation drift in run artifacts.

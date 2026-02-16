@@ -5,7 +5,10 @@ import json
 import multiprocessing
 import os
 import re
+import signal
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,11 +43,11 @@ class RunConfig:
 
     # Parallelism. (Latency does not matter for offline eval runs.)
     concurrency: int = 8
+    parallel_backend: str = "process"
 
     # Output controls.
     max_chunks: int = 50
-    chunk_text_chars: int = 2000
-    chunk_context_chars: int = 2000
+    query_timeout_s: float | None = None
 
     def resolved_settings(self) -> GenerationSettings:
         return resolve_generation_settings(
@@ -66,6 +69,38 @@ class RunConfig:
 WORKER_SERVICE: Any | None = None
 WORKER_SETTINGS: GenerationSettings | None = None
 WORKER_CFG: RunConfig | None = None
+
+
+@contextmanager
+def _query_timeout_guard(timeout_s: float | None):
+    """
+    Guard one eval query with a wall-clock timeout when supported.
+    """
+
+    if timeout_s is None or timeout_s <= 0:
+        yield
+        return
+
+    if threading.current_thread() is not threading.main_thread():
+        # Signal-based timers are only supported in the main thread.
+        yield
+        return
+
+    if not hasattr(signal, "setitimer") or not hasattr(signal, "SIGALRM"):
+        yield
+        return
+
+    def _handler(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"Timed out after {timeout_s:.1f}s")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, timeout_s)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def utcnow() -> datetime:
@@ -90,8 +125,8 @@ def to_retrieved_chunk(chunk: TopChunk, cfg: RunConfig) -> RetrievedChunk:
         score=float(chunk.score),
         source=chunk.source,
         preview=truncate(chunk.preview, 400),
-        text=truncate(chunk.text, cfg.chunk_text_chars),
-        context=truncate(chunk.context, cfg.chunk_context_chars),
+        text=chunk.text,
+        context=chunk.context,
         metadata=chunk.metadata,
     )
 
@@ -102,7 +137,22 @@ def run_one(
     t0 = time.perf_counter()
     created = utcnow()
     try:
-        resp = service.answer_question(question, settings, include_retrieved_chunks=True)
+        timeout_s = cfg.query_timeout_s
+        if timeout_s is None or timeout_s <= 0:
+            resp = service.answer_question(question, settings, include_retrieved_chunks=True)
+        elif threading.current_thread() is threading.main_thread():
+            with _query_timeout_guard(timeout_s):
+                resp = service.answer_question(question, settings, include_retrieved_chunks=True)
+        else:
+            # Thread workers cannot use signal timers. Use future timeout instead.
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(service.answer_question, question, settings, include_retrieved_chunks=True)
+            try:
+                resp = future.result(timeout=timeout_s)
+            except concurrent.futures.TimeoutError as exc:
+                raise TimeoutError(f"Timed out after {timeout_s:.1f}s") from exc
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
         chunks = [to_retrieved_chunk(tc, cfg) for tc in (resp.top_chunks or [])[: cfg.max_chunks]]
         retrieved_chunks = [to_retrieved_chunk(tc, cfg) for tc in (resp.retrieved_chunks or [])[: cfg.max_chunks]]
         generation = EvalGeneration(
@@ -215,6 +265,10 @@ def run_generation(
     wall_t0 = time.perf_counter()
 
     concurrency = max(1, int(cfg.concurrency))
+    parallel_backend = (cfg.parallel_backend or "process").strip().lower()
+    if parallel_backend not in {"process", "thread"}:
+        logger.warning(f"Unknown parallel_backend='{cfg.parallel_backend}', falling back to 'process'.")
+        parallel_backend = "process"
 
     if gpu_ids is None:
         raw_gpu_ids = (os.getenv("FINRAG_EVAL_GPU_IDS") or "").strip()
@@ -237,6 +291,61 @@ def run_generation(
                     n_err += 1
                 out_file.write(generation.model_dump_json())
                 out_file.write("\n")
+    elif parallel_backend == "thread":
+        import finrag.main as main
+
+        service = main.get_rag_service()
+        settings = cfg.resolved_settings()
+        effective_workers = min(concurrency, len(query_specs))
+        with output_path.open("w", encoding="utf-8") as out_file:
+            pending: dict[int, str] = {}
+            next_to_write = 0
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=effective_workers) as executor:
+                future_to_index = {
+                    executor.submit(run_one, service, query_id, kind, question, settings, cfg): idx
+                    for idx, (query_id, kind, question) in enumerate(query_specs)
+                }
+
+                for future in tqdm(
+                    concurrent.futures.as_completed(future_to_index),
+                    total=len(future_to_index),
+                    desc=f"Inferencing on eval queries with {concurrency} thread workers",
+                ):
+                    idx = future_to_index[future]
+                    query_id, kind, question = query_specs[idx]
+                    try:
+                        generation, item_ms, ok = future.result()
+                        line = generation.model_dump_json()
+                    except Exception as exc:  # noqa: BLE001
+                        generation = EvalGeneration(
+                            query_id=query_id,
+                            kind=kind,
+                            question=question,
+                            created_at=utcnow(),
+                            settings={"mode": cfg.mode, "concurrency": concurrency, "parallel_backend": "thread"},
+                            error=f"Thread worker failed: {exc}",
+                        )
+                        generation.timing_ms["total_ms"] = 0.0
+                        line, item_ms, ok = generation.model_dump_json(), 0.0, False
+
+                    n += 1
+                    total_ms += item_ms
+                    if ok:
+                        n_ok += 1
+                    else:
+                        n_err += 1
+
+                    pending[idx] = line
+                    while next_to_write in pending:
+                        out_file.write(pending.pop(next_to_write))
+                        out_file.write("\n")
+                        next_to_write += 1
+
+            if pending:
+                for idx in sorted(pending):
+                    out_file.write(pending[idx])
+                    out_file.write("\n")
     else:
         with output_path.open("w", encoding="utf-8") as out_file:
             pending: dict[int, str] = {}
