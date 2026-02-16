@@ -1959,6 +1959,7 @@
 - Query timeout: 600s (corrected from initial 240s for 2048 stability)
 - Judge workers: 8
 - Judge context chars: 65000 (rescored all 4 runs for consistency)
+  * NOTE: 65k judge context is suboptimal, hence the higher faithfulness failure rate seen here (1024 should be 27%)
 
 ### Results summary
 - `256`: qps `0.2004`, p95 `92565 ms`, factual fail `0.0000`, open faithfulness fail `0.4667`
@@ -1975,3 +1976,71 @@
 ### Notes on anomalies
 - Initial `2048` run with `query-timeout-s=240` produced one timeout and a stuck worker teardown path; it was discarded and rerun at `600s`.
 - A judge run at `80000` context chars also exhibited a tail hang on 2048; rescoring all runs at `65000` fixed this and kept settings consistent.
+
+## 2026-02-17 - Iteration checkpoint (N=1) for chunk-512 eval extension
+
+### Commit (code/scripts for this iteration)
+- `e7551f6` - Add chunk512 eval extension harness and retry-aware eval runtime
+
+### Scope completed in this checkpoint
+- Locked extension eval runs to `chunk_size=512` profile/schema:
+  - `FINRAG_INGEST_PROFILE=eval_revamp_combined_512_20260217`
+  - `POSTGRES_SCHEMA=eval_revamp_combined_512_20260217`
+- Added reusable extension scripts for profile build/query generation/subseting and eval runs:
+  - `agent_logs/20260217_041800_build_combined_eval_profile.sh`
+  - `agent_logs/20260217_042300_generate_eval_set_combined_validated_tol05.sh`
+  - `agent_logs/20260217_042350_build_eval100_subsets_combined_tol05.sh`
+  - `agent_logs/20260217_042800_build_eval100_from_merged_validated_sets.sh`
+  - `agent_logs/20260217_042950_build_combined_profile_chunk512.sh`
+  - `agent_logs/20260217_043020_generate_eval_set_combined512_validated_tol05.sh`
+  - `agent_logs/20260217_043130_build_eval100_subsets_combined512_tol05.sh`
+  - `agent_logs/20260217_044500_eval_single_extension_chunk512_v1.sh`
+  - `agent_logs/20260217_045500_eval_single_extension_chunk512_v2_prompttighten.sh`
+- Extended eval harness controls:
+  - generation retry knob in `scripts/run_eval.py` (`--query-max-retries`, default `1`)
+  - judge timeout/retry controls in `scripts/score_eval.py` (`--judge-timeout-s`, `--judge-max-retries`)
+- Added stronger evidence-discipline prompt guidance (no-refine path):
+  - `src/andromeda/qa.py`
+  - `src/andromeda/query_runtime.py`
+- Added eval review telemetry for tool usage from trace + tool results in `review.csv` (`scripts/score_eval.py`).
+
+### Iteration runs and metrics
+
+1) **v1 baseline on chunk-512 (no refine, tools enabled, 12 workers, eval100)**
+- Run: `eval/results_revamp/single/eval_run.single_ext_chunk512_v1_normal_tools12_norefine_eval100.20260217_043752`
+- Generation: `n_ok=100/100`, `n_err=0`, `wall_total_ms=503791.20`
+- Score summary:
+  - factual correctness fail: `0.0571`
+  - open-ended faithfulness fail: `0.2667`
+  - refusal fail: `0.0`
+  - distractor focus fail: `0.0667`
+
+2) **v2 prompt-tightened attempt (before generation retry fix was applied in runner path)**
+- Run: `eval/results_revamp/single/eval_run.single_ext_chunk512_v2_prompttighten_tools12_norefine_eval100.20260217_045414`
+- Generation: `n_ok=99/100`, `n_err=1` (one timeout)
+- Action: implemented generation timeout retry (`query_max_retries=1`) and reran.
+
+3) **v2 prompt-tightened rerun (with generation retry, recovered timeout)**
+- Run: `eval/results_revamp/single/eval_run.single_ext_chunk512_v2_prompttighten_tools12_norefine_eval100.20260217_050424`
+- Generation: `n_ok=100/100`, `n_err=0`, `wall_total_ms=443290.16`
+- Retry evidence: `query_id=2dcc67c3-e597-485a-81e4-fbb8226880c0` used `query_attempts=2` and succeeded.
+- Rescore summary (latest):
+  - factual correctness fail: `0.0571`
+  - factual helpfulness fail: `0.0857`
+  - open-ended faithfulness fail: `0.3333`
+  - refusal fail: `0.0`
+  - distractor focus fail: `0.0667`
+
+### Tool-usage findings (data-driven)
+- For the latest v2 rerun (`20260217_050424`), factual rows show:
+  - `35/35` with `used_edgar_financials=true`
+  - `0/35` with `used_yfinance=true`
+- This confirms factual numeric path is primarily using Edgar tools in this eval setup.
+
+### Surprising findings
+- Judge results were not perfectly stable across repeated scoring passes on the same generations (observed drift in open-ended faithfulness/factual helpfulness). This needs explicit handling in the judge reliability plan (for example, fixed rerun protocol or multi-judge aggregation).
+- Prompt tightening did not reduce open-ended faithfulness in the latest rerun and appears to hurt factual/distractor helpfulness in this sample.
+
+### Actionable next step after this checkpoint
+- Keep chunk-512 + generation retry as baseline runtime settings.
+- Revert/soften the v2 prompt-tightening changes and prioritize judge reliability + targeted factual ambiguity handling next.
