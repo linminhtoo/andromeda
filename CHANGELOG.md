@@ -8,7 +8,18 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
-- Standalone vLLM/OpenAI tool-calling probe script: `scripts/test_vllm_tool_call_openai.py`.
+
+### Changed
+
+### Fixed
+
+### Deprecated
+
+### Dev
+
+
+## v1.7.0 - 15 Feb 2026
+### Added
 - Tools-first query orchestration in `src/finrag/main.py` with explicit planner tool trace output (`tool_trace`) and query status signaling (`answered`, `clarification_required`, `refused`).
 - Conversation-aware query fields and response metadata:
   - `conversation_id` on `QueryRequest` / `QueryResponse`
@@ -105,10 +116,6 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - Citation source jumps now prioritize deterministic line-span highlights (when available) and otherwise match using `source_text` instead of retrieval-enriched text, improving in-file jump accuracy.
-
-### Deprecated
-
-### Dev
 
 
 ## v1.6.0 - 14 Feb 2026
