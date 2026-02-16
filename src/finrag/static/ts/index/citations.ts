@@ -126,7 +126,7 @@ export class CitationManager {
   linkifyDocCitations(html: string, { enable = false }: { enable?: boolean } = {}): string {
     if (!enable) return html;
     const re = /\[([^\]]*?\bdoc\s*=\s*[^\]]+?)\]/gi;
-    return String(html ?? '').replace(re, (match: string, bodyRaw: string) => {
+    const withDocLinks = String(html ?? '').replace(re, (match: string, bodyRaw: string) => {
       const body = String(bodyRaw || '');
       const docId = citationValue(body, 'doc');
       const citedChunkId = citationValue(body, 'chunk');
@@ -135,6 +135,17 @@ export class CitationManager {
       if (!target?.label) return match;
       const chunkId = citedChunkId || target.chunk_id;
       return `<a href="#" class="citationLink" data-doc-id="${escapeHtmlAttr(docId)}" data-chunk-id="${escapeHtmlAttr(chunkId)}" title="${escapeHtmlAttr(match)}">${safeText(target.label)}</a>`;
+    });
+    const toolRe = /\[([^\]]*?\btool\s*=\s*[^\]]+?)\]/gi;
+    return withDocLinks.replace(toolRe, (match: string, bodyRaw: string) => {
+      const body = String(bodyRaw || '');
+      const tool = String(body.match(/\btool\s*=\s*([^\s,\]]+)/i)?.[1] || '').trim();
+      if (!tool) return match;
+      const ticker = String(body.match(/\bticker\s*=\s*([^\s,\]]+)/i)?.[1] || '').trim();
+      const status = String(body.match(/\bstatus\s*=\s*([^\s,\]]+)/i)?.[1] || '').trim();
+      const label = ticker ? `${tool} · ${ticker}` : tool;
+      const suffix = status ? ` (${status})` : '';
+      return `<span class="toolCitationChip" title="${escapeHtmlAttr(match)}">${safeText(label + suffix)}</span>`;
     });
   }
 }

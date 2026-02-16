@@ -200,6 +200,20 @@
       background: rgba(147,197,253,0.16);
       text-decoration: none;
     }
+    .toolCitationChip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-family: var(--mono);
+      font-size: 0.78em;
+      padding: 0.08rem 0.4rem;
+      border-radius: 999px;
+      border: 1px solid rgba(15,118,110,0.28);
+      background: rgba(15,118,110,0.09);
+      color: #0f4b46;
+      white-space: nowrap;
+      vertical-align: baseline;
+    }
     .markdown p { margin: 0.55rem 0; }
     .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 0.8rem 0 0.4rem 0; }
     .markdown h1 { font-size: 1.25rem; }
@@ -514,6 +528,84 @@
     .ingestedDocTable tr:last-child td {
       border-bottom: none;
     }
+    .toolResultsPanel {
+      border: 1px solid rgba(44,64,82,0.16);
+      border-radius: 12px;
+      background: #f7fbfe;
+      padding: 0.7rem;
+      margin-bottom: 0.85rem;
+    }
+    .toolResultsGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 0.6rem;
+    }
+    .toolCard {
+      border: 1px solid rgba(44,64,82,0.16);
+      border-radius: 12px;
+      background: #ffffff;
+      padding: 0.6rem;
+    }
+    .toolCardHead {
+      display: flex;
+      gap: 0.4rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 0.45rem;
+    }
+    .toolCardTitle {
+      font-size: 0.84rem;
+      font-family: var(--mono);
+      font-weight: 700;
+      color: #214158;
+    }
+    .toolCardSummary {
+      font-size: 0.82rem;
+      color: #3f556a;
+      line-height: 1.2rem;
+      margin-bottom: 0.45rem;
+    }
+    .toolKv {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.32rem 0.55rem;
+      font-size: 0.79rem;
+    }
+    .toolKv .k {
+      color: #5a6f82;
+      font-family: var(--mono);
+    }
+    .toolKv .v {
+      color: #1f3144;
+      font-family: var(--mono);
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+    .toolNewsList {
+      margin: 0;
+      padding-left: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.38rem;
+    }
+    .toolNewsList li {
+      font-size: 0.81rem;
+      line-height: 1.2rem;
+    }
+    .toolNewsList a {
+      color: #0a5f8a;
+    }
+    .toolChart {
+      width: 100%;
+      height: 130px;
+      display: block;
+    }
+    .toolChartMeta {
+      margin-top: 0.35rem;
+      font-size: 0.78rem;
+      color: #4f6477;
+      font-family: var(--mono);
+    }
     body.resizing {
       cursor: col-resize;
       user-select: none;
@@ -611,6 +703,12 @@
                           <select id="genMode"></select>
                           <div class="help modeTooltip" id="genModeHelp" role="tooltip"></div>
                         </div>
+                      </div>
+                      <div style="margin-bottom: 0.75rem;">
+                        <label class="row" style="gap: 0.5rem; align-items: center;">
+                          <input id="enableRefine" type="checkbox" style="width:auto; margin: 0;" />
+                          <span class="muted">Run draft + refine (two-stage generation)</span>
+                        </label>
                       </div>
 	                    <div class="kv">
 	                      <div>
@@ -729,6 +827,22 @@
                       </summary>
                       <div class="chunkBody">
                         <div class="answer markdown" id="draftAnswer"></div>
+                      </div>
+                    </details>
+
+                    <details id="toolResultsDetails" open style="margin-bottom: 0.9rem;">
+                      <summary>
+                        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                          <strong>Tool snapshot</strong>
+                          <span class="pill" id="toolResultsCountPill">0</span>
+                        </div>
+                        <div class="muted" style="font-size: 0.86rem;">toggle</div>
+                      </summary>
+                      <div class="chunkBody">
+                        <div class="toolResultsPanel">
+                          <div class="help" id="toolResultsStatus">No tool results yet.</div>
+                          <div class="toolResultsGrid" id="toolResults"></div>
+                        </div>
                       </div>
                     </details>
 

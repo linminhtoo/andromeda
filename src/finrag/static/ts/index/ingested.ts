@@ -151,7 +151,7 @@ export class IngestedCompaniesPanel {
       this.statusBase = data?.path ? `From ${String(data.path)}` : data?.warning ? String(data.warning) : '';
       this.render();
     } catch {
-      this.statusBase = 'Failed to load. Set FINRAG_DOC_INDEX_PATH and reload.';
+      this.statusBase = 'Failed to load inferred doc index path.';
       this.els.status.textContent = this.statusBase;
       this.els.list.innerHTML = '<div class="muted">Unavailable.</div>';
       this.els.countPill.textContent = '0';

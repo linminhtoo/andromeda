@@ -21,7 +21,7 @@ export class GenerationModeManager {
     return this.presetByKey.has(String(mode || '').trim().toLowerCase());
   }
 
-  /** Return whether the selected mode is expected to produce a draft stage. */
+  /** Return mode-default refine setting from loaded preset metadata. */
   modeUsesDraft(mode: string): boolean {
     const preset = this.presetByKey.get(String(mode || '').trim().toLowerCase());
     if (!preset || typeof preset !== 'object') return false;
@@ -72,13 +72,13 @@ export class GenerationModeManager {
           {
             key: 'thinking',
             label: 'Thinking',
-            description: 'Higher recall + deeper report. Retrieves/reranks more and verifies.',
+            description: 'Higher recall + deeper report. Retrieves/reranks more.',
             top_k_retrieve: 40,
             top_k_rerank: 12,
             draft_max_tokens: 65536,
             final_max_tokens: 45000,
             enable_rerank: true,
-            enable_refine: true,
+            enable_refine: false,
           },
         ],
       });
