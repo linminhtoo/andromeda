@@ -285,4 +285,3 @@ PY
 Expected output:
 
 - `True`
-

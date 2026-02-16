@@ -47,8 +47,6 @@ class RunConfig:
 
     # Output controls.
     max_chunks: int = 50
-    chunk_text_chars: int = 0
-    chunk_context_chars: int = 0
     query_timeout_s: float | None = None
 
     def resolved_settings(self) -> GenerationSettings:
@@ -127,8 +125,8 @@ def to_retrieved_chunk(chunk: TopChunk, cfg: RunConfig) -> RetrievedChunk:
         score=float(chunk.score),
         source=chunk.source,
         preview=truncate(chunk.preview, 400),
-        text=truncate(chunk.text, cfg.chunk_text_chars),
-        context=truncate(chunk.context, cfg.chunk_context_chars),
+        text=chunk.text,
+        context=chunk.context,
         metadata=chunk.metadata,
     )
 

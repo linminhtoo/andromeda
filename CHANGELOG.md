@@ -65,6 +65,9 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Eval run artifact defaults now preserve full chunk payloads unless explicitly overridden:
   - `scripts/run_eval.py` defaults `--chunk-text-chars=0`, `--chunk-context-chars=0`
   - `RunConfig` defaults in `src/finrag/eval/runner.py` aligned to full chunk persistence.
+- Eval runner chunk payload truncation overrides were removed:
+  - deleted `--chunk-text-chars` and `--chunk-context-chars` from `scripts/run_eval.py`
+  - `RunConfig` in `src/finrag/eval/runner.py` now always persists full `text` and `context` for retrieved chunks.
 - Judge context assembly in `src/finrag/eval/scoring.py` now prioritizes answer-cited chunk IDs before other retrieved chunks under char budget.
 - `factual_correctness_v1` judge instruction in `src/finrag/eval/judges.py` now treats evidence/context as source of truth when `Expected` conflicts with provided evidence.
 

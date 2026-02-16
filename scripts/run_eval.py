@@ -68,18 +68,6 @@ def main() -> None:
     # Output controls.
     ap.add_argument("--max-chunks", type=int, default=50)
     ap.add_argument(
-        "--chunk-text-chars",
-        type=int,
-        default=0,
-        help="Max chars of chunk text to persist per row (<=0 keeps full chunk text).",
-    )
-    ap.add_argument(
-        "--chunk-context-chars",
-        type=int,
-        default=0,
-        help="Max chars of chunk context to persist per row (<=0 keeps full chunk context).",
-    )
-    ap.add_argument(
         "--query-timeout-s",
         type=float,
         default=120.0,
@@ -157,8 +145,6 @@ def main() -> None:
         concurrency=args.concurrency,
         parallel_backend=args.parallel_backend,
         max_chunks=args.max_chunks,
-        chunk_text_chars=args.chunk_text_chars,
-        chunk_context_chars=args.chunk_context_chars,
         query_timeout_s=(float(args.query_timeout_s) if args.query_timeout_s is not None else None),
     )
 

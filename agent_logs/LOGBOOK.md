@@ -1889,3 +1889,18 @@
 - `eval/eval_queries_revamp_single_balanced_validated_tol05_20260216.jsonl`
 - `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430/score_summary.json`
 - `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2_repro_notrunc.20260217_002146/score_summary.json`
+
+## 2026-02-17 - Removed eval chunk truncation CLI args
+
+### Previous state
+- `scripts/run_eval.py` accepted `--chunk-text-chars` and `--chunk-context-chars`, and passed values through `RunConfig`.
+- `src/finrag/eval/runner.py` used those fields to truncate persisted retrieved chunk `text` and `context`.
+
+### What changed
+- Removed `--chunk-text-chars` and `--chunk-context-chars` from `scripts/run_eval.py`.
+- Removed corresponding `RunConfig` fields and truncation usage in `src/finrag/eval/runner.py`.
+- Retrieved chunk payloads now always persist full `text` and `context` (preview remains capped separately).
+
+### Why
+- Simplify eval runner surface area and eliminate options that are no longer wanted.
+- Avoid accidental truncation drift in run artifacts.
