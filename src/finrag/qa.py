@@ -70,14 +70,8 @@ def build_context(chunks: Sequence[ScoredChunk], max_tokens: int) -> str:
     used = 0
     context_key = os.getenv("CONTEXT_METADATA_KEY", "retrieval_context").strip() or "retrieval_context"
     for sc in chunks:
-        # headings_s = "; ".join(sc.chunk.headings)
         meta_bits = [f"doc={sc.chunk.doc_id}"]
-        # NOTE: page_no seems to be None for all our chunks.
-        # TODO: see if we can get `marker` to populate it (during `process_html_to_markdown.py`)
-        # if sc.chunk.page_no not in (None, ""):
-        #     meta_bits.append(f"page={sc.chunk.page_no}")
-        # Don't include headings for now, as "retrieval_text" already includes section context.
-        # meta_bits.append(f"headings={headings_s}")
+        # NOTE: page_no is None for all our chunks as the markdown files do not have page numbers
         meta = "[" + " ".join(meta_bits) + "]"
 
         metadata = chunk_metadata_from_value(sc.chunk.metadata)
@@ -104,6 +98,9 @@ def answer_question_two_stage(
     final_max_tokens: int = 32_768,
     temperature_draft: float = 0.1,
 ) -> tuple[str, str]:
+    """
+    DEPRECATED.
+    """
     draft_prompt = build_draft_prompt(question, reranked, draft_max_tokens=draft_max_tokens)
     draft = llm.chat(draft_prompt, temperature=temperature_draft)
 
@@ -119,8 +116,12 @@ def build_draft_prompt(
     draft_max_tokens: int = 65_536,
     answer_style: AnswerStyle = "normal",
     system_extra: str | None = None,
+    tool_context: str | None = None,
 ) -> list[ChatMessage]:
     ctx1 = build_context(reranked, max_tokens=draft_max_tokens)
+    tool_block = ""
+    if tool_context is not None and tool_context.strip():
+        tool_block = f"Tool Context:\n{tool_context.strip()}\n\n"
     return [
         {
             "role": "system",
@@ -130,9 +131,9 @@ def build_draft_prompt(
             "role": "user",
             "content": (
                 f"Question:\n{question}\n\n"
+                f"{tool_block}"
                 f"Context:\n{ctx1}\n\n"
                 "Write your analysis to address the question based on the provided context. "
-                # "At the end, list which [doc=..., page=... (if page is present)] segments you used."
             ),
         },
     ]
@@ -146,8 +147,12 @@ def build_refine_prompt(
     final_max_tokens: int = 32_768,
     answer_style: AnswerStyle = "normal",
     system_extra: str | None = None,
+    tool_context: str | None = None,
 ) -> list[ChatMessage]:
     ctx2 = build_context(reranked, max_tokens=final_max_tokens)
+    tool_block = ""
+    if tool_context is not None and tool_context.strip():
+        tool_block = f"Tool Context:\n{tool_context.strip()}\n\n"
     return [
         {
             "role": "system",
@@ -158,9 +163,9 @@ def build_refine_prompt(
             "content": (
                 f"User question:\n{question}\n\n"
                 f"Draft answer:\n{draft}\n\n"
+                f"{tool_block}"
                 f"Context:\n{ctx2}\n\n"
                 "Now write a refined answer. "
-                # "At the end, add a 'Sources' section referencing [doc=..., page=... (if page present)]."
             ),
         },
     ]
