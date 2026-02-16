@@ -60,16 +60,16 @@ Acceptance criteria:
 - `CHANGELOG.md` and `agent_logs/LOGBOOK.md` updated with behavior changes and validation notes.
 
 ## Files To Change
-- `src/finrag/generation_controls.py`
-- `src/finrag/finance_tools.py`
-- `src/finrag/ingested_companies.py`
-- `src/finrag/main.py`
-- `src/finrag/static/index.html`
-- `src/finrag/static/ts/index/dom.ts`
-- `src/finrag/static/ts/index/generation.ts`
-- `src/finrag/static/ts/index/main.ts`
-- `src/finrag/static/ts/index/citations.ts`
-- `src/finrag/static/ts/index/ingested.ts`
+- `src/andromeda/generation_controls.py`
+- `src/andromeda/finance_tools.py`
+- `src/andromeda/ingested_companies.py`
+- `src/andromeda/main.py`
+- `src/andromeda/static/index.html`
+- `src/andromeda/static/ts/index/dom.ts`
+- `src/andromeda/static/ts/index/generation.ts`
+- `src/andromeda/static/ts/index/main.ts`
+- `src/andromeda/static/ts/index/citations.ts`
+- `src/andromeda/static/ts/index/ingested.ts`
 - `CHANGELOG.md`
 - `agent_logs/LOGBOOK.md`
 

@@ -39,4 +39,4 @@ export CONTEXT_STRATEGY="${CONTEXT_STRATEGY:-neighbors}"
 export CONTEXT_WINDOW="${CONTEXT_WINDOW:-8}"
 
 source "$project_root/.venv/bin/activate"
-PYTHONPATH=src uvicorn finrag.main:app --host 0.0.0.0 --port 8236
+PYTHONPATH=src uvicorn andromeda.main:app --host 0.0.0.0 --port 8236

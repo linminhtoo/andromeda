@@ -2,9 +2,9 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, cast
 
-from finrag.dataclasses import DocChunk
-from finrag.llm_clients import LLMClient
-from finrag.metadata_models import chunk_metadata_from_value
+from andromeda.dataclasses import DocChunk
+from andromeda.llm_clients import LLMClient
+from andromeda.metadata_models import chunk_metadata_from_value
 
 ContextBuilder = Callable[[DocChunk], str]
 

@@ -27,4 +27,4 @@ fi
 npm run -s build:ts
 
 source "$project_root/.venv/bin/activate"
-PYTHONPATH=src uvicorn finrag.review_app:app --host 0.0.0.0 --port "${FINRAG_REVIEW_PORT}"
+PYTHONPATH=src uvicorn andromeda.review_app:app --host 0.0.0.0 --port "${FINRAG_REVIEW_PORT}"

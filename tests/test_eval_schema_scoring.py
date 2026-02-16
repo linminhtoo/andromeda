@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from finrag.eval.judges import HELPFULNESS_V1
-from finrag.eval.schema import (
+from andromeda.eval.judges import HELPFULNESS_V1
+from andromeda.eval.schema import (
     EvidenceChunk,
     EvalGeneration,
     EvalQuery,
@@ -17,7 +17,7 @@ from finrag.eval.schema import (
     RefusalSpec,
     RetrievedChunk,
 )
-from finrag.eval.scoring import build_context, default_judge_specs_for_query, score_one, summarize
+from andromeda.eval.scoring import build_context, default_judge_specs_for_query, score_one, summarize
 
 
 def test_eval_query_validator_requires_matching_spec() -> None:

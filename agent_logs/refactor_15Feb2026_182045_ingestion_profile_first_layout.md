@@ -4,10 +4,10 @@
 Make ingestion artifacts and PostgreSQL schema explicitly bound to a single ingestion profile so each experiment/profile produces isolated filesystem outputs and schema state by default.
 
 ## Technical approach
-1. Add a shared ingest-profile layout resolver in `src/finrag/ingest_profile.py`.
+1. Add a shared ingest-profile layout resolver in `src/andromeda/ingest_profile.py`.
 2. Use the resolver in `scripts/download.py`, `scripts/process_html_to_markdown.py`, `scripts/chunk.py`, and `scripts/build_index.py` to auto-derive profile-scoped default paths/schema when explicit CLI values are not provided.
 3. Update shell wrappers in `scripts/*.sh` to default to profile-scoped paths instead of legacy flat directories.
-4. Update runtime/orchestration (`src/finrag/runtime_builders.py`, `src/finrag/ingestion_jobs.py`) so profile and schema are consistently tied for on-the-fly ingestion.
+4. Update runtime/orchestration (`src/andromeda/runtime_builders.py`, `src/andromeda/ingestion_jobs.py`) so profile and schema are consistently tied for on-the-fly ingestion.
 5. Add/update tests for path and schema derivation behavior.
 6. Document behavior change in `CHANGELOG.md` and append learnings to `agent_logs/LOGBOOK.md`.
 
@@ -40,8 +40,8 @@ Make ingestion artifacts and PostgreSQL schema explicitly bound to a single inge
   - CHANGELOG and LOGBOOK entries clearly state previous behavior and new behavior.
 
 ## files_to_change
-- `src/finrag/ingest_profile.py`
-- `src/finrag/runtime_builders.py`
+- `src/andromeda/ingest_profile.py`
+- `src/andromeda/runtime_builders.py`
 - `scripts/download.py`
 - `scripts/process_html_to_markdown.py`
 - `scripts/chunk.py`

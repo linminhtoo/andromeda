@@ -12,11 +12,11 @@ from dotenv import load_dotenv
 from sklearn.metrics import cohen_kappa_score, confusion_matrix, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
 
-from finrag.eval.io import load_jsonl
-from finrag.eval.judges import JudgeSpec, get_judge_client, get_judge_spec, run_judge
-from finrag.eval.runner import save_json
-from finrag.eval.scoring import build_context
-from finrag.eval.schema import EvalGeneration, EvalQuery
+from andromeda.eval.io import load_jsonl
+from andromeda.eval.judges import JudgeSpec, get_judge_client, get_judge_spec, run_judge
+from andromeda.eval.runner import save_json
+from andromeda.eval.scoring import build_context
+from andromeda.eval.schema import EvalGeneration, EvalQuery
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

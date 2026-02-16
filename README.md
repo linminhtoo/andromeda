@@ -19,7 +19,7 @@ Andromeda is a financial question-answering system grounded in SEC filings, with
 
 ```mermaid
 flowchart LR
-  U[Web UI] -->|POST /query or /query_stream| API[FastAPI: finrag.main]
+  U[Web UI] -->|POST /query or /query_stream| API[FastAPI: andromeda.main]
   API --> C[Conversation resolution]
   API --> P[Planner: action + tool flags]
   P --> T[Finance tools stage]
@@ -48,17 +48,17 @@ flowchart LR
 
 ### Core backend modules
 
-- `src/finrag/main.py`
+- `src/andromeda/main.py`
   - FastAPI wiring, endpoints, stream cancellation, history hooks.
-- `src/finrag/query_runtime.py`
+- `src/andromeda/query_runtime.py`
   - Planner schema, tools-first pipeline execution, response assembly.
-- `src/finrag/query_streaming.py`
+- `src/andromeda/query_streaming.py`
   - NDJSON stream orchestration and stage event emission.
-- `src/finrag/finance_tools.py`
+- `src/andromeda/finance_tools.py`
   - Typed adapters for `yfinance` and `edgar` tool calls.
-- `src/finrag/retriever.py`, `src/finrag/db.py`
+- `src/andromeda/retriever.py`, `src/andromeda/db.py`
   - PostgreSQL hybrid retrieval (`pgvector` + sparse search) and corpus persistence.
-- `src/finrag/runtime_builders.py`
+- `src/andromeda/runtime_builders.py`
   - Environment/profile-driven runtime construction.
 
 ## Tools-first query lifecycle
@@ -160,7 +160,7 @@ Retrieval/indexing fail fast on method mismatch to prevent silent quality regres
 
 ## Finance tool integration
 
-`src/finrag/finance_tools.py` normalizes tool outputs into typed results:
+`src/andromeda/finance_tools.py` normalizes tool outputs into typed results:
 
 - `yfinance_get_ticker_info`
 - `yfinance_get_ticker_news`
@@ -204,7 +204,7 @@ Shell wrappers (`*.sh`) default to profile-scoped artifact paths under `data/ing
 
 ### On-the-fly ticker ingestion
 
-Backend jobs (`/ingest`, `/ingest/{job_id}`) run the same pipeline in background threads via `src/finrag/ingestion_jobs.py`, using persisted profile settings when available.
+Backend jobs (`/ingest`, `/ingest/{job_id}`) run the same pipeline in background threads via `src/andromeda/ingestion_jobs.py`, using persisted profile settings when available.
 
 ## API surface (primary endpoints)
 

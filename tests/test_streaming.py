@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from finrag.streaming import TextDeltaBatcher, _approx_tokens, iter_chat_deltas, ndjson_bytes
+from andromeda.streaming import TextDeltaBatcher, _approx_tokens, iter_chat_deltas, ndjson_bytes
 from tests.fakes import RecordingLLM
 
 

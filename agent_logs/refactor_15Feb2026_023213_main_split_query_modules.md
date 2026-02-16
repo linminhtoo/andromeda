@@ -1,7 +1,7 @@
 # main.py Query-Module Split Plan (15Feb2026 02:32:13)
 
 ## Goal
-Reduce `src/finrag/main.py` size and complexity by moving query orchestration logic into dedicated modules while keeping `main.py` focused on API endpoint wiring/public surface.
+Reduce `src/andromeda/main.py` size and complexity by moving query orchestration logic into dedicated modules while keeping `main.py` focused on API endpoint wiring/public surface.
 
 ## Technical approach
 1. Create a query runtime module containing:
@@ -35,13 +35,13 @@ Acceptance criteria:
   - `python scripts/test_vllm_tool_call_openai.py --max-tokens 96 --tool-choice auto`
 
 ## files_to_change
-- `src/finrag/main.py`
+- `src/andromeda/main.py`
 - `CHANGELOG.md`
 - `agent_logs/LOGBOOK.md`
 
 ## new_files
-- `src/finrag/query_runtime.py`
-- `src/finrag/query_conversation.py`
+- `src/andromeda/query_runtime.py`
+- `src/andromeda/query_conversation.py`
 - `agent_logs/refactor_15Feb2026_023213_main_split_query_modules.md`
 
 ## Out of scope
@@ -53,7 +53,7 @@ Acceptance criteria:
 
 ## Execution notes (implemented)
 - Completed beyond initial scope: extracted additional endpoint-adjacent concerns to keep `main.py` API-focused.
-  - `src/finrag/query_streaming.py`
-  - `src/finrag/history_store.py`
-  - `src/finrag/source_access.py`
-  - `src/finrag/ingested_companies.py`
+  - `src/andromeda/query_streaming.py`
+  - `src/andromeda/history_store.py`
+  - `src/andromeda/source_access.py`
+  - `src/andromeda/ingested_companies.py`

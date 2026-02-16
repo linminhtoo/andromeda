@@ -16,12 +16,12 @@
 
 ## Phase 1: Backend ingestion job orchestration
 ### Scope
-- Implement `src/finrag/ingestion_jobs.py` with:
+- Implement `src/andromeda/ingestion_jobs.py` with:
   - typed runtime config model,
   - command builders for each pipeline step,
   - threaded job manager + status snapshots,
   - subprocess runner with per-job logs.
-- Wire into `src/finrag/main.py`:
+- Wire into `src/andromeda/main.py`:
   - new request/response models for ticker ingestion,
   - `POST /ingest` (ticker + per_company only),
   - `GET /ingest/{job_id}` for status.
@@ -35,8 +35,8 @@
 
 ## Phase 2: Frontend ingestion controls
 ### Scope
-- Update `src/finrag/static/index.html` with a compact ticker ingestion section.
-- Extend `src/finrag/static/ts/index/dom.ts` and `src/finrag/static/ts/index/main.ts`:
+- Update `src/andromeda/static/index.html` with a compact ticker ingestion section.
+- Extend `src/andromeda/static/ts/index/dom.ts` and `src/andromeda/static/ts/index/main.ts`:
   - submit ticker/per-company,
   - poll job status,
   - reflect status in UI,
@@ -64,19 +64,19 @@
 - New tests cover ticker-only ingestion API + runtime-arg compatibility path.
 
 ## files_to_change
-- `src/finrag/main.py`
-- `src/finrag/static/index.html`
-- `src/finrag/static/ts/index/dom.ts`
-- `src/finrag/static/ts/index/main.ts`
-- `src/finrag/static/js/index/dom.js` (generated)
-- `src/finrag/static/js/index/main.js` (generated)
+- `src/andromeda/main.py`
+- `src/andromeda/static/index.html`
+- `src/andromeda/static/ts/index/dom.ts`
+- `src/andromeda/static/ts/index/main.ts`
+- `src/andromeda/static/js/index/dom.js` (generated)
+- `src/andromeda/static/js/index/main.js` (generated)
 - `tests/test_main_api_e2e.py`
 - `tests/ui/index.spec.ts`
 - `CHANGELOG.md`
 - `agent_logs/LOGBOOK.md`
 
 ## new_files
-- `src/finrag/ingestion_jobs.py`
+- `src/andromeda/ingestion_jobs.py`
 - `tests/test_ingestion_jobs.py`
 - `agent_logs/ticker_ingestion_14Feb2026_202505.md`
 - `agent_logs/validate_ticker_ingestion_14Feb2026_*.sh`

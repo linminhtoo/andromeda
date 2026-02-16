@@ -44,9 +44,9 @@ Acceptance criteria:
 - `LOGBOOK.md` and `CHANGELOG.md` updated with experiments, outcomes, and rationale.
 
 ## Files to change
-- `src/finrag/qa.py`
-- `src/finrag/query_runtime.py`
-- `src/finrag/eval/scoring.py`
+- `src/andromeda/qa.py`
+- `src/andromeda/query_runtime.py`
+- `src/andromeda/eval/scoring.py`
 - `tests/test_query_runtime_tools_first.py`
 - `tests/test_eval_schema_scoring.py`
 - `agent_logs/LOGBOOK.md`

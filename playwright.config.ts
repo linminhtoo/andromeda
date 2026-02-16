@@ -26,7 +26,7 @@ export default defineConfig({
   ],
   webServer: {
     command:
-      "npm run -s build:ts && bash -lc 'source .venv/bin/activate && PYTHONPATH=src uvicorn finrag.main:app --host 127.0.0.1 --port 8236'",
+      "npm run -s build:ts && bash -lc 'source .venv/bin/activate && PYTHONPATH=src uvicorn andromeda.main:app --host 127.0.0.1 --port 8236'",
     url: 'http://127.0.0.1:8236/health',
     timeout: 120_000,
     reuseExistingServer: true,

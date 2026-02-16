@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from finrag.eval.metrics import (
+from andromeda.eval.metrics import (
     best_numeric_match,
     cited_doc_ids,
     coverage_at_k,

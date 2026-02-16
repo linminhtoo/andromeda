@@ -25,15 +25,15 @@ This phase does **not** attempt to fully type every historical script/module.
 - Known keys (`doc`, `retrieval_text`, `retrieval_context`, `summary`, etc.) are accessed through typed objects.
 
 ### files_to_change
-- `src/finrag/retriever.py`
-- `src/finrag/main.py`
-- `src/finrag/qa.py`
-- `src/finrag/eval/generation.py`
-- `src/finrag/eval/scoring.py`
-- `src/finrag/chunk_postprocess.py`
+- `src/andromeda/retriever.py`
+- `src/andromeda/main.py`
+- `src/andromeda/qa.py`
+- `src/andromeda/eval/generation.py`
+- `src/andromeda/eval/scoring.py`
+- `src/andromeda/chunk_postprocess.py`
 
 ### new_files
-- `src/finrag/metadata_models.py`
+- `src/andromeda/metadata_models.py`
 
 ## Phase 2: Typed retrieval row and build-index parsing
 
@@ -47,8 +47,8 @@ This phase does **not** attempt to fully type every historical script/module.
 - `scripts/build_index.py` uses typed entry parsing for expected fields.
 
 ### files_to_change
-- `src/finrag/db.py`
-- `src/finrag/retriever.py`
+- `src/andromeda/db.py`
+- `src/andromeda/retriever.py`
 - `scripts/build_index.py`
 
 ### new_files

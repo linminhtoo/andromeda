@@ -21,7 +21,7 @@ import json
 import os
 from pathlib import Path
 
-from finrag.ingest_profile import (
+from andromeda.ingest_profile import (
     ingest_profile_path,
     resolve_ingest_profile_name,
     update_ingest_profile_step,

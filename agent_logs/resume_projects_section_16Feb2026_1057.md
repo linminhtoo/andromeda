@@ -4,7 +4,7 @@
 Add a high-impact `Projects` section to `resume_without_bold.tex` based on actual work in this repository, with diverse talking-point options suitable for a Forward Deployed LLM Engineer final round.
 
 ## Technical approach
-- Review repository artifacts (`README.md`, `CHANGELOG.md`, `src/finrag/*`, `scripts/*`, `agent_logs/LOGBOOK.md`) to identify defensible project claims.
+- Review repository artifacts (`README.md`, `CHANGELOG.md`, `src/andromeda/*`, `scripts/*`, `agent_logs/LOGBOOK.md`) to identify defensible project claims.
 - Insert a concise `Projects` section in resume style consistent with existing formatting.
 - Emphasize end-to-end ownership, production architecture, experimentation workflow, and measurable outcomes.
 - Keep alternatives diverse by offering multiple framing options in accompanying notes (architecture-heavy, product/agent-heavy, eval/experimentation-heavy).

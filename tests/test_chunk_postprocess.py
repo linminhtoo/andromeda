@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from finrag.chunk_postprocess import (
+from andromeda.chunk_postprocess import (
     DocumentContextPostprocessor,
     HeuristicSummaryPostprocessor,
     SectionLinkPostprocessor,
     StaticTickerCompanyNameResolver,
 )
-from finrag.dataclasses import DocChunk
+from andromeda.dataclasses import DocChunk
 
 
 def test_section_link_postprocessor_adds_global_and_section_links() -> None:

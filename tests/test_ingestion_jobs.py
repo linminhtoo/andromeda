@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from finrag.ingestion_jobs import (
+from andromeda.ingestion_jobs import (
     TickerIngestionRuntimeConfig,
     build_chunk_command,
     build_download_command,
@@ -16,7 +16,7 @@ from finrag.ingestion_jobs import (
 def make_config(**overrides: object) -> TickerIngestionRuntimeConfig:
     values = {
         "postgres_dsn": "postgresql://user:pass@localhost:5432/db",
-        "postgres_schema": "exp_finrag",
+        "postgres_schema": "exp_andromeda",
         "sparse_search_method": "bm25",
         "llm_provider": "openai",
         "dense_model": "BAAI/bge-m3",
@@ -30,7 +30,7 @@ def make_config(**overrides: object) -> TickerIngestionRuntimeConfig:
         "context_max_tokens": 256,
         "context_max_concurrency": 64,
         "batch_size": 128,
-        "ingest_profile": "exp_finrag",
+        "ingest_profile": "exp_andromeda",
         "download_delay": 0.2,
         "download_skip_existing": True,
         "process_parser_mode": "auto",
@@ -64,7 +64,7 @@ def test_build_index_command_includes_runtime_compatibility_args() -> None:
 
     assert "--postgres-dsn" in cmd
     assert "--postgres-schema" in cmd
-    assert "exp_finrag" in cmd
+    assert "exp_andromeda" in cmd
     assert "--sparse-search-method" in cmd
     assert "bm25" in cmd
 
@@ -82,7 +82,7 @@ def test_build_index_command_includes_runtime_compatibility_args() -> None:
     assert "--dense-model" in cmd
     assert "BAAI/bge-m3" in cmd
     assert "--ingest-profile" in cmd
-    assert "exp_finrag" in cmd
+    assert "exp_andromeda" in cmd
 
 
 def test_build_index_command_omits_optional_args_when_not_set() -> None:
@@ -111,7 +111,7 @@ def test_build_download_command_supports_multiple_tickers() -> None:
         output_dir=Path("/tmp/download"),
         delay=0.5,
         skip_existing=True,
-        ingest_profile="exp_finrag",
+        ingest_profile="exp_andromeda",
     )
 
     assert "--tickers" in cmd
@@ -121,7 +121,7 @@ def test_build_download_command_supports_multiple_tickers() -> None:
     assert "0.5" in cmd
     assert "--skip-existing" in cmd
     assert "--ingest-profile" in cmd
-    assert "exp_finrag" in cmd
+    assert "exp_andromeda" in cmd
 
 
 def test_build_chunk_command_uses_runtime_chunk_settings() -> None:
@@ -135,7 +135,7 @@ def test_build_chunk_command_uses_runtime_chunk_settings() -> None:
         recursive=True,
         doc_id_strategy="sha1_relpath",
         split_markdown_tables=True,
-        ingest_profile="exp_finrag",
+        ingest_profile="exp_andromeda",
     )
 
     assert "--max-tokens" in cmd

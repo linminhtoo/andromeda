@@ -7,9 +7,9 @@ from typing import Any
 import numpy as np
 import pytest
 
-from finrag.dataclasses import DocChunk
-from finrag.db import ChunkRecord, DocumentRecord, HybridSearchRow, IngestedCompanyRow, PostgresDB, RetrievalFilters
-from finrag.retriever import PostgresHybridRetriever
+from andromeda.dataclasses import DocChunk
+from andromeda.db import ChunkRecord, DocumentRecord, HybridSearchRow, IngestedCompanyRow, PostgresDB, RetrievalFilters
+from andromeda.retriever import PostgresHybridRetriever
 from tests.fakes import RecordingLLM
 
 

@@ -635,7 +635,7 @@ async function exportHistory(): Promise<void> {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     const items = Array.isArray(data.items) ? data.items : [];
-    downloadJson('finrag_history.json', items);
+    downloadJson('andromeda_history.json', items);
   } catch (e) {
     alert('Failed to export history: ' + e);
   }

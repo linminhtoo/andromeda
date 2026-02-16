@@ -6,8 +6,8 @@ from typing import Callable, Iterable, Protocol
 from loguru import logger
 from sentence_transformers import CrossEncoder
 
-from finrag.dataclasses import DocChunk, ScoredChunk
-from finrag.db import (
+from andromeda.dataclasses import DocChunk, ScoredChunk
+from andromeda.db import (
     ChunkRecord,
     DocumentRecord,
     HybridSearchRow,
@@ -17,8 +17,8 @@ from finrag.db import (
     SparseSearchMethod,
     normalize_iso_date,
 )
-from finrag.llm_clients import LLMClient
-from finrag.metadata_models import ChunkMetadata, chunk_metadata_from_value
+from andromeda.llm_clients import LLMClient
+from andromeda.metadata_models import ChunkMetadata, chunk_metadata_from_value
 
 
 class EmbeddingError(RuntimeError):

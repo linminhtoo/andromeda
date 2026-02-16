@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from loguru import logger
 from tqdm import tqdm
 
-from finrag.chunk_postprocess import (
+from andromeda.chunk_postprocess import (
     ChunkPostprocessor,
     ChunkPostprocessorPipeline,
     DocumentContextPostprocessor,
@@ -29,9 +29,9 @@ from finrag.chunk_postprocess import (
     SectionLinkPostprocessor,
     YahooFinanceCompanyNameResolver,
 )
-from finrag.chunking import DoclingHybridChunker, MarkdownTablePreservingChunker
-from finrag.dataclasses import DocChunk
-from finrag.ingest_profile import ingest_profile_layout, resolve_ingest_profile_name, update_ingest_profile_step
+from andromeda.chunking import DoclingHybridChunker, MarkdownTablePreservingChunker
+from andromeda.dataclasses import DocChunk
+from andromeda.ingest_profile import ingest_profile_layout, resolve_ingest_profile_name, update_ingest_profile_step
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

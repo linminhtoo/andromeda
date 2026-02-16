@@ -7,10 +7,10 @@
     "strict": false,
     "noImplicitAny": false,
     "skipLibCheck": true,
-    "rootDir": "src/finrag/static/ts",
-    "outDir": "src/finrag/static/js",
+    "rootDir": "src/andromeda/static/ts",
+    "outDir": "src/andromeda/static/js",
     "removeComments": false,
     "sourceMap": false
   },
-  "include": ["src/finrag/static/ts/**/*.ts"]
+  "include": ["src/andromeda/static/ts/**/*.ts"]
 }

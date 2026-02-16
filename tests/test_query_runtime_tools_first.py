@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from finrag.dataclasses import DocChunk, ScoredChunk
-from finrag.db import IngestedCompanyRow, RetrievalFilters
-from finrag.finance_tools import FinanceToolResult, FinanceToolStatus
-from finrag.generation_controls import resolve_generation_settings
-from finrag.query_runtime import PlannerAction, PlannerDecision, QueryStatus, RAGService
+from andromeda.dataclasses import DocChunk, ScoredChunk
+from andromeda.db import IngestedCompanyRow, RetrievalFilters
+from andromeda.finance_tools import FinanceToolResult, FinanceToolStatus
+from andromeda.generation_controls import resolve_generation_settings
+from andromeda.query_runtime import PlannerAction, PlannerDecision, QueryStatus, RAGService
 from tests.fakes import RecordingLLM
 
 

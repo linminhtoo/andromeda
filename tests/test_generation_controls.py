@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from finrag.generation_controls import (
+from andromeda.generation_controls import (
     AnsweringEffort,
     default_mode,
     get_preset,

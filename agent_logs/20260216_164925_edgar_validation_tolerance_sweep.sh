@@ -12,9 +12,9 @@ export HOME=/tmp
 python3 - <<'PY'
 from collections import Counter
 
-from finrag.eval.generation import generate_factual_queries
-from finrag.eval.ground_truth_validation import validate_factual_queries_with_edgar
-from finrag.eval.sec_corpus import iter_all_chunks
+from andromeda.eval.generation import generate_factual_queries
+from andromeda.eval.ground_truth_validation import validate_factual_queries_with_edgar
+from andromeda.eval.sec_corpus import iter_all_chunks
 
 chunks = iter_all_chunks(
     'data/ingest_profiles/eval_revamp_20260216/sec_filings_md_secparser/chunked_1024_128',

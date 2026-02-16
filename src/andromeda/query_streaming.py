@@ -10,9 +10,9 @@ from fastapi import Request
 from fastapi.encoders import jsonable_encoder
 from loguru import logger
 
-from finrag.generation_controls import GenerationSettings
-from finrag.metadata_models import chunk_metadata_from_value
-from finrag.query_runtime import (
+from andromeda.generation_controls import GenerationSettings
+from andromeda.metadata_models import chunk_metadata_from_value
+from andromeda.query_runtime import (
     QueryStatus,
     QueryPipelineExecution,
     QueryRequest,
@@ -23,7 +23,7 @@ from finrag.query_runtime import (
     ToolTraceEvent,
     stream_text_stage,
 )
-from finrag.streaming import ndjson_bytes, stream_chunks_max, stream_chunks_preview_chars, stream_draft_enabled
+from andromeda.streaming import ndjson_bytes, stream_chunks_max, stream_chunks_preview_chars, stream_draft_enabled
 
 
 class StreamCancelRegistry:

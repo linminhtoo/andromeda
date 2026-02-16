@@ -53,15 +53,15 @@ Acceptance criteria:
 - Experiment scripts preserved under `agent_logs/` (except pre-commit/pytest scripts, per repo rules).
 
 ## files_to_change
-- `src/finrag/eval/judges.py`
-- `src/finrag/eval/scoring.py`
-- `src/finrag/eval/schema.py` (only if needed for cleaner structured score outputs)
+- `src/andromeda/eval/judges.py`
+- `src/andromeda/eval/scoring.py`
+- `src/andromeda/eval/schema.py` (only if needed for cleaner structured score outputs)
 - `scripts/score_eval.py`
 - `scripts/align_judge.py`
 - `tests/test_eval_schema_scoring.py`
 - `tests/test_eval_metrics.py` (if new helper metrics are introduced)
-- `src/finrag/qa.py` (prompt improvements after baseline analysis)
-- `src/finrag/query_runtime.py` (logic improvements after baseline analysis)
+- `src/andromeda/qa.py` (prompt improvements after baseline analysis)
+- `src/andromeda/query_runtime.py` (logic improvements after baseline analysis)
 - `scripts/download.py` (optional ticker scope ergonomics)
 - `CHANGELOG.md`
 - `agent_logs/LOGBOOK.md`

@@ -38,9 +38,9 @@ Acceptance criteria:
 - `agent_logs/LOGBOOK.md` gets a new entry with observations and validation results.
 
 ## files_to_change
-- `src/finrag/db.py`
-- `src/finrag/retriever.py`
-- `src/finrag/main.py`
+- `src/andromeda/db.py`
+- `src/andromeda/retriever.py`
+- `src/andromeda/main.py`
 - `scripts/build_index.py`
 - `scripts/build_index.sh`
 - `.env.example`

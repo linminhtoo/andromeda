@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-import finrag.main as mainmod
-from finrag.query_runtime import QueryStatus
+import andromeda.main as mainmod
+from andromeda.query_runtime import QueryStatus
 
 
 def test_health_endpoint() -> None:

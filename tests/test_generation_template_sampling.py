@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from finrag.eval.generation import (
+from andromeda.eval.generation import (
     CompanyYearTarget,
     _OPEN_ENDED_TEMPLATES,
     generate_comparison_queries,

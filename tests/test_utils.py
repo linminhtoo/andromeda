@@ -5,7 +5,7 @@ import random
 import numpy as np
 import pytest
 
-from finrag.utils import get_env_var, seed_everything
+from andromeda.utils import get_env_var, seed_everything
 
 
 def test_get_env_var_returns_value(monkeypatch: pytest.MonkeyPatch) -> None:

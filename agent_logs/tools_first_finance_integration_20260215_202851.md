@@ -17,12 +17,12 @@ Integrate yfinance and edgartools as first-class tool sources in the query runti
 - Unit tests cover success + no-data/error fallback behavior with monkeypatching.
 
 ### files_to_change
-- `src/finrag/query_runtime.py`
+- `src/andromeda/query_runtime.py`
 - `CHANGELOG.md`
 - `agent_logs/LOGBOOK.md`
 
 ### new_files
-- `src/finrag/finance_tools.py`
+- `src/andromeda/finance_tools.py`
 - `tests/test_finance_tools.py`
 
 ## Phase 2: Extend planner semantics for tool mix and RAG function usage
@@ -42,7 +42,7 @@ Integrate yfinance and edgartools as first-class tool sources in the query runti
 - Existing clarification/refusal behavior remains intact.
 
 ### files_to_change
-- `src/finrag/query_runtime.py`
+- `src/andromeda/query_runtime.py`
 - `tests/test_query_runtime_tools_first.py`
 
 ### new_files
@@ -69,9 +69,9 @@ Integrate yfinance and edgartools as first-class tool sources in the query runti
 - Streaming emits informative status and does not break cancellation/history.
 
 ### files_to_change
-- `src/finrag/query_runtime.py`
-- `src/finrag/query_streaming.py`
-- `src/finrag/main.py`
+- `src/andromeda/query_runtime.py`
+- `src/andromeda/query_streaming.py`
+- `src/andromeda/main.py`
 - `tests/test_main_api_e2e.py`
 
 ### new_files

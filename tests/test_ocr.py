@@ -4,7 +4,7 @@ import base64
 
 import pytest
 
-import finrag.ocr as ocrmod
+import andromeda.ocr as ocrmod
 
 
 def test_document_payload_from_source_url(monkeypatch: pytest.MonkeyPatch) -> None:

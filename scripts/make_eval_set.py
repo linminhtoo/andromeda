@@ -5,7 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from loguru import logger
 
-from finrag.eval.generation import (
+from andromeda.eval.generation import (
     CompanyYearTarget,
     generate_comparison_queries,
     generate_distractor_queries,
@@ -13,10 +13,10 @@ from finrag.eval.generation import (
     generate_open_ended_queries,
     generate_refusal_queries,
 )
-from finrag.eval.ground_truth_validation import validate_factual_queries_with_edgar
-from finrag.eval.io import dump_jsonl
-from finrag.eval.sec_corpus import iter_all_chunks, iter_chunk_export_docs
-from finrag.utils import seed_everything
+from andromeda.eval.ground_truth_validation import validate_factual_queries_with_edgar
+from andromeda.eval.io import dump_jsonl
+from andromeda.eval.sec_corpus import iter_all_chunks, iter_chunk_export_docs
+from andromeda.utils import seed_everything
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

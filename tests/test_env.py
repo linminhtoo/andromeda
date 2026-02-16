@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import finrag.env as envmod
+import andromeda.env as envmod
 
 
 def test_load_project_dotenv_calls_load_dotenv_once(monkeypatch: pytest.MonkeyPatch) -> None:

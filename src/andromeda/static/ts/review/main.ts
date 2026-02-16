@@ -129,7 +129,7 @@ function getInitialQueryId(): string | null {
 
 /** Bootstrap review app data, URL state, and first case selection. */
 async function init(): Promise<void> {
-  state.showJudge = (localStorage.getItem('finrag_review_show_judge') || '') === '1';
+  state.showJudge = (localStorage.getItem('andromeda_review_show_judge') || '') === '1';
   syncJudgeToggleUI();
 
   try {
@@ -174,7 +174,7 @@ async function init(): Promise<void> {
 
 els.toggleJudgeBtn.addEventListener('click', () => {
   state.showJudge = !state.showJudge;
-  localStorage.setItem('finrag_review_show_judge', state.showJudge ? '1' : '0');
+  localStorage.setItem('andromeda_review_show_judge', state.showJudge ? '1' : '0');
   syncJudgeToggleUI();
   renderCaseList(selectCase);
   renderDetail(state.selectedDetail);

@@ -5,22 +5,22 @@ Migrate frontend runtime code from inline JavaScript to TypeScript for both web 
 
 ## Scope
 - Migrate **all inline frontend script logic** in:
-  - `src/finrag/static/index.html`
-  - `src/finrag/static/review.html`
+  - `src/andromeda/static/index.html`
+  - `src/andromeda/static/review.html`
 - Add TypeScript tooling/config.
 - Compile TS to JavaScript artifacts used by the running FastAPI apps.
 - Wire static serving for compiled JS for both:
-  - `finrag.main:app`
-  - `finrag.review_app:app`
+  - `andromeda.main:app`
+  - `andromeda.review_app:app`
 - Update docs/changelog for TS build/runtime workflow changes.
 
 ## Files
 
 ### files_to_change
-- `src/finrag/main.py`
-- `src/finrag/review_app.py`
-- `src/finrag/static/index.html`
-- `src/finrag/static/review.html`
+- `src/andromeda/main.py`
+- `src/andromeda/review_app.py`
+- `src/andromeda/static/index.html`
+- `src/andromeda/static/review.html`
 - `scripts/launch_app.sh`
 - `scripts/launch_review.sh`
 - `README.md`
@@ -30,15 +30,15 @@ Migrate frontend runtime code from inline JavaScript to TypeScript for both web 
 ### new_files
 - `package.json`
 - `tsconfig.json`
-- `src/finrag/static/ts/index/` (module tree, entrypoint `main.ts`)
-- `src/finrag/static/ts/review/` (module tree, entrypoint `main.ts`)
-- `src/finrag/static/ts/shared/`
+- `src/andromeda/static/ts/index/` (module tree, entrypoint `main.ts`)
+- `src/andromeda/static/ts/review/` (module tree, entrypoint `main.ts`)
+- `src/andromeda/static/ts/shared/`
 - `experiments/20260213_validate_typescript_migration.sh`
 
 ## Technical approach
 1. Extract each inline `<script>` block into TypeScript source files.
 2. Add a conservative TS config (DOM libs, relaxed strictness for large legacy script migration) to preserve runtime behavior while introducing typed compilation.
-3. Compile TS output directly into `src/finrag/static/` (`index.js`, `review.js`) so FastAPI can serve stable assets without introducing a bundler.
+3. Compile TS output directly into `src/andromeda/static/` (`index.js`, `review.js`) so FastAPI can serve stable assets without introducing a bundler.
 4. Replace inline scripts in HTML with external script references to compiled files.
 5. Mount `/static` in both app entrypoints so compiled JS is resolvable in both launch modes.
 6. Update launch scripts to compile TypeScript before starting the server.

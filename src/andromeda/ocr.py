@@ -4,7 +4,7 @@ from typing import List, Optional
 from mistralai import Mistral
 from mistralai.models.documenturlchunk import DocumentURLChunkTypedDict
 
-from finrag.utils import get_env_var
+from andromeda.utils import get_env_var
 
 DEFAULT_PAGE_SEP = "\n\n<!-- PAGE BREAK -->\n\n"
 
