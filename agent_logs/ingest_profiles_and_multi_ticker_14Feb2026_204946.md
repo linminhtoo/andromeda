@@ -19,7 +19,7 @@
 
 ## Phase 1: Durable profile store + script integration
 ### Scope
-- Add `src/finrag/ingest_profile.py` with read/write helpers and profile-name resolution.
+- Add `src/andromeda/ingest_profile.py` with read/write helpers and profile-name resolution.
 - Update scripts to persist step settings:
   - `scripts/download.py`
   - `scripts/process_html_to_markdown.py`
@@ -37,7 +37,7 @@
 ## Phase 2: App ingestion uses stored profile + supports multi-ticker
 ### Scope
 - Extend ingestion runtime config/model to include chunk/process/index settings loaded from profile.
-- Update `src/finrag/main.py` ingestion config builder to prioritize profile settings, then fallback env defaults.
+- Update `src/andromeda/main.py` ingestion config builder to prioritize profile settings, then fallback env defaults.
 - Update ingestion job manager to accept multiple tickers per job.
 - Update ingestion API request model to accept multi-ticker payloads.
 
@@ -63,17 +63,17 @@
 - `pytest -vvv tests/` passes.
 
 ## files_to_change
-- `src/finrag/main.py`
-- `src/finrag/ingestion_jobs.py`
+- `src/andromeda/main.py`
+- `src/andromeda/ingestion_jobs.py`
 - `scripts/build_index.sh`
 - `scripts/chunk.sh`
 - `scripts/download.py`
 - `scripts/process_html_to_markdown.py`
 - `scripts/chunk.py`
 - `scripts/build_index.py`
-- `src/finrag/static/index.html`
-- `src/finrag/static/ts/index/dom.ts`
-- `src/finrag/static/ts/index/main.ts`
+- `src/andromeda/static/index.html`
+- `src/andromeda/static/ts/index/dom.ts`
+- `src/andromeda/static/ts/index/main.ts`
 - `tests/test_ingestion_jobs.py`
 - `tests/test_main_api_e2e.py`
 - `tests/ui/index.spec.ts`
@@ -81,7 +81,7 @@
 - `agent_logs/LOGBOOK.md`
 
 ## new_files
-- `src/finrag/ingest_profile.py`
+- `src/andromeda/ingest_profile.py`
 - `agent_logs/ingest_profiles_and_multi_ticker_14Feb2026_204946.md`
 - `agent_logs/validate_ingest_profiles_multi_ticker_14Feb2026_*.sh`
 

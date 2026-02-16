@@ -11,7 +11,7 @@ Acceptance criteria:
 - Existing tools-only behavior remains unchanged when tool outputs are usable.
 
 Files to change:
-- `src/finrag/query_runtime.py`
+- `src/andromeda/query_runtime.py`
 - `tests/test_query_runtime_tools_first.py`
 
 ### Phase 2 - Validation gates

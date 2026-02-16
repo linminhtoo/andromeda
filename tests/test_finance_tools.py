@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
 
-from finrag.finance_tools import FinanceToolResult, FinanceToolStatus, FinanceTools
+from andromeda.finance_tools import FinanceToolResult, FinanceToolStatus, FinanceTools
 
 
 class FakeHistoryFrame:

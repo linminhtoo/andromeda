@@ -1,12 +1,12 @@
 # Query Pipeline Dedup Plan (2026-02-15 00:52:23)
 
 ## Context
-- `src/finrag/main.py` has duplicated retrieval/rerank and answer-generation branching between `RAGService.answer_question()` and `/query_stream`.
+- `src/andromeda/main.py` has duplicated retrieval/rerank and answer-generation branching between `RAGService.answer_question()` and `/query_stream`.
 - Upcoming answer-logic branches would require touching both code paths, increasing regression risk.
 - Reviewed `agent_logs/LOGBOOK.md` to align with prior refactor and validation practices.
 
 ## Phase 1: Extract shared query pipeline helpers
-- **files_to_change**: `src/finrag/main.py`
+- **files_to_change**: `src/andromeda/main.py`
 - **new_files**: none
 - **Approach**:
   - Add focused `RAGService` helpers for retrieval filters, retrieval, rerank, prompt construction, and final response assembly.
@@ -16,7 +16,7 @@
   - Existing response shape (`QueryResponse`) is unchanged.
 
 ## Phase 2: Rewire streaming endpoint to use shared helpers
-- **files_to_change**: `src/finrag/main.py`
+- **files_to_change**: `src/andromeda/main.py`
 - **new_files**: none
 - **Approach**:
   - Replace direct retriever/reranker calls in `/query_stream` with the new `RAGService` helpers.

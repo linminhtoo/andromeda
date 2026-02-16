@@ -48,10 +48,10 @@ Acceptance criteria:
 - `agent_logs/LOGBOOK.md` is appended with scope, observations, and validation outcomes.
 
 ## files_to_change
-- `src/finrag/db.py`
-- `src/finrag/retriever.py`
-- `src/finrag/main.py`
-- `src/finrag/static/ts/index/main.ts`
+- `src/andromeda/db.py`
+- `src/andromeda/retriever.py`
+- `src/andromeda/main.py`
+- `src/andromeda/static/ts/index/main.ts`
 - `tests/test_main_api_e2e.py`
 - `CHANGELOG.md`
 - `agent_logs/LOGBOOK.md`

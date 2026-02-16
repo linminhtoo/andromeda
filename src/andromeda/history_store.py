@@ -9,7 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from finrag.query_runtime import QueryRequest, QueryResponse
+from andromeda.query_runtime import QueryRequest, QueryResponse
 
 
 class HistoryEntry(BaseModel):

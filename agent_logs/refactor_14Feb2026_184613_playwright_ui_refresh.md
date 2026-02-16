@@ -1,7 +1,7 @@
 # Playwright setup + index UI refresh plan (2026-02-14 18:46:13)
 
 ## Scope
-Improve `src/finrag/static/index.html` UX and interaction reliability while setting up Playwright-based UI interaction/testing.
+Improve `src/andromeda/static/index.html` UX and interaction reliability while setting up Playwright-based UI interaction/testing.
 
 ## Technical approach
 1. Introduce Playwright test runner/config for the frontend and add at least one deterministic UI test for citation-to-source navigation + markdown rendering behavior.
@@ -33,9 +33,9 @@ Acceptance criteria:
 - Markdown horizontal rules (`---`, `***`, `___`) render as `<hr>`.
 
 files_to_change:
-- `src/finrag/static/ts/index/citations.ts`
-- `src/finrag/static/ts/index/main.ts`
-- `src/finrag/static/ts/index/markdown.ts`
+- `src/andromeda/static/ts/index/citations.ts`
+- `src/andromeda/static/ts/index/main.ts`
+- `src/andromeda/static/ts/index/markdown.ts`
 
 new_files:
 - none
@@ -48,16 +48,16 @@ Acceptance criteria:
 - No regressions in existing controls and interactions.
 
 files_to_change:
-- `src/finrag/static/index.html`
-- `src/finrag/static/ts/index/dom.ts`
-- `src/finrag/static/ts/index/main.ts`
+- `src/andromeda/static/index.html`
+- `src/andromeda/static/ts/index/dom.ts`
+- `src/andromeda/static/ts/index/main.ts`
 
 new_files:
 - none
 
 ### Phase 4: Build + quality validation + documentation
 Acceptance criteria:
-- TypeScript compiles to `src/finrag/static/js/**` without errors.
+- TypeScript compiles to `src/andromeda/static/js/**` without errors.
 - Playwright tests pass.
 - `pre-commit run --all` passes.
 - `pytest -vvv tests/` passes.
@@ -65,7 +65,7 @@ Acceptance criteria:
 - Repro/validation script saved under `agent_logs/`.
 
 files_to_change:
-- `src/finrag/static/js/index/*.js` (generated)
+- `src/andromeda/static/js/index/*.js` (generated)
 - `CHANGELOG.md`
 - `agent_logs/LOGBOOK.md`
 

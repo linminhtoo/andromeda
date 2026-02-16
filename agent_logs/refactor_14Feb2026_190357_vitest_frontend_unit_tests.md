@@ -6,8 +6,8 @@ Add fast unit tests for pure frontend helper logic while keeping existing Playwr
 ## Technical approach
 1. Install/configure Vitest for TypeScript unit tests in a Node test environment.
 2. Add focused unit coverage for:
-   - `src/finrag/static/ts/index/markdown.ts`
-   - `src/finrag/static/ts/index/citations.ts`
+   - `src/andromeda/static/ts/index/markdown.ts`
+   - `src/andromeda/static/ts/index/citations.ts`
 3. Keep Playwright tests as-is for browser interaction checks.
 4. Add npm scripts and run full validation (`pre-commit`, Python tests, unit tests, Playwright tests).
 

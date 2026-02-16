@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from finrag.dataclasses import DocChunk, ScoredChunk
-from finrag.qa import (
+from andromeda.dataclasses import DocChunk, ScoredChunk
+from andromeda.qa import (
     answer_question_two_stage,
     build_context,
     build_draft_prompt,

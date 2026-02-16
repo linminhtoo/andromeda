@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderMarkdown } from '../../src/finrag/static/ts/index/markdown.ts';
+import { renderMarkdown } from '../../src/andromeda/static/ts/index/markdown.ts';
 
 describe('renderMarkdown', () => {
   it('renders headings and paragraphs', () => {

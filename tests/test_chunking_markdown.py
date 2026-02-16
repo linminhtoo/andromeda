@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from finrag.chunking import MarkdownTableCodeFencer, MarkdownTablePreservingChunker
+from andromeda.chunking import MarkdownTableCodeFencer, MarkdownTablePreservingChunker
 
 
 def test_markdown_table_code_fencer_wraps_tables_and_preserves_trailing_newline() -> None:

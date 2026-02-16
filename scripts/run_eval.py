@@ -9,9 +9,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from finrag.eval.io import load_jsonl
-from finrag.eval.runner import RunConfig, run_generation, save_json
-from finrag.eval.schema import EvalQuery
+from andromeda.eval.io import load_jsonl
+from andromeda.eval.runner import RunConfig, run_generation, save_json
+from andromeda.eval.schema import EvalQuery
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -31,7 +31,9 @@ def _is_multi_ticker_query(query: EvalQuery) -> bool:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Run an eval query set through finrag.main.RAGService.answer_question().")
+    ap = argparse.ArgumentParser(
+        description="Run an eval query set through andromeda.main.RAGService.answer_question()."
+    )
     ap.add_argument("--eval-queries", required=True, help="Eval queries JSONL (from scripts/make_eval_set.py).")
     ap.add_argument("--out-dir", required=True, help="Directory to write run artifacts.")
     ap.add_argument("--run-name", default=None, help="Optional run name prefix (e.g. 'baseline').")

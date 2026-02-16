@@ -1,10 +1,10 @@
 import os
 from typing import Sequence
 
-from finrag.dataclasses import ScoredChunk
-from finrag.generation_controls import AnswerStyle, AnsweringEffort
-from finrag.llm_clients import ChatMessage, LLMClient
-from finrag.metadata_models import chunk_metadata_from_value
+from andromeda.dataclasses import ScoredChunk
+from andromeda.generation_controls import AnswerStyle, AnsweringEffort
+from andromeda.llm_clients import ChatMessage, LLMClient
+from andromeda.metadata_models import chunk_metadata_from_value
 
 
 IRRELEVANT_CHUNK_IGNORE_PROMPT = (

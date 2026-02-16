@@ -28,7 +28,7 @@ from tqdm import tqdm
 
 import sec_parser as sp
 
-from finrag.ingest_profile import ingest_profile_layout, resolve_ingest_profile_name, update_ingest_profile_step
+from andromeda.ingest_profile import ingest_profile_layout, resolve_ingest_profile_name, update_ingest_profile_step
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

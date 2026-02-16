@@ -10,6 +10,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 ### Changed
+- Project/package rename from `finrag` to `andromeda` across Python module paths, imports, scripts, tests, and project metadata (including `pyproject.toml`, pre-commit path filters, and launch entrypoints).
 
 ### Fixed
 
@@ -21,7 +22,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## v1.8.0 - 17 Feb 2026
 
 ### Added
-- Dedicated multi-ticker map/reduce answering path in `src/finrag/query_runtime.py`:
+- Dedicated multi-ticker map/reduce answering path in `src/andromeda/query_runtime.py`:
   - planner signal `use_multi_ticker_briefs`
   - per-ticker retrieval/rerank fan-out in parallel
   - per-ticker brief generation in parallel
@@ -30,25 +31,25 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `brief_max_tokens` (per-ticker brief budget)
   - `answering_effort` (`low`/`medium`/`high`)
   exposed in API request models, runtime settings, and frontend advanced controls.
-- New QA prompt builders in `src/finrag/qa.py`:
+- New QA prompt builders in `src/andromeda/qa.py`:
   - `build_ticker_brief_prompt(...)`
   - `build_multi_ticker_synthesis_prompt(...)`
   - `build_multi_ticker_refine_prompt(...)`.
-- Streaming events for per-ticker subagent ergonomics in `src/finrag/query_streaming.py`:
+- Streaming events for per-ticker subagent ergonomics in `src/andromeda/query_streaming.py`:
   - `briefs_start`
   - `ticker_brief_delta`
   - `ticker_brief_done`
   - `briefs_done`.
 - Frontend answer-pane support for streamed per-ticker brief cards:
-  - new "Per-ticker briefs" panel in `src/finrag/static/index.html`
-  - streaming render support in `src/finrag/static/ts/index/main.ts`.
+  - new "Per-ticker briefs" panel in `src/andromeda/static/index.html`
+  - streaming render support in `src/andromeda/static/ts/index/main.ts`.
 - Test coverage updates:
   - multi-ticker brief pipeline path in `tests/test_query_runtime_tools_first.py`
   - generation control parsing for effort/brief budget in `tests/test_generation_controls.py`.
 - Eval pipeline upgrades:
   - New `helpfulness_v1` judge integrated into default scoring for factual/open-ended/distractor/comparison queries.
   - Multi-judge fail-rate reporting in eval summaries (`*_judge_fail_rates`) plus explicit `*_helpfulness_fail_rate` fields.
-  - Edgar-backed factual-label validation module (`src/finrag/eval/ground_truth_validation.py`) and `make_eval_set.py` CLI switches:
+  - Edgar-backed factual-label validation module (`src/andromeda/eval/ground_truth_validation.py`) and `make_eval_set.py` CLI switches:
     - `--validate-factual-with-edgar`
     - `--edgar-drop-mismatched`
     - `--edgar-rel-tol`
@@ -77,17 +78,17 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - explicitly call out missing-period evidence instead of guessing.
 - Eval run artifact defaults now preserve full chunk payloads unless explicitly overridden:
   - `scripts/run_eval.py` defaults `--chunk-text-chars=0`, `--chunk-context-chars=0`
-  - `RunConfig` defaults in `src/finrag/eval/runner.py` aligned to full chunk persistence.
+  - `RunConfig` defaults in `src/andromeda/eval/runner.py` aligned to full chunk persistence.
 - Eval runner chunk payload truncation overrides were removed:
   - deleted `--chunk-text-chars` and `--chunk-context-chars` from `scripts/run_eval.py`
-  - `RunConfig` in `src/finrag/eval/runner.py` now always persists full `text` and `context` for retrieved chunks.
-- Judge context assembly in `src/finrag/eval/scoring.py` now prioritizes answer-cited chunk IDs before other retrieved chunks under char budget.
-- `factual_correctness_v1` judge instruction in `src/finrag/eval/judges.py` now treats evidence/context as source of truth when `Expected` conflicts with provided evidence.
+  - `RunConfig` in `src/andromeda/eval/runner.py` now always persists full `text` and `context` for retrieved chunks.
+- Judge context assembly in `src/andromeda/eval/scoring.py` now prioritizes answer-cited chunk IDs before other retrieved chunks under char budget.
+- `factual_correctness_v1` judge instruction in `src/andromeda/eval/judges.py` now treats evidence/context as source of truth when `Expected` conflicts with provided evidence.
 
 
 ## v1.7.0 - 15 Feb 2026
 ### Added
-- Tools-first query orchestration in `src/finrag/main.py` with explicit planner tool trace output (`tool_trace`) and query status signaling (`answered`, `clarification_required`, `refused`).
+- Tools-first query orchestration in `src/andromeda/main.py` with explicit planner tool trace output (`tool_trace`) and query status signaling (`answered`, `clarification_required`, `refused`).
 - Conversation-aware query fields and response metadata:
   - `conversation_id` on `QueryRequest` / `QueryResponse`
   - `clarifying_question` on `QueryResponse`
@@ -97,14 +98,14 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `PostgresDB.list_ingested_companies()`
   - `PostgresHybridRetriever.list_ingested_companies()`
 - New modular query-serving support files:
-  - `src/finrag/query_streaming.py` (stream orchestration + cancellation registry)
-  - `src/finrag/history_store.py` (history persistence/query APIs)
-  - `src/finrag/source_access.py` (source file resolution and inline text loading)
-  - `src/finrag/ingested_companies.py` (doc-index parsing + company-name caching)
+  - `src/andromeda/query_streaming.py` (stream orchestration + cancellation registry)
+  - `src/andromeda/history_store.py` (history persistence/query APIs)
+  - `src/andromeda/source_access.py` (source file resolution and inline text loading)
+  - `src/andromeda/ingested_companies.py` (doc-index parsing + company-name caching)
 - Runtime service builder module:
-  - `src/finrag/runtime_builders.py` for env/config parsing, LLM/retriever/reranker builders, and ingestion runtime config assembly.
+  - `src/andromeda/runtime_builders.py` for env/config parsing, LLM/retriever/reranker builders, and ingestion runtime config assembly.
 - Finance tool adapter module:
-  - `src/finrag/finance_tools.py` with typed wrappers for:
+  - `src/andromeda/finance_tools.py` with typed wrappers for:
     - yfinance market snapshot/news/price-history fetches
     - edgartools annual/quarterly financial metrics + statement snapshots
 - Finance tool result payload surfaced in API responses:
@@ -132,7 +133,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `scripts/chunk.sh`
   - `scripts/build_index.sh`
 - `MarkdownTablePreservingChunker` now uses a Hugging Face tokenizer for token counting and overlap windows instead of whitespace heuristics, improving adherence to `max_tokens`/`overlap_tokens`.
-- Reduced query-pipeline duplication in `src/finrag/main.py` by introducing shared `RAGService` helpers for:
+- Reduced query-pipeline duplication in `src/andromeda/main.py` by introducing shared `RAGService` helpers for:
   - retrieval filters
   - retrieval and reranking
   - draft/final prompt construction
@@ -146,7 +147,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `response_from_pipeline(...)`
   so `/query` and `/query_stream` now consume the same tools-first plan/retrieve/rerank execution path.
 - Extracted shared streamed token stage helper (`stream_text_stage(...)`) to reduce complexity inside `/query_stream` and keep stage streaming behavior reusable.
-- Refactored `src/finrag/main.py` from mixed runtime logic to API wiring:
+- Refactored `src/andromeda/main.py` from mixed runtime logic to API wiring:
   - `/query_stream` now delegates to `run_query_stream(...)`
   - `/history`, `/source`, and `/ingested_companies` endpoints delegate to dedicated service modules
   - file length reduced substantially while preserving endpoint behavior.
@@ -209,7 +210,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Ticker-only on-the-fly ingestion background jobs in the API:
   - `POST /ingest` now accepts JSON payload with one or more tickers (`{ticker, per_company}` or `{tickers, per_company}`)
   - `GET /ingest/{job_id}` returns lifecycle status for polling
-  - new backend orchestration module `src/finrag/ingestion_jobs.py` runs:
+  - new backend orchestration module `src/andromeda/ingestion_jobs.py` runs:
     `download -> process_html_to_markdown -> chunk -> build_index`
 - Durable ingest-profile storage on disk (`data/ingest_profiles/*.json`) with step-level settings capture for:
   - `scripts/download.py`
@@ -259,9 +260,9 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - Indexing schema selector for experiment isolation on shared Postgres instances: `--postgres-schema` / `POSTGRES_SCHEMA`.
 - Frontend TypeScript build tooling (`package.json`, `tsconfig.json`) plus migrated TS sources for both UIs:
-  - `src/finrag/static/ts/index/`
-  - `src/finrag/static/ts/review/`
-  - shared helpers in `src/finrag/static/ts/shared/`
+  - `src/andromeda/static/ts/index/`
+  - `src/andromeda/static/ts/review/`
+  - shared helpers in `src/andromeda/static/ts/shared/`
 
 ### Changed
 - Main/review HTML now load compiled JS module entrypoints (`/static/js/index/main.js`, `/static/js/review/main.js`) instead of inline scripts.
@@ -273,7 +274,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## v1.4.0 - 13 Feb 2026
 ### Added
-- PostgreSQL-native data layer (`src/finrag/db.py`) with minimal corpus schema (`documents`, `chunks`) and pgvector/FTS indexes.
+- PostgreSQL-native data layer (`src/andromeda/db.py`) with minimal corpus schema (`documents`, `chunks`) and pgvector/FTS indexes.
 - PostgreSQL chunk inspection script (`scripts/inspect_collection.py`) with ticker/date filters.
 - PostgreSQL retriever tests (`tests/test_retriever_postgres.py`).
 - Indexing CLI flags for ANN tuning and reset flows: `--ann-hnsw-m`, `--ann-hnsw-ef-construction`, `--recreate-ann-index`, and `--reset-corpus` (with legacy `--truncate` alias).

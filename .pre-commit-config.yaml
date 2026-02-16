@@ -37,7 +37,7 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-        files: ^(src/finrag/static/ts/.*\.ts|tsconfig\.json|package(-lock)?\.json)$
+        files: ^(src/andromeda/static/ts/.*\.ts|tsconfig\.json|package(-lock)?\.json)$
 
       - id: frontend-unit-tests
         name: frontend unit tests (vitest)
@@ -46,7 +46,7 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
-        files: ^(src/finrag/static/ts/.*\.ts|src/finrag/static/index\.html|tests/ui-unit/.*\.ts|vitest\.config\.ts|package(-lock)?\.json)$
+        files: ^(src/andromeda/static/ts/.*\.ts|src/andromeda/static/index\.html|tests/ui-unit/.*\.ts|vitest\.config\.ts|package(-lock)?\.json)$
 
       - id: frontend-ui-tests
         name: frontend ui tests (playwright)
@@ -55,7 +55,7 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
-        files: ^(src/finrag/static/ts/.*\.ts|src/finrag/static/index\.html|tests/ui/.*\.ts|playwright\.config\.ts|package(-lock)?\.json)$
+        files: ^(src/andromeda/static/ts/.*\.ts|src/andromeda/static/index\.html|tests/ui/.*\.ts|playwright\.config\.ts|package(-lock)?\.json)$
 
       # Unit tests
       - id: run-tests

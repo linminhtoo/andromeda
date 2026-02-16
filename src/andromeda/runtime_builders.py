@@ -5,17 +5,17 @@ from pathlib import Path
 
 from loguru import logger
 
-from finrag.context_support import context_builder_from_metadata
-from finrag.db import SparseSearchMethod
-from finrag.ingest_profile import (
+from andromeda.context_support import context_builder_from_metadata
+from andromeda.db import SparseSearchMethod
+from andromeda.ingest_profile import (
     ingest_profile_step_settings,
     load_ingest_profile,
     postgres_schema_for_ingest_profile,
     resolve_ingest_profile_name,
 )
-from finrag.ingestion_jobs import TickerIngestionRuntimeConfig
-from finrag.llm_clients import LLMClient, get_llm_client
-from finrag.retriever import CrossEncoderReranker, PostgresHybridRetriever
+from andromeda.ingestion_jobs import TickerIngestionRuntimeConfig
+from andromeda.llm_clients import LLMClient, get_llm_client
+from andromeda.retriever import CrossEncoderReranker, PostgresHybridRetriever
 
 
 def setup_logging(*, project_root: Path) -> Path:

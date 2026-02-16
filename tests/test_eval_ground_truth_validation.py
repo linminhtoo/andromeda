@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from finrag.eval.ground_truth_validation import validate_factual_queries_with_edgar
-from finrag.eval.schema import EvidenceChunk, EvalQuery, FactualSpec, NumericAnswer, ScaleUnits
-from finrag.finance_tools import FinanceToolResult, FinanceToolStatus, FinanceTools
+from andromeda.eval.ground_truth_validation import validate_factual_queries_with_edgar
+from andromeda.eval.schema import EvidenceChunk, EvalQuery, FactualSpec, NumericAnswer, ScaleUnits
+from andromeda.finance_tools import FinanceToolResult, FinanceToolStatus, FinanceTools
 
 
 def _factual_query(*, metric: str, value: float, scale: ScaleUnits | None = "units", ticker: str = "AAPL") -> EvalQuery:

@@ -55,15 +55,15 @@ Implement expert suggestion #6: for multi-ticker queries, generate per-ticker br
   - Relevant UI tests pass or are documented if not executable in current environment.
 
 ## files_to_change
-- `src/finrag/generation_controls.py`
-- `src/finrag/query_runtime.py`
-- `src/finrag/query_streaming.py`
-- `src/finrag/main.py` (if request plumbing updates are needed)
-- `src/finrag/qa.py` (new brief/synthesis prompt builders)
-- `src/finrag/static/index.html`
-- `src/finrag/static/ts/index/dom.ts`
-- `src/finrag/static/ts/index/main.ts`
-- `src/finrag/static/ts/index/generation.ts` (if needed for preset propagation)
+- `src/andromeda/generation_controls.py`
+- `src/andromeda/query_runtime.py`
+- `src/andromeda/query_streaming.py`
+- `src/andromeda/main.py` (if request plumbing updates are needed)
+- `src/andromeda/qa.py` (new brief/synthesis prompt builders)
+- `src/andromeda/static/index.html`
+- `src/andromeda/static/ts/index/dom.ts`
+- `src/andromeda/static/ts/index/main.ts`
+- `src/andromeda/static/ts/index/generation.ts` (if needed for preset propagation)
 - `tests/test_query_runtime_tools_first.py`
 - `tests/ui/index.spec.ts`
 - `CHANGELOG.md`

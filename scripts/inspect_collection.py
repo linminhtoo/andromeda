@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from psycopg.rows import dict_row
 from psycopg.sql import SQL
 
-from finrag.db import normalize_iso_date
+from andromeda.db import normalize_iso_date
 
 
 def maybe_truncate(text: str, *, max_chars: int | None) -> str:

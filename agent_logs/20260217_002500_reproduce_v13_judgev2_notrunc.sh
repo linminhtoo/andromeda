@@ -16,11 +16,11 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from finrag.eval.io import dump_jsonl, load_jsonl
-from finrag.eval.judges import get_judge_client
-from finrag.eval.runner import save_json
-from finrag.eval.schema import EvalGeneration, EvalQuery, EvalScore
-from finrag.eval import scoring as scoring_mod
+from andromeda.eval.io import dump_jsonl, load_jsonl
+from andromeda.eval.judges import get_judge_client
+from andromeda.eval.runner import save_json
+from andromeda.eval.schema import EvalGeneration, EvalQuery, EvalScore
+from andromeda.eval import scoring as scoring_mod
 
 base_run = Path('eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch.20260216_224314')
 stamp = datetime.now().strftime('%Y%m%d_%H%M%S')

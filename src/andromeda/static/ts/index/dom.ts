@@ -84,9 +84,9 @@ export const els = {
   ingestedList: byId('ingestedList'),
 };
 
-export const LS_HISTORY = 'finrag_history_v1';
-export const LS_SETTINGS = 'finrag_settings_v1';
-export const LS_UI = 'finrag_ui_v1';
+export const LS_HISTORY = 'andromeda_history_v1';
+export const LS_SETTINGS = 'andromeda_settings_v1';
+export const LS_UI = 'andromeda_ui_v1';
 
 export const DEFAULT_SOURCES_PANE_WIDTH_PX = 460;
 export const DEFAULT_ANSWER_PANE_PCT = 85;

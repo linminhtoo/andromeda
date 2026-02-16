@@ -53,13 +53,13 @@ Acceptance criteria:
 - Validation script saved under `agent_logs/`.
 
 ## files_to_change
-- `src/finrag/dataclasses.py`
-- `src/finrag/query_runtime.py`
-- `src/finrag/query_streaming.py`
-- `src/finrag/chunking.py`
-- `src/finrag/static/ts/index/source-viewer.ts`
-- `src/finrag/static/js/index/source-viewer.js` (generated via TS build)
-- `src/finrag/static/js/index/main.js` (generated via TS build if affected)
+- `src/andromeda/dataclasses.py`
+- `src/andromeda/query_runtime.py`
+- `src/andromeda/query_streaming.py`
+- `src/andromeda/chunking.py`
+- `src/andromeda/static/ts/index/source-viewer.ts`
+- `src/andromeda/static/js/index/source-viewer.js` (generated via TS build)
+- `src/andromeda/static/js/index/main.js` (generated via TS build if affected)
 - `CHANGELOG.md`
 - `tests/test_chunking_markdown.py` (if assertions need extension)
 - `tests/test_query_runtime.py` / `tests/test_query_streaming.py` (if present and needed)

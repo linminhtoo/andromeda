@@ -10,8 +10,8 @@ Enable `build_index.sh` / `build_index.py` to isolate index builds by PostgreSQL
 - Document new operational workflow.
 
 ## files_to_change
-- `src/finrag/db.py`
-- `src/finrag/retriever.py`
+- `src/andromeda/db.py`
+- `src/andromeda/retriever.py`
 - `scripts/build_index.py`
 - `scripts/build_index.sh`
 - `.env.example`

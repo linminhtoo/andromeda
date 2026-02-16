@@ -5,7 +5,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from finrag.query_runtime import QueryResponse, QueryStatus, ToolTraceEvent
+from andromeda.query_runtime import QueryResponse, QueryStatus, ToolTraceEvent
 
 
 @dataclass

@@ -5,7 +5,7 @@ import {
   extractDocMeta,
   formatCitationLabelFromChunk,
   formatDocMetaLine,
-} from '../../src/finrag/static/ts/index/citations.ts';
+} from '../../src/andromeda/static/ts/index/citations.ts';
 
 describe('citations helpers', () => {
   it('extractDocMeta returns doc object when metadata shape is valid', () => {

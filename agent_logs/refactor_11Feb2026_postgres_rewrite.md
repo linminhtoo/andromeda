@@ -18,7 +18,7 @@ Rebuilding via ingestion/chunk/index scripts is expected.
 1. Introduce a small PostgreSQL schema with minimal tables:
    - `documents`: one row per filing document
    - `chunks`: one row per chunk with text, metadata, and embedding (`pgvector`)
-2. Implement a new `PostgresHybridRetriever` in `src/finrag/retriever.py`:
+2. Implement a new `PostgresHybridRetriever` in `src/andromeda/retriever.py`:
    - Dense similarity using `pgvector` cosine distance
    - Sparse lexical retrieval via PostgreSQL FTS (`tsvector` + `plainto_tsquery`)
    - Hybrid score fusion in SQL using weighted normalized scores
@@ -31,12 +31,12 @@ Rebuilding via ingestion/chunk/index scripts is expected.
 - Retrieval can constrain search with ticker/date filters
 
 ### Files to change
-- `src/finrag/retriever.py`
-- `src/finrag/dataclasses.py` (if needed for filter typing)
-- `src/finrag/main.py` (for filter plumb-through)
+- `src/andromeda/retriever.py`
+- `src/andromeda/dataclasses.py` (if needed for filter typing)
+- `src/andromeda/main.py` (for filter plumb-through)
 
 ### New files
-- `src/finrag/db.py` (Postgres connection + schema init + helper queries)
+- `src/andromeda/db.py` (Postgres connection + schema init + helper queries)
 
 ## Phase 2: Index Build Pipeline Rewrite (PostgreSQL only)
 
@@ -64,7 +64,7 @@ Rebuilding via ingestion/chunk/index scripts is expected.
 ## Phase 3: App + Eval Wiring Cleanup
 
 ### Technical approach
-1. Simplify `src/finrag/main.py`:
+1. Simplify `src/andromeda/main.py`:
    - Remove OTel imports/spans/status handling
    - Remove trace JSONL writing flow and related env toggles
    - Use only Postgres retriever construction
@@ -77,8 +77,8 @@ Rebuilding via ingestion/chunk/index scripts is expected.
 - No runtime dependency on Milvus/Qdrant environment variables
 
 ### Files to change
-- `src/finrag/main.py`
-- `src/finrag/eval/runner.py`
+- `src/andromeda/main.py`
+- `src/andromeda/eval/runner.py`
 - `scripts/run_eval.py`
 - `scripts/run_eval.sh`
 - `scripts/launch_app.sh`
@@ -107,7 +107,7 @@ Rebuilding via ingestion/chunk/index scripts is expected.
 - `tests/test_retriever_qdrant_e2e.py` (replace)
 - `tests/test_telemetry.py` (remove/replace)
 - `tests/conftest.py` (remove OTel env coupling)
-- `src/finrag/llm_clients.py` (fastembed message cleanup)
+- `src/andromeda/llm_clients.py` (fastembed message cleanup)
 - `.env.example`
 
 ### New files

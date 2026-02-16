@@ -5,11 +5,11 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
-from finrag.dataclasses import DocChunk
-from finrag.chunk_postprocess import ChunkPostprocessor, ChunkPostprocessorPipeline
+from andromeda.dataclasses import DocChunk
+from andromeda.chunk_postprocess import ChunkPostprocessor, ChunkPostprocessorPipeline
 
 if TYPE_CHECKING:
-    from finrag.ocr import MistralOCRClient
+    from andromeda.ocr import MistralOCRClient
 
 from docling.document_converter import DocumentConverter
 from docling_core.transforms.chunker.doc_chunk import DocChunk as DoclingDocChunk

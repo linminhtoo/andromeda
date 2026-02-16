@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from loguru import logger
 
-from finrag.db import SparseSearchMethod
+from andromeda.db import SparseSearchMethod
 
 TickerIngestionStatus = Literal["queued", "running", "succeeded", "failed"]
 

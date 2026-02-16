@@ -26,10 +26,10 @@ from dotenv import load_dotenv
 from loguru import logger
 from tqdm import tqdm
 
-from finrag.context_support import apply_context_strategy, context_builder_from_metadata
-from finrag.dataclasses import DocChunk
-from finrag.db import PostgresDB, SparseSearchMethod
-from finrag.ingest_profile import (
+from andromeda.context_support import apply_context_strategy, context_builder_from_metadata
+from andromeda.dataclasses import DocChunk
+from andromeda.db import PostgresDB, SparseSearchMethod
+from andromeda.ingest_profile import (
     ingest_profile_layout,
     ingest_profile_step_settings,
     load_ingest_profile,
@@ -37,8 +37,8 @@ from finrag.ingest_profile import (
     resolve_ingest_profile_name,
     update_ingest_profile_step,
 )
-from finrag.llm_clients import get_llm_client
-from finrag.retriever import PostgresHybridRetriever
+from andromeda.llm_clients import get_llm_client
+from andromeda.retriever import PostgresHybridRetriever
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

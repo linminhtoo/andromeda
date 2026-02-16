@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-import finrag.context_support as cs
-from finrag.dataclasses import DocChunk
+import andromeda.context_support as cs
+from andromeda.dataclasses import DocChunk
 from tests.fakes import RecordingLLM
 
 

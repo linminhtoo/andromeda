@@ -22,9 +22,9 @@ Rewrite `README.md` as a professional, interview-ready technical document that r
 ## Technical approach
 ### Phase 1 - Source-of-truth synthesis (independently testable)
 - Derive architecture and behavior facts from:
-  - `src/finrag/main.py`, `src/finrag/query_runtime.py`, `src/finrag/query_streaming.py`
-  - `src/finrag/finance_tools.py`, `src/finrag/runtime_builders.py`
-  - `src/finrag/db.py`, `src/finrag/retriever.py`
+  - `src/andromeda/main.py`, `src/andromeda/query_runtime.py`, `src/andromeda/query_streaming.py`
+  - `src/andromeda/finance_tools.py`, `src/andromeda/runtime_builders.py`
+  - `src/andromeda/db.py`, `src/andromeda/retriever.py`
   - `scripts/*.sh`, relevant tests, `CHANGELOG.md`, `agent_logs/LOGBOOK.md`
 - Acceptance criteria:
   - Key sections and claims mapped to current code paths.

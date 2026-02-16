@@ -12,11 +12,11 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from finrag.eval.io import dump_jsonl, load_jsonl
-from finrag.eval.judges import get_judge_client
-from finrag.eval.schema import EvalGeneration, EvalQuery, EvalScore
-from finrag.eval.scoring import score_one, summarize
-from finrag.eval.runner import save_json
+from andromeda.eval.io import dump_jsonl, load_jsonl
+from andromeda.eval.judges import get_judge_client
+from andromeda.eval.schema import EvalGeneration, EvalQuery, EvalScore
+from andromeda.eval.scoring import score_one, summarize
+from andromeda.eval.runner import save_json
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

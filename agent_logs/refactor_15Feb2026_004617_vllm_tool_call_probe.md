@@ -5,7 +5,7 @@ Create a standalone script to verify whether the currently configured vLLM chat 
 
 ## Phase 1: Add standalone probe script
 Acceptance criteria:
-- Script runs independently from `src/finrag` runtime code.
+- Script runs independently from `src/andromeda` runtime code.
 - Uses OpenAI-compatible client initialization pattern used in the repo (`api_key` + `base_url`).
 - Sends a chat request with `tools`, executes local tool implementation, and sends tool result back.
 - Prints clear PASS/FAIL-oriented output.

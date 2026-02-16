@@ -44,13 +44,13 @@ Approach:
 - Replace plain text frontend renderer with grouped cards + expandable document table/list.
 
 ## files_to_change
-- `src/finrag/static/index.html`
-- `src/finrag/static/ts/index/dom.ts`
-- `src/finrag/static/ts/index/history.ts`
-- `src/finrag/static/ts/index/main.ts`
-- `src/finrag/static/ts/index/ingested.ts`
-- `src/finrag/ingested_companies.py`
-- `src/finrag/main.py` (only if endpoint model/shape wiring needs touchups)
+- `src/andromeda/static/index.html`
+- `src/andromeda/static/ts/index/dom.ts`
+- `src/andromeda/static/ts/index/history.ts`
+- `src/andromeda/static/ts/index/main.ts`
+- `src/andromeda/static/ts/index/ingested.ts`
+- `src/andromeda/ingested_companies.py`
+- `src/andromeda/main.py` (only if endpoint model/shape wiring needs touchups)
 - `CHANGELOG.md`
 - `agent_logs/LOGBOOK.md`
 

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from finrag.eval.runner import RunConfig, _query_timeout_guard, run_generation, run_one
-from finrag.eval.schema import EvalGeneration, EvalQuery, OpenEndedSpec
+from andromeda.eval.runner import RunConfig, _query_timeout_guard, run_generation, run_one
+from andromeda.eval.schema import EvalGeneration, EvalQuery, OpenEndedSpec
 
 
 def _open_ended_query(query_id: str) -> EvalQuery:
@@ -54,14 +54,14 @@ def test_query_timeout_guard_is_noop_in_non_main_thread() -> None:
 def test_run_generation_thread_backend_runs_all_queries(monkeypatch, tmp_path: Path) -> None:
     queries = [_open_ended_query("q1"), _open_ended_query("q2"), _open_ended_query("q3")]
 
-    monkeypatch.setattr("finrag.main.get_rag_service", lambda: object())
+    monkeypatch.setattr("andromeda.main.get_rag_service", lambda: object())
 
     def fake_run_one(_service, query_id, kind, question, _settings, _cfg):
         generation = EvalGeneration(query_id=query_id, kind=kind, question=question, final_answer=f"answer-{query_id}")
         generation.timing_ms["total_ms"] = 1.0
         return generation, 1.0, True
 
-    monkeypatch.setattr("finrag.eval.runner.run_one", fake_run_one)
+    monkeypatch.setattr("andromeda.eval.runner.run_one", fake_run_one)
 
     out_path = tmp_path / "generations.jsonl"
     cfg = RunConfig(concurrency=2, parallel_backend="thread")

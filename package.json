@@ -1,5 +1,5 @@
 {
-  "name": "finrag-frontend",
+  "name": "andromeda-frontend",
   "private": true,
   "version": "0.1.0",
   "description": "TypeScript build for FinRAG static UIs",

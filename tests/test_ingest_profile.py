@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from finrag.ingest_profile import (
+from andromeda.ingest_profile import (
     ingest_profile_layout,
     ingest_profile_step_settings,
     load_ingest_profile,
