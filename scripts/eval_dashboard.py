@@ -80,9 +80,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out-dir", required=True, help="Output directory for dashboard artifacts.")
     parser.add_argument(
-        "--include-incomplete",
-        action="store_true",
-        help="Include runs missing score_summary.json in dashboard rows.",
+        "--include-incomplete", action="store_true", help="Include runs missing score_summary.json in dashboard rows."
     )
     return parser.parse_args()
 
@@ -284,9 +282,13 @@ def collect_row(run_dir: Path, *, scope: str) -> dict[str, Any]:
         {"open_ended_judge_fail_rates": open_ended_judges}, "open_ended_judge_fail_rates", "helpfulness_v1"
     )
     if open_ended_helpfulness_fail_rate is None:
-        open_ended_helpfulness_fail_rate = normalize_float((score_summary or {}).get("open_ended_helpfulness_fail_rate"))
+        open_ended_helpfulness_fail_rate = normalize_float(
+            (score_summary or {}).get("open_ended_helpfulness_fail_rate")
+        )
 
-    refusal_fail_rate = metric_from_map({"refusal_judge_fail_rates": refusal_judges}, "refusal_judge_fail_rates", "refusal_v1")
+    refusal_fail_rate = metric_from_map(
+        {"refusal_judge_fail_rates": refusal_judges}, "refusal_judge_fail_rates", "refusal_v1"
+    )
     if refusal_fail_rate is None:
         refusal_fail_rate = normalize_float((score_summary or {}).get("refusal_judge_fail_rate"))
 
@@ -300,7 +302,9 @@ def collect_row(run_dir: Path, *, scope: str) -> dict[str, Any]:
         {"distractor_judge_fail_rates": distractor_judges}, "distractor_judge_fail_rates", "helpfulness_v1"
     )
     if distractor_helpfulness_fail_rate is None:
-        distractor_helpfulness_fail_rate = normalize_float((score_summary or {}).get("distractor_helpfulness_fail_rate"))
+        distractor_helpfulness_fail_rate = normalize_float(
+            (score_summary or {}).get("distractor_helpfulness_fail_rate")
+        )
 
     comparison_judges = (score_summary or {}).get("comparison_judge_fail_rates")
     comparison_n_ok = normalize_int((score_summary or {}).get("comparison_n_ok"))
@@ -314,7 +318,9 @@ def collect_row(run_dir: Path, *, scope: str) -> dict[str, Any]:
         {"comparison_judge_fail_rates": comparison_judges}, "comparison_judge_fail_rates", "helpfulness_v1"
     )
     if comparison_helpfulness_fail_rate is None:
-        comparison_helpfulness_fail_rate = normalize_float((score_summary or {}).get("comparison_helpfulness_fail_rate"))
+        comparison_helpfulness_fail_rate = normalize_float(
+            (score_summary or {}).get("comparison_helpfulness_fail_rate")
+        )
 
     def cell(value: Any) -> Any:
         return "" if value is None else value
@@ -365,10 +371,7 @@ def collect_row(run_dir: Path, *, scope: str) -> dict[str, Any]:
 
 
 def discover_run_dirs(root: Path) -> list[Path]:
-    return sorted(
-        [path for path in root.glob("eval_run.*") if path.is_dir()],
-        key=lambda path: path.name,
-    )
+    return sorted([path for path in root.glob("eval_run.*") if path.is_dir()], key=lambda path: path.name)
 
 
 def as_float(row: dict[str, Any], key: str) -> float | None:
@@ -519,15 +522,29 @@ def render_table_rows(rows: list[dict[str, Any]]) -> str:
 
 def render_html(rows: list[dict[str, Any]]) -> str:
     scored = [row for row in rows if str(row.get("status", "")).startswith("scored")]
-    best_faithfulness = min(
-        (as_float(row, "open_ended_faithfulness_fail_rate"), row) for row in scored if as_float(row, "open_ended_faithfulness_fail_rate") is not None
-    ) if any(as_float(row, "open_ended_faithfulness_fail_rate") is not None for row in scored) else None
-    best_numeric = max(
-        (as_float(row, "factual_numeric_accuracy"), row) for row in scored if as_float(row, "factual_numeric_accuracy") is not None
-    ) if any(as_float(row, "factual_numeric_accuracy") is not None for row in scored) else None
-    best_throughput = max(
-        (as_float(row, "throughput_qps"), row) for row in rows if as_float(row, "throughput_qps") is not None
-    ) if any(as_float(row, "throughput_qps") is not None for row in rows) else None
+    best_faithfulness = (
+        min(
+            (as_float(row, "open_ended_faithfulness_fail_rate"), row)
+            for row in scored
+            if as_float(row, "open_ended_faithfulness_fail_rate") is not None
+        )
+        if any(as_float(row, "open_ended_faithfulness_fail_rate") is not None for row in scored)
+        else None
+    )
+    best_numeric = (
+        max(
+            (as_float(row, "factual_numeric_accuracy"), row)
+            for row in scored
+            if as_float(row, "factual_numeric_accuracy") is not None
+        )
+        if any(as_float(row, "factual_numeric_accuracy") is not None for row in scored)
+        else None
+    )
+    best_throughput = (
+        max((as_float(row, "throughput_qps"), row) for row in rows if as_float(row, "throughput_qps") is not None)
+        if any(as_float(row, "throughput_qps") is not None for row in rows)
+        else None
+    )
 
     faith_chart = render_line_chart(
         build_series(rows, "open_ended_faithfulness_fail_rate"),
@@ -800,13 +817,7 @@ def main() -> None:
                 continue
             rows.append(row)
 
-    rows.sort(
-        key=lambda row: (
-            str(row.get("timestamp", "")),
-            str(row.get("run_name", "")),
-            str(row.get("run_id", "")),
-        )
-    )
+    rows.sort(key=lambda row: (str(row.get("timestamp", "")), str(row.get("run_name", "")), str(row.get("run_id", ""))))
 
     out_dir = Path(args.out_dir).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)

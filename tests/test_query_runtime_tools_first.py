@@ -80,11 +80,7 @@ def make_scored_chunk(*, chunk_id: str, section_path: str, text: str, score: flo
             page_no=None,
             headings=["Item 2"],
             source="aapl_10q.md",
-            metadata={
-                "retrieval_text": text,
-                "section_path": section_path,
-                "doc": {"ticker": "AAPL"},
-            },
+            metadata={"retrieval_text": text, "section_path": section_path, "doc": {"ticker": "AAPL"}},
         ),
         score=score,
         source="hybrid",
@@ -278,18 +274,13 @@ def test_narrative_sec_question_forces_rag_and_disables_tools(monkeypatch) -> No
         service,
         "_planner_decision_from_llm",
         lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER,
-            tickers=["AAPL"],
-            use_rag=False,
-            use_yfinance=True,
-            use_edgar_financials=True,
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_yfinance=True, use_edgar_financials=True
         ),
     )
 
     settings = resolve_generation_settings(mode="quick")
     pipeline = service.execute_query_pipeline(
-        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.",
-        settings=settings,
+        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.", settings=settings
     )
 
     assert pipeline.planned.status == QueryStatus.ANSWERED
@@ -308,18 +299,13 @@ def test_narrative_refine_runs_faithfulness_scrub_pass(monkeypatch) -> None:
         service,
         "_planner_decision_from_llm",
         lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER,
-            tickers=["AAPL"],
-            use_rag=True,
-            use_yfinance=False,
-            use_edgar_financials=False,
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
         ),
     )
 
     settings = resolve_generation_settings(mode="normal", enable_refine=True)
     pipeline = service.execute_query_pipeline(
-        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.",
-        settings=settings,
+        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.", settings=settings
     )
     _ = service.response_from_pipeline(pipeline=pipeline, settings=settings)
 
@@ -335,18 +321,13 @@ def test_narrative_question_injects_prompt_extra_guidance(monkeypatch) -> None:
         service,
         "_planner_decision_from_llm",
         lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER,
-            tickers=["AAPL"],
-            use_rag=True,
-            use_yfinance=False,
-            use_edgar_financials=False,
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
         ),
     )
 
     settings = resolve_generation_settings(mode="quick", enable_refine=False)
     pipeline = service.execute_query_pipeline(
-        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.",
-        settings=settings,
+        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.", settings=settings
     )
     _ = service.response_from_pipeline(pipeline=pipeline, settings=settings)
 
@@ -365,8 +346,7 @@ def test_context_coverage_prompt_extra_flags_missing_growth() -> None:
         text="Regulatory and cybersecurity risks may adversely affect the business.",
     )
     extra = service.context_coverage_prompt_extra(
-        question="Based on AAPL filings, what are key growth drivers and risks?",
-        reranked=[risk_only],
+        question="Based on AAPL filings, what are key growth drivers and risks?", reranked=[risk_only]
     )
 
     assert extra is not None
@@ -468,11 +448,7 @@ def test_simple_numeric_question_forces_tools_first(monkeypatch) -> None:
         service,
         "_planner_decision_from_llm",
         lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER,
-            tickers=["AAPL"],
-            use_rag=True,
-            use_yfinance=True,
-            use_edgar_financials=False,
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=True, use_edgar_financials=False
         ),
     )
 
@@ -495,11 +471,7 @@ def test_period_scoped_numeric_question_uses_rag_for_grounding(monkeypatch) -> N
         service,
         "_planner_decision_from_llm",
         lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER,
-            tickers=["AAPL"],
-            use_rag=False,
-            use_yfinance=False,
-            use_edgar_financials=True,
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_yfinance=False, use_edgar_financials=True
         ),
     )
 

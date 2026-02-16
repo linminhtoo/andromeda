@@ -57,12 +57,7 @@ def test_run_generation_thread_backend_runs_all_queries(monkeypatch, tmp_path: P
     monkeypatch.setattr("finrag.main.get_rag_service", lambda: object())
 
     def fake_run_one(_service, query_id, kind, question, _settings, _cfg):
-        generation = EvalGeneration(
-            query_id=query_id,
-            kind=kind,
-            question=question,
-            final_answer=f"answer-{query_id}",
-        )
+        generation = EvalGeneration(query_id=query_id, kind=kind, question=question, final_answer=f"answer-{query_id}")
         generation.timing_ms["total_ms"] = 1.0
         return generation, 1.0, True
 
@@ -85,12 +80,7 @@ def test_run_one_thread_timeout_does_not_hang() -> None:
         def answer_question(self, _question, _settings, include_retrieved_chunks):  # noqa: ANN001
             _ = include_retrieved_chunks
             time.sleep(0.2)
-            return SimpleNamespace(
-                top_chunks=[],
-                retrieved_chunks=[],
-                draft_answer="",
-                final_answer="",
-            )
+            return SimpleNamespace(top_chunks=[], retrieved_chunks=[], draft_answer="", final_answer="")
 
     settings = RunConfig(mode="quick").resolved_settings()
     cfg = RunConfig(mode="quick", query_timeout_s=0.05)

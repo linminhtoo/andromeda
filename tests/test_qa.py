@@ -108,12 +108,7 @@ def test_build_faithfulness_scrub_prompt_includes_candidate_and_context() -> Non
         )
     ]
     scrub = build_faithfulness_scrub_prompt(
-        "Q?",
-        "CANDIDATE",
-        reranked,
-        final_max_tokens=100,
-        answer_style="normal",
-        tool_context="TOOL SNAPSHOT",
+        "Q?", "CANDIDATE", reranked, final_max_tokens=100, answer_style="normal", tool_context="TOOL SNAPSHOT"
     )
     assert [m["role"] for m in scrub] == ["system", "user"]
     assert "Candidate answer:\nCANDIDATE" in scrub[1]["content"]

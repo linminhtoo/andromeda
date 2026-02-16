@@ -46,9 +46,7 @@ def main() -> None:
             for event in tool_trace:
                 if event.get("tool") == "plan_tool_usage":
                     flags = event.get("args") or {}
-                    planned_flags = (
-                        f"rag={flags.get('use_rag')} yfin={flags.get('use_yfinance')} edgar={flags.get('use_edgar_financials')}"
-                    )
+                    planned_flags = f"rag={flags.get('use_rag')} yfin={flags.get('use_yfinance')} edgar={flags.get('use_edgar_financials')}"
                     break
         if planned_flags:
             tool_mode_counts[planned_flags] += 1

@@ -229,11 +229,7 @@ def build_faithfulness_scrub_prompt(
     return [
         {
             "role": "system",
-            "content": _system_prompt(
-                _FAITHFULNESS_SCRUB_SYSTEM_PROMPT,
-                answer_style=answer_style,
-                extra=system_extra,
-            ),
+            "content": _system_prompt(_FAITHFULNESS_SCRUB_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra),
         },
         {
             "role": "user",

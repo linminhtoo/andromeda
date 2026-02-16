@@ -143,11 +143,6 @@ def test_build_context_truncates_per_chunk_to_fit_more_evidence() -> None:
         RetrievedChunk(chunk_id="CH_A", doc_id="DOC_A", score=1.0, text="A" * 1200),
         RetrievedChunk(chunk_id="CH_B", doc_id="DOC_B", score=0.9, text="B" * 1200),
     ]
-    ctx = build_context(
-        chunks,
-        max_chars=420,
-        max_chunk_text_chars=120,
-        max_chunk_context_chars=0,
-    )
+    ctx = build_context(chunks, max_chars=420, max_chunk_text_chars=120, max_chunk_context_chars=0)
     assert "[doc=DOC_A chunk=CH_A" in ctx
     assert "[doc=DOC_B chunk=CH_B" in ctx

@@ -776,15 +776,9 @@ class RAGService:
         market_data_query = self._question_mentions_market_data(question)
         financial_metric_query = self._question_mentions_financial_metrics(question)
 
-        use_yfinance = (
-            bool(decision.use_yfinance)
-            if decision.use_yfinance is not None
-            else market_data_query
-        )
+        use_yfinance = bool(decision.use_yfinance) if decision.use_yfinance is not None else market_data_query
         use_edgar_financials = (
-            bool(decision.use_edgar_financials)
-            if decision.use_edgar_financials is not None
-            else financial_metric_query
+            bool(decision.use_edgar_financials) if decision.use_edgar_financials is not None else financial_metric_query
         )
 
         if simple_numeric_query:
@@ -1306,11 +1300,7 @@ class RAGService:
         """
 
         return self.retriever.retrieve_hybrid(
-            question,
-            top_k_semantic=top_k,
-            top_k_bm25=top_k,
-            top_k_final=top_k,
-            filters=filters,
+            question, top_k_semantic=top_k, top_k_bm25=top_k, top_k_final=top_k, filters=filters
         )
 
     def retrieve_chunks_for_plan(
@@ -1641,10 +1631,7 @@ class RAGService:
                 self._tool_event(
                     "enforce_narrative_aspect_coverage",
                     args={"top_k_rerank": settings.top_k_rerank},
-                    result=(
-                        "Adjusted reranked list for narrative aspect coverage "
-                        f"(size={len(reranked)})."
-                    ),
+                    result=(f"Adjusted reranked list for narrative aspect coverage (size={len(reranked)})."),
                 )
             )
         return reranked, trace

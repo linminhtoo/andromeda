@@ -47,42 +47,42 @@
     <meta content="eugeneyan.com" property="og:site_name">
     <meta name=twitter:card content=summary_large_image>
     <meta name=twitter:domain content=eugeneyan.com>
-    
+
     <meta content="Evaluating Long-Context Question & Answer Systems" property="og:title">
     <meta name=twitter:title content="Evaluating Long-Context Question & Answer Systems">
-    
-    
+
+
     <meta content="article" property="og:type">
-    
-    
+
+
     <meta content="Evaluation metrics, how to build eval datasets, eval methodology, and a review of several benchmarks." property="og:description">
     <meta name=twitter:description content="Evaluation metrics, how to build eval datasets, eval methodology, and a review of several benchmarks.">
-    
-    
+
+
     <meta content="https://eugeneyan.com/writing/qa-evals/" property="og:url">
-    
-    
+
+
     <meta content="2025-06-22T00:00:00+00:00" property="article:published_time">
     <meta content="https://eugeneyan.com/about/" property="article:author">
-    
-    
+
+
     <meta content="https://eugeneyan.com/assets/og_image/qa-evals-v2.jpg" property="og:image">
     <meta name=twitter:image content="https://eugeneyan.com/assets/og_image/qa-evals-v2.jpg">
-    
-    
-    
+
+
+
     <meta content="posts" property="article:section">
-    
-    
-    
-    
+
+
+
+
     <meta content="llm" property="article:tag">
-    
+
     <meta content="eval" property="article:tag">
-    
+
     <meta content="survey" property="article:tag">
-    
-    
+
+
     <title>Evaluating Long-Context Question & Answer Systems</title>
     <!-- styles -->
     <script src="/cdn-cgi/scripts/7d0fa10a/cloudflare-static/rocket-loader.min.js" data-cf-settings="7d63f5bcb51b80dc4a688d04-|49"></script><link href="/css/main.min.css" rel="preload" as="style" onload="this.rel='stylesheet'" type="text/css">
@@ -108,14 +108,14 @@
     <link rel="canonical" href="https://eugeneyan.com/writing/qa-evals/"/>
 
     <!--  Collect tags-->
-    
-    
 
 
 
 
 
-    
+
+
+
 
     <!-- google analytics - i will not share this data with google -->
     <!-- Global site tag (gtag.js) - Google Analytics -->
@@ -154,7 +154,7 @@
     </div>
 </div>
 
-        
+
 
 
 <div class="notes">
@@ -164,16 +164,16 @@
         <p class="date">
             <info datetime="2025-06-22 00:00:00 +0000">
                 <span class="no-italics">[
-        
-        
+
+
         <a class='tag' href="/tag/llm/">llm</a>
-        
-        
+
+
         <a class='tag' href="/tag/eval/">eval</a>
-        
-        
+
+
         <a class='tag' href="/tag/survey/">survey</a>
-        
+
     ]
 </span> · 28 min read
             </info>
@@ -525,7 +525,7 @@
 <p>Zhang, Xinrong, Yingfa Chen, Shengding Hu, Zihang Xu, Junhao Chen, Moo Khai Hao, Xu Han, et al. 2024. “InfinityBench: Extending Long Context Evaluation Beyond 100K Tokens.” arXiv. https://doi.org/10.48550/arXiv.2402.13718.</p>
 
 
-            
+
             <br>
 <p>If you found this useful, please cite this write-up as:</p>
 
@@ -546,9 +546,9 @@
 }</code></pre>
 </div>
 
-            
+
             <br>
-            
+
 
 <style>
     #share-buttons {
@@ -609,7 +609,7 @@
         <div id="algolia-recs-container" style="display: none;">
           <div id="algolia-related-products" style="margin-bottom: 2em;"></div>
           <div id="algolia-fbt"></div>
-          
+
 <style>
   /* Common styles for both recommendation widgets */
   .algolia-recs-section-header {
@@ -637,7 +637,7 @@
     width: 32%; /* Adjust for 3 items: 32% * 3 items + 2% * 2 margins = 100% */
     margin-right: 2%;
     box-sizing: border-box; /* Include padding and border in the element's total width */
-    
+
     /* Optional: Basic card styling (uncomment to use) */
     border: 1px solid color-mix(in srgb, var(--c-background) 85%, var(--c-text) 15%); /* Theme-aware light grey border */
     padding: 0; /* Remove overall card padding, will be handled by elements */
@@ -675,7 +675,7 @@
     display: -webkit-box;
     -webkit-line-clamp: 2; /* Limit to 2 lines for WebKit browsers */
     line-clamp: 2; /* Standard property */
-    -webkit-box-orient: vertical;  
+    -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
     padding: 0 7px 7px 7px; /* 0 top, 7px L/R/B for text area */
@@ -749,7 +749,7 @@
     width: 32%; /* Adjust for 3 items: 32% * 3 items + 2% * 2 margins = 100% */
     margin-right: 2%;
     box-sizing: border-box; /* Include padding and border in the element's total width */
-    
+
     /* Optional: Basic card styling (uncomment to use) */
     border: 1px solid color-mix(in srgb, var(--c-background) 85%, var(--c-text) 15%); /* Theme-aware light grey border */
     padding: 0; /* Remove overall card padding, will be handled by elements */
@@ -787,7 +787,7 @@
     display: -webkit-box;
     -webkit-line-clamp: 2; /* Limit to 2 lines for WebKit browsers */
     line-clamp: 2; /* Standard property */
-    -webkit-box-orient: vertical;  
+    -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
     padding: 0 7px 7px 7px; /* 0 top, 7px L/R/B for text area */
@@ -870,7 +870,7 @@
     .then(() => {
       // Initialize the Related Products widget
       initRelatedProducts();
-      
+
       // Initialize the Frequently Bought Together widget
       initFrequentlyBoughtTogether();
     })
@@ -913,10 +913,10 @@
         },
         transformItems: function(items) {
 
-          
+
           const containerElement = document.getElementById('algolia-recs-container');
           const relatedElement = document.getElementById('algolia-related-products');
-          
+
           // Hide the Related Products container element first if there are no items
           if (items.length === 0 && relatedElement) {
             relatedElement.style.display = 'none';
@@ -924,7 +924,7 @@
           } else if (relatedElement) {
             relatedElement.style.display = 'block';
           }
-          
+
           // Then handle the main recommendations container visibility
           if (items.length > 0 && containerElement) {
             containerElement.style.display = 'block';
@@ -974,7 +974,7 @@
             return `
               <a href="${itemUrl}"
                  class="ais-RelatedProducts-item-link-wrapper"
-                 onClick="${() => { 
+                 onClick="${() => {
                   sendEvent('click', hit, 'Related Item Clicked');
                  }}"
               >
@@ -987,20 +987,20 @@
 
             const containerElement = document.getElementById('algolia-recs-container');
             const relatedElement = document.getElementById('algolia-related-products');
-            
+
             // Hide Related Products container since there are no results
             if (relatedElement) {
               relatedElement.style.display = 'none';
 
             }
-            
+
             // Check if the FBT widget also has no items before hiding the main container
             const fbtWidgetContainer = document.getElementById('algolia-fbt');
             if (containerElement && (!fbtWidgetContainer || !fbtWidgetContainer.hasChildNodes())) {
               containerElement.style.display = 'none';
 
             }
-            
+
             // Return an empty string to prevent rendering 'undefined'
             return '';
           }
@@ -1045,7 +1045,7 @@
         },
         transformItems: function(items) {
 
-          
+
           const containerElement = document.getElementById('algolia-recs-container');
           if (items.length > 0 && containerElement) {
             containerElement.style.display = 'block';
@@ -1059,13 +1059,13 @@
           return items;
         },
         templates: {
-          header() { 
+          header() {
 
             // Return a PLAIN string for the header - only if we have items to display
             // The header should not render if there's no content
             return '<h4 class="algolia-recs-section-header">Frequently Read Together (behavioral-based)</h4>';
           },
-          item: function(hit, { html, sendEvent }) { 
+          item: function(hit, { html, sendEvent }) {
 
             const itemUrl = `${hit.url || '#'}`;
             const indexName = 'eugeneyan.com'; // Get index name for insights
@@ -1096,8 +1096,8 @@
             return `
               <a href="${itemUrl}"
                  class="ais-FrequentlyBoughtTogether-item-link-wrapper"
-                 onClick="${() => { 
-                  sendEvent('click', hit, 'FBT Item Clicked'); 
+                 onClick="${() => {
+                  sendEvent('click', hit, 'FBT Item Clicked');
                  }}"
               >
                 ${imageAndScoreTag}
@@ -1109,13 +1109,13 @@
 
             const containerElement = document.getElementById('algolia-recs-container');
             const fbtElement = document.getElementById('algolia-fbt');
-            
+
             // Hide FBT container since there are no results
             if (fbtElement) {
               fbtElement.style.display = 'none';
 
             }
-            
+
             // Check if the Related Products widget also has no items before hiding the main container
             const relatedWidgetContainer = document.getElementById('algolia-related-products');
             if (containerElement && (!relatedWidgetContainer || !relatedWidgetContainer.hasChildNodes())) {
@@ -1123,7 +1123,7 @@
 
 
             }
-            
+
             // Return an empty string to prevent rendering 'undefined'
             return '';
           }
@@ -1155,7 +1155,7 @@
 
         <!-- <div id="algolia-recs-container" style="display: none;">
             <div id="algolia-related-products" style="margin-bottom: 2em;"></div>
-            
+
 <style>
   /* Common styles for both recommendation widgets */
   .algolia-recs-section-header {
@@ -1183,7 +1183,7 @@
     width: 32%; /* Adjust for 3 items: 32% * 3 items + 2% * 2 margins = 100% */
     margin-right: 2%;
     box-sizing: border-box; /* Include padding and border in the element's total width */
-    
+
     /* Optional: Basic card styling (uncomment to use) */
     border: 1px solid color-mix(in srgb, var(--c-background) 85%, var(--c-text) 15%); /* Theme-aware light grey border */
     padding: 0; /* Remove overall card padding, will be handled by elements */
@@ -1221,7 +1221,7 @@
     display: -webkit-box;
     -webkit-line-clamp: 2; /* Limit to 2 lines for WebKit browsers */
     line-clamp: 2; /* Standard property */
-    -webkit-box-orient: vertical;  
+    -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
     padding: 0 7px 7px 7px; /* 0 top, 7px L/R/B for text area */
@@ -1305,7 +1305,7 @@
     .then(() => {
       // Initialize the Related Products widget
       initRelatedProducts();
-      
+
     })
     .catch(error => {
       // Handle error silently
@@ -1394,7 +1394,7 @@
             return `
               <a href="${itemUrl}"
                  class="ais-RelatedProducts-item-link-wrapper"
-                 onClick="${() => { 
+                 onClick="${() => {
                   sendEvent('click', hit, 'Related Item Clicked');
                  }}"
               >
@@ -1406,7 +1406,7 @@
           empty(results, { html }) {
             const containerElement = document.getElementById('algolia-recs-container');
             const relatedElement = document.getElementById('algolia-related-products');
-            
+
             if (relatedElement) {
               relatedElement.style.display = 'none';
             }
@@ -1415,7 +1415,7 @@
             if (containerElement) {
               containerElement.style.display = 'none';
             }
-            
+
             // Return an empty string to prevent rendering 'undefined'
             return '';
           }
@@ -1446,25 +1446,25 @@
         </div> -->
 
         <span style="font-family: 'Raleway', Helvetica, sans-serif;">Browse related tags:</span> <span class="no-italics">[
-        
-        
+
+
         <a class='tag' href="/tag/llm/">llm</a>
-        
-        
+
+
         <a class='tag' href="/tag/eval/">eval</a>
-        
-        
+
+
         <a class='tag' href="/tag/survey/">survey</a>
-        
+
     ]
 </span> <span style="font-family: 'Raleway', Helvetica, sans-serif;"> or </span><a href="/search/" title="Search" style="text-decoration: none; font-family: 'Raleway', Helvetica, sans-serif;"><img class="icon icon-search" src="/assets/icon-search.svg" loading="lazy" alt="" style="vertical-align: middle; margin-right: 0.25em;"/>Search</a>
         <div class="PageNavigation">
-    
+
     <a class="prev sans-serif" href="/speaking/aie-2025/">&laquo; AI Engineer 2025 - Improving RecSys & Search with LLM techniques</a>
-    
-    
+
+
     <a class="next sans-serif" href="/writing/semantic-ids/">Training an LLM-RecSys Hybrid for Steerable Recs with Semantic IDs &raquo;</a>
-    
+
 </div>
 
         <hr>
@@ -1530,7 +1530,7 @@
     if (typeof aa === 'function') {
       // Get the current page path for more specific tracking
       const pagePath = '/writing/qa-evals/';
-      
+
       // Determine a specific event name based on the current page
       let eventName;
       if (pagePath.startsWith('/tag/')) {
@@ -1546,7 +1546,7 @@
           eventName = 'Post Link Clicked';
         }
       }
-      
+
       // Track clicks on internal links in the main container
       const container = document.querySelector('div.container');
       if (container) {
@@ -1570,19 +1570,19 @@
   let hasTrackedPageRead = false;
   window.addEventListener('scroll', function() {
     if (hasTrackedPageRead) return; // Only track once per page view
-    
+
     // Calculate read depth as percentage
     const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
     const scrollHeight = document.documentElement.scrollHeight;
     const clientHeight = document.documentElement.clientHeight;
     const readPercentage = (scrollTop + clientHeight) / scrollHeight * 100;
-    
+
     // If user has read at least 50% of the page
     if (readPercentage >= 50 && typeof aa === 'function') {
       hasTrackedPageRead = true;
       const objectID = window.location.pathname; // Use current page path as objectID
       const pagePath = '/writing/qa-evals/';
-      
+
       // Create a meaningful event name
       let eventName;
       if (pagePath.startsWith('/tag/')) {
@@ -1598,7 +1598,7 @@
           eventName = 'Post Read 50%';
         }
       }
-      
+
       // Send the convertedObjectIDs event to Algolia
       aa('convertedObjectIDs', {
         index: 'eugeneyan.com',
