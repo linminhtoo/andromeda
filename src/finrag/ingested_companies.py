@@ -6,6 +6,12 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from finrag.ingest_profile import (
+    ingest_profile_layout,
+    ingest_profile_step_settings,
+    load_ingest_profile,
+    resolve_ingest_profile_name,
+)
 from finrag.source_access import read_text_file
 
 
@@ -81,7 +87,7 @@ class IngestedCompaniesService:
 
         path = self.doc_index_path()
         if path is None:
-            return {"items": [], "count": 0, "path": None, "warning": "FINRAG_DOC_INDEX_PATH not set"}
+            return {"items": [], "count": 0, "path": None, "warning": "No inferred doc_index.jsonl path found."}
 
         mtime_ns = path.stat().st_mtime_ns
         use_yahoo = self.env_bool("FINRAG_INGESTED_COMPANIES_USE_YAHOO", default=True)
@@ -101,6 +107,12 @@ class IngestedCompaniesService:
         return {"items": items, "count": len(items), "path": str(path)}
 
     def doc_index_path(self) -> Path | None:
+        env_path = self.doc_index_path_from_env()
+        if env_path is not None:
+            return env_path
+        return self.doc_index_path_from_ingest_profile()
+
+    def doc_index_path_from_env(self) -> Path | None:
         raw = (os.getenv("FINRAG_DOC_INDEX_PATH") or "").strip()
         if not raw:
             return None
@@ -112,6 +124,64 @@ class IngestedCompaniesService:
         if not path.exists() or not path.is_file():
             raise HTTPException(status_code=404, detail=f"doc_index.jsonl not found: {path}")
         return path
+
+    @staticmethod
+    def _coerce_positive_int(value: object, default: int) -> int:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, int):
+            parsed = value
+        elif isinstance(value, float):
+            parsed = int(value)
+        else:
+            text = str(value).strip()
+            if not text:
+                return default
+            try:
+                parsed = int(text)
+            except ValueError:
+                return default
+        if parsed <= 0:
+            return default
+        return parsed
+
+    def doc_index_path_from_ingest_profile(self) -> Path | None:
+        profile_name = resolve_ingest_profile_name((os.getenv("FINRAG_INGEST_PROFILE") or "").strip() or None)
+        profile = load_ingest_profile(project_root=self.project_root, profile_name=profile_name)
+        chunk_settings = ingest_profile_step_settings(profile, "chunk")
+        layout = ingest_profile_layout(self.project_root, profile_name)
+
+        chunk_max_tokens = self._coerce_positive_int(
+            chunk_settings["max_tokens"] if "max_tokens" in chunk_settings else None,
+            self._coerce_positive_int(os.getenv("CHUNK_MAX_TOKENS"), 1024),
+        )
+        chunk_overlap_tokens = self._coerce_positive_int(
+            chunk_settings["overlap_tokens"] if "overlap_tokens" in chunk_settings else None,
+            self._coerce_positive_int(os.getenv("CHUNK_OVERLAP_TOKENS"), 128),
+        )
+
+        preferred = (
+            layout.chunk_output_dir(max_tokens=chunk_max_tokens, overlap_tokens=chunk_overlap_tokens)
+            / "doc_index.jsonl"
+        )
+        if preferred.exists() and preferred.is_file():
+            return preferred.resolve()
+
+        fallback_root = layout.sec_filings_md_root
+        if not fallback_root.exists() or not fallback_root.is_dir():
+            return None
+
+        candidates = sorted(
+            fallback_root.glob("chunked_*/doc_index.jsonl"),
+            key=lambda path: path.stat().st_mtime_ns if path.exists() else 0,
+            reverse=True,
+        )
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                return candidate.resolve()
+        return None
 
     def read_ingested_companies(self, *, doc_index_path: Path) -> list[dict[str, object]]:
         documents_by_ticker: dict[str, list[dict[str, object]]] = {}
