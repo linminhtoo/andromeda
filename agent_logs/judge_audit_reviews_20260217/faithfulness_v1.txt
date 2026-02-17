@@ -27,7 +27,7 @@ Judge explanation: The answer evaluates AMZN as a long-term investment based on 
 [005] decision_id=0fc8ffec-f845-4397-8a56-dd3297f2ed1c::faithfulness_v1 pred=0 kind=open_ended tickers=TSLA
 Q: Based on TSLA (TSLA)'s SEC filings in 2026, what are the key growth drivers and key risks? Cite sources.
 A: SEC filings for 2026 are not yet available as of current date. The system cannot retrieve future filings.
-CTX: 
+CTX:
 Judge explanation: The question asks for key growth drivers and risks based on TSLA's SEC filings in 2026. However, the context provided is empty, and the answer correctly states that SEC filings for 2026 are not yet available as of the current date. The answer does not make any claims about growth drivers or risks, nor does it invent or cite sources that do not exist. It a...
 
 [006] decision_id=130caacc-026c-4a00-954e-927e0dc16e00::faithfulness_v1 pred=1 kind=open_ended tickers=IESC
@@ -231,7 +231,7 @@ Judge explanation: The answer lists six material risks and uncertainties highlig
 [039] decision_id=831eccb4-a13b-4e93-b698-198b10e4e805::faithfulness_v1 pred=0 kind=open_ended tickers=AMZN
 Q: What are the most material risks and uncertainties AMZN (AMZN) highlights in 2026, and why do they matter? Cite sources.
 A: The question references '2026', but SEC filings for 2026 are not yet available. Please clarify if you meant the most recent available filing (e.g., 2023 or 2024) or if you are asking about forward-looking risks discussed in the latest 10-K or 10-Q. Also, confirm if you want risks from the most recent annual or quarterly report.
-CTX: 
+CTX:
 Judge explanation: The user's question asks for material risks and uncertainties that AMZN (Amazon) highlights in 2026. However, the context provided is empty — there is no actual content from Amazon’s 2026 filings or any other source. Since 2026 is in the future, no official SEC filings for that year exist yet. The assistant’s response correctly points out this issue and a...
 
 [040] decision_id=8385a00e-5d64-4a58-ae44-383de63c8737::faithfulness_v1 pred=0 kind=open_ended tickers=META
@@ -297,7 +297,7 @@ Judge explanation: The answer claims that TSLA launched its Robotaxi service in 
 [050] decision_id=b0c4fd1c-a44c-4059-a48f-1ebd2927f888::faithfulness_v1 pred=0 kind=open_ended tickers=META
 Q: Based on META (META)'s SEC filings in 2026, what are the key growth drivers and key risks? Cite sources.
 A: SEC filings for 2026 are not yet available as of current date. The request is out of scope for historical or current SEC filing analysis.
-CTX: 
+CTX:
 Judge explanation: The question asks for key growth drivers and risks based on META's SEC filings in 2026. However, the context provided is empty, and as of now, 2026 SEC filings do not exist — they will only be filed in the future. The answer correctly states that 2026 filings are not yet available and that the request is out of scope. Since the context is empty, there is...
 
 [051] decision_id=b30a3f9e-d247-407e-bc35-bb7d2ac7d611::faithfulness_v1 pred=1 kind=open_ended tickers=ATI
@@ -369,7 +369,7 @@ Judge explanation: The answer lists six material risks and uncertainties highlig
 [062] decision_id=cc580479-1c83-4fa4-a1fa-148c284f1236::faithfulness_v1 pred=0 kind=open_ended tickers=MSFT
 Q: Based on MSFT (MSFT)'s SEC filings in 2026, what are the key growth drivers and key risks? Cite sources.
 A: SEC filings for 2026 are not yet available as of now. The system cannot retrieve future filings.
-CTX: 
+CTX:
 Judge explanation: The question asks for information from MSFT's SEC filings in 2026, which are future documents and therefore not yet available. The provided context does not contain any information about 2026 filings or any forward-looking data. The answer correctly states that 2026 SEC filings are not yet available and that the system cannot retrieve future filings. This...
 
 [063] decision_id=cfc76955-d143-4684-aae5-b591e0a2dea6::faithfulness_v1 pred=0 kind=open_ended tickers=MSFT
@@ -453,7 +453,7 @@ Judge explanation: The answer provides a detailed summary of LITE’s strategy a
 [076] decision_id=e2f6460b-3284-40d1-bbbf-e45a3ad04e85::faithfulness_v1 pred=0 kind=open_ended tickers=AAPL
 Q: Based on AAPL (AAPL)'s SEC filings in 2026, what are the key growth drivers and key risks? Cite sources.
 A: SEC filings for 2026 are not available as they have not been filed yet. The system cannot retrieve future filings.
-CTX: 
+CTX:
 Judge explanation: The question asks for key growth drivers and risks based on AAPL's SEC filings in 2026. However, the context provided is empty, and the answer correctly states that SEC filings for 2026 are not available because they have not yet been filed. The answer does not make any claims about growth drivers or risks, nor does it invent sources or data. It simply ac...
 
 [077] decision_id=e621d5fa-f19c-43a7-8c3b-d0cb38d50531::faithfulness_v1 pred=1 kind=open_ended tickers=MU
@@ -491,4 +491,3 @@ Q: Summarize AMZN (AMZN)'s strategy and competitive positioning in 2025, with su
 A: **Analysis: AMZN’s Strategy and Competitive Positioning in 2025** Filing Date: 2025-10-31 (10-Q for Q4 2025) Covered Period: 2025Q1–2025Q4 (full year 2025) Note: The provided context includes filings through Q4 2025, with the most recent being the 10-Q filed on 2025-10-31, covering the nine months ended September 30, 2025. The 2025 annual results are not yet available, so analysis is based on partial-year data and forward-looking statements. --- **1. Core Strategy: Customer-Centricity and Long-Term Innovation**...
 CTX: [doc=AMZN_000101872425000086_10-Q_2025-08-01 chunk=AMZN_000101872425000086_10-Q_2025-08-01_59 score=2.1003] Ticker: AMZN Filing: 10-Q, filed 2025-08-01 Filing quarter: 2025Q3 Section: PART I. FINANCIAL INFORMATION > Item 1.Financial Statements > NOTES TO CONSOLIDATED FINANCIAL STATEMENTS > Note 6 — STOCKHOLDERS’ EQUITY > Stock Award Activity The following table summarizes our restricted stock unit activi [doc=AMZN_000101872425000123_10-Q_2025-10-31 chunk=AMZN_000101872425000123_10-Q_2025-10-31_62 score=2.0920] T...
 Judge explanation: The answer provides a detailed summary of AMZN’s strategy and competitive positioning in 2025, drawing from the provided context. Each claim is supported by direct citations from the 10-K (2025-02-07) and 10-Q (2025-10-31) filings. For example: - The core strategy of being 'Earth’s most customer-centric company' is directly quoted from the 10-K (chunk=AMZ...
-

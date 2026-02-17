@@ -59,9 +59,7 @@ def _tool_trace_summary(gen: EvalGeneration) -> dict[str, Any]:
         "tool_event_count": len(tool_names),
         "tool_names": " ".join(all_tools),
         "tool_results_count": len(gen.tool_results or []),
-        "finance_event_count": sum(
-            1 for name in lowered if "finance" in name or "edgar" in name or "yfinance" in name
-        ),
+        "finance_event_count": sum(1 for name in lowered if "finance" in name or "edgar" in name or "yfinance" in name),
         "used_yfinance": any("yfinance" in name for name in lowered),
         "used_edgar_financials": any("edgar" in name for name in lowered),
     }
@@ -138,12 +136,7 @@ def main() -> None:
         default=300.0,
         help="Per-judge-call timeout in seconds (set <=0 to disable provider timeout override).",
     )
-    ap.add_argument(
-        "--judge-max-retries",
-        type=int,
-        default=1,
-        help="Retry count after the first failed judge call.",
-    )
+    ap.add_argument("--judge-max-retries", type=int, default=1, help="Retry count after the first failed judge call.")
     ap.add_argument(
         "--judge-workers",
         type=int,

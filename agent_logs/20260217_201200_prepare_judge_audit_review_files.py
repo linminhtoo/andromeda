@@ -30,11 +30,13 @@ def main() -> None:
         with out_path.open("w", encoding="utf-8") as f:
             f.write(f"judge={judge_id} n={len(items)}\n\n")
             for idx, row in enumerate(items, start=1):
-                f.write(f"[{idx:03d}] decision_id={row.get('decision_id','')} pred={row.get('judge_prediction','')} kind={row.get('kind','')} tickers={row.get('target_tickers','')}\n")
-                f.write(f"Q: {_sanitize(row.get('question',''), 340)}\n")
-                f.write(f"A: {_sanitize(row.get('final_answer',''), 520)}\n")
-                f.write(f"CTX: {_sanitize(row.get('top_chunks_compact',''), 520)}\n")
-                f.write(f"Judge explanation: {_sanitize(row.get('judge_explanation',''), 360)}\n")
+                f.write(
+                    f"[{idx:03d}] decision_id={row.get('decision_id', '')} pred={row.get('judge_prediction', '')} kind={row.get('kind', '')} tickers={row.get('target_tickers', '')}\n"
+                )
+                f.write(f"Q: {_sanitize(row.get('question', ''), 340)}\n")
+                f.write(f"A: {_sanitize(row.get('final_answer', ''), 520)}\n")
+                f.write(f"CTX: {_sanitize(row.get('top_chunks_compact', ''), 520)}\n")
+                f.write(f"Judge explanation: {_sanitize(row.get('judge_explanation', ''), 360)}\n")
                 f.write("\n")
 
     print(f"Wrote review files under {OUT_DIR}")

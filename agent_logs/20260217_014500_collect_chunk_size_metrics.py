@@ -175,7 +175,9 @@ def main() -> None:
     lines.append(f"- source manifest: `{manifest_path}`")
     lines.append(f"- figure: `{fig_path}`")
     lines.append("")
-    lines.append("| chunk_size | overlap | qps | p50_ms | p95_ms | factual_numeric_acc | factual_correctness_fail | open_faithfulness_fail |")
+    lines.append(
+        "| chunk_size | overlap | qps | p50_ms | p95_ms | factual_numeric_acc | factual_correctness_fail | open_faithfulness_fail |"
+    )
     lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|")
     for row in rows:
         lines.append(

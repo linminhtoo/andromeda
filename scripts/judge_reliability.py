@@ -9,6 +9,7 @@ import random
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any, cast
 
 from sklearn.metrics import cohen_kappa_score, confusion_matrix, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
@@ -96,13 +97,14 @@ def _as_label(value: str) -> int | None:
     return int(text)
 
 
-def _metric_payload(y_true: list[int], y_pred: list[int]) -> dict[str, float | int]:
+def _metric_payload(y_true: list[int], y_pred: list[int]) -> dict[str, object]:
     """
     Compute classification metrics for the FAIL class (label=1).
     """
 
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
-    recall_fail = float(recall_score(y_true, y_pred, pos_label=1, zero_division=0))
+    zero_division = cast(Any, 0)
+    recall_fail = float(recall_score(y_true, y_pred, pos_label=1, zero_division=zero_division))
     specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
     accuracy = float((tp + tn) / len(y_true)) if y_true else 0.0
     if not y_true:
@@ -119,9 +121,9 @@ def _metric_payload(y_true: list[int], y_pred: list[int]) -> dict[str, float | i
         "tn": int(tn),
         "fn": int(fn),
         "accuracy": accuracy,
-        "precision_fail": float(precision_score(y_true, y_pred, pos_label=1, zero_division=0)),
+        "precision_fail": float(precision_score(y_true, y_pred, pos_label=1, zero_division=zero_division)),
         "recall_fail": recall_fail,
-        "f1_fail": float(f1_score(y_true, y_pred, pos_label=1, zero_division=0)),
+        "f1_fail": float(f1_score(y_true, y_pred, pos_label=1, zero_division=zero_division)),
         "specificity_pass": specificity,
         "balanced_accuracy": float((recall_fail + specificity) / 2.0),
         "cohen_kappa": kappa,
@@ -131,12 +133,7 @@ def _metric_payload(y_true: list[int], y_pred: list[int]) -> dict[str, float | i
 
 
 def _bootstrap_ci(
-    y_true: list[int],
-    y_pred: list[int],
-    *,
-    metric_name: str,
-    n_bootstrap: int,
-    seed: int,
+    y_true: list[int], y_pred: list[int], *, metric_name: str, n_bootstrap: int, seed: int
 ) -> dict[str, float]:
     """
     Bootstrap percentile confidence interval for a single metric.
@@ -153,25 +150,19 @@ def _bootstrap_ci(
         bt_true = [y_true[i] for i in idx]
         bt_pred = [y_pred[i] for i in idx]
         payload = _metric_payload(bt_true, bt_pred)
-        value = payload[metric_name]
+        value = payload.get(metric_name)
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"Metric {metric_name} is not numeric: {value!r}")
         vals.append(float(value))
 
     vals.sort()
     lo_idx = int(0.025 * (len(vals) - 1))
     hi_idx = int(0.975 * (len(vals) - 1))
-    return {
-        "mean": float(sum(vals) / len(vals)),
-        "ci95_lo": float(vals[lo_idx]),
-        "ci95_hi": float(vals[hi_idx]),
-    }
+    return {"mean": float(sum(vals) / len(vals)), "ci95_lo": float(vals[lo_idx]), "ci95_hi": float(vals[hi_idx])}
 
 
 def _split_labeled_rows(
-    rows: list[dict[str, str]],
-    *,
-    dev_fraction: float,
-    seed: int,
-    reuse_existing_split: bool,
+    rows: list[dict[str, str]], *, dev_fraction: float, seed: int, reuse_existing_split: bool
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """
     Build a dev/test split with optional reuse of existing split annotations.
@@ -190,18 +181,10 @@ def _split_labeled_rows(
 
     try:
         dev_idx, test_idx = train_test_split(
-            ids,
-            train_size=float(dev_fraction),
-            random_state=int(seed),
-            stratify=labels,
+            ids, train_size=float(dev_fraction), random_state=int(seed), stratify=labels
         )
     except Exception:
-        dev_idx, test_idx = train_test_split(
-            ids,
-            train_size=float(dev_fraction),
-            random_state=int(seed),
-            stratify=None,
-        )
+        dev_idx, test_idx = train_test_split(ids, train_size=float(dev_fraction), random_state=int(seed), stratify=None)
 
     dev_set = set(dev_idx)
     dev_rows: list[dict[str, str]] = []
@@ -250,12 +233,21 @@ def _build_audit(args: argparse.Namespace) -> None:
                     seen.add(key.decision_id)
 
                     pred_value = pred_map[judge_id]
+                    pred_text: str
+                    if isinstance(pred_value, bool):
+                        pred_text = "1" if pred_value else "0"
+                    elif isinstance(pred_value, (int, float, str)):
+                        pred_text = str(pred_value)
+                    else:
+                        continue
                     try:
-                        pred = int(pred_value)
+                        pred = int(pred_text)
                     except Exception:
                         continue
 
                     label, notes, split = existing.get(key.decision_id, ("", "", ""))
+                    exp_raw = exp_map.get(judge_id)
+                    judge_explanation = exp_raw if isinstance(exp_raw, str) else ""
                     decisions.append(
                         Decision(
                             decision_id=key.decision_id,
@@ -268,7 +260,7 @@ def _build_audit(args: argparse.Namespace) -> None:
                             final_answer=row.get("final_answer") or "",
                             top_chunks_compact=row.get("top_chunks_compact") or "",
                             judge_prediction=pred,
-                            judge_explanation=(exp_map.get(judge_id) or "") if isinstance(exp_map, dict) else "",
+                            judge_explanation=judge_explanation,
                             target_tickers=row.get("target_tickers") or "",
                             tags=row.get("tags") or "",
                             human_label=label,
@@ -352,10 +344,7 @@ def _evaluate(args: argparse.Namespace) -> None:
             continue
 
         dev_rows, test_rows = _split_labeled_rows(
-            labeled_rows,
-            dev_fraction=args.dev_fraction,
-            seed=args.seed + j_idx,
-            reuse_existing_split=args.reuse_split,
+            labeled_rows, dev_fraction=args.dev_fraction, seed=args.seed + j_idx, reuse_existing_split=args.reuse_split
         )
 
         def _pack(split_rows: list[dict[str, str]], metric_seed_offset: int) -> dict[str, object]:
@@ -408,7 +397,9 @@ def _evaluate(args: argparse.Namespace) -> None:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Judge reliability harness for manual audit + dev/test alignment metrics.")
+    parser = argparse.ArgumentParser(
+        description="Judge reliability harness for manual audit + dev/test alignment metrics."
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     build = subparsers.add_parser("build-audit", help="Build/refresh a decision-level audit CSV from run review files.")

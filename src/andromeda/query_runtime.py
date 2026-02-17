@@ -1862,8 +1862,7 @@ class RAGService:
                 "- Keep quotes short and verbatim from context/tool context.\n"
                 "- Never cite doc/chunk IDs that are absent from the provided context headers.\n"
                 "- If a requested point has no explicit quote support, state: "
-                "'Not explicitly stated in the provided context.'\n"
-                + year_scope_note
+                "'Not explicitly stated in the provided context.'\n" + year_scope_note
             )
         return None
 
