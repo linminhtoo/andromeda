@@ -8,9 +8,16 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
+- Open-ended eval experiment harness scripts for 100-question faithfulness/helpfulness-focused runs (with `12` generation threads, `12` judge workers, and `350s` timeout settings) under `agent_logs/`.
+- Open-ended iteration summary artifacts:
+  - `agent_logs/openended_iteration_metrics_20260217.csv`
+  - `agent_logs/openended_iteration_summary_20260217.md`
 
 ### Changed
 - Project/package rename from `finrag` to `andromeda` across Python module paths, imports, scripts, tests, and project metadata (including `pyproject.toml`, pre-commit path filters, and launch entrypoints).
+- Strengthened narrative answer guardrails in `src/andromeda/qa.py` to explicitly separate filing year vs covered fiscal period.
+- Expanded narrative-intent detection and retrieval-query diversification in `src/andromeda/query_runtime.py` for open-ended prompts (growth/risk/capital-allocation/execution/demand framing).
+- Added dynamic period-scope prompt notes in `src/andromeda/query_runtime.py` based on retrieved chunk metadata (`filing_date` vs `period_end_date`) to reduce unsupported year-scope claims.
 
 ### Fixed
 

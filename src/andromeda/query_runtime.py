@@ -471,14 +471,22 @@ class RAGService:
             " sec filing ",
             " sec filings ",
             " long-term investment ",
+            " long term investment ",
+            " investment thesis ",
+            " bull-vs-bear ",
+            " bull vs bear ",
             " business trajectory ",
             " growth driver ",
             " growth drivers ",
+            " growth opportunities ",
             " key risks ",
             " material risks ",
+            " downside risks ",
             " competitive positioning ",
+            " competitive position ",
             " risk factor ",
             " management discussion ",
+            " management commentary ",
             " md&a ",
             " discuss ",
             " explain ",
@@ -486,6 +494,17 @@ class RAGService:
             " outlook ",
             " strategy ",
             " segment ",
+            " capital allocation ",
+            " margin resilience ",
+            " cash-flow quality ",
+            " cash flow quality ",
+            " operational bottleneck ",
+            " operational bottlenecks ",
+            " dependencies ",
+            " demand trends ",
+            " customer behavior ",
+            " trade-off ",
+            " trade-offs ",
             " why ",
         )
         return any(token in lowered for token in tokens)
@@ -497,6 +516,7 @@ class RAGService:
             " growth ",
             " growth driver ",
             " growth drivers ",
+            " growth opportunities ",
             " strategy ",
             " competitive positioning ",
             " positioning ",
@@ -505,13 +525,58 @@ class RAGService:
             " long term investment ",
             " outlook ",
             " opportunities ",
+            " investment thesis ",
+            " capital allocation ",
         )
         return any(token in lowered for token in tokens)
 
     @staticmethod
     def _question_mentions_risk_dimension(question: str) -> bool:
         lowered = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
-        tokens = (" risk ", " risks ", " uncertainty ", " uncertainties ", " downside ")
+        tokens = (" risk ", " risks ", " uncertainty ", " uncertainties ", " downside ", " bottleneck ")
+        return any(token in lowered for token in tokens)
+
+    @staticmethod
+    def _question_mentions_capital_margin_or_cashflow(question: str) -> bool:
+        lowered = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
+        tokens = (
+            " capital allocation ",
+            " capex ",
+            " buyback ",
+            " buybacks ",
+            " debt ",
+            " margin ",
+            " margins ",
+            " profitability ",
+            " operating leverage ",
+            " cash flow ",
+            " cashflow ",
+            " working capital ",
+            " trade off ",
+            " trade offs ",
+            " trade-off ",
+            " trade-offs ",
+        )
+        return any(token in lowered for token in tokens)
+
+    @staticmethod
+    def _question_mentions_execution_or_demand(question: str) -> bool:
+        lowered = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
+        tokens = (
+            " execution ",
+            " operational ",
+            " dependency ",
+            " dependencies ",
+            " bottleneck ",
+            " bottlenecks ",
+            " demand trend ",
+            " demand trends ",
+            " customer behavior ",
+            " customer demand ",
+            " supply chain ",
+            " constraint ",
+            " constraints ",
+        )
         return any(token in lowered for token in tokens)
 
     def narrative_retrieval_queries(self, question: str) -> list[str]:
@@ -529,6 +594,14 @@ class RAGService:
             )
         if self._question_mentions_risk_dimension(question):
             queries.append(f"{base} Focus on explicitly stated risk factors, uncertainties, and constraints.")
+        if self._question_mentions_capital_margin_or_cashflow(question):
+            queries.append(
+                f"{base} Focus on explicit capital allocation, profitability, margin, and cash-flow disclosures."
+            )
+        if self._question_mentions_execution_or_demand(question):
+            queries.append(
+                f"{base} Focus on explicit execution dependencies, demand commentary, and operational constraints."
+            )
 
         deduped: list[str] = []
         seen: set[str] = set()
@@ -538,7 +611,7 @@ class RAGService:
                 continue
             seen.add(key)
             deduped.append(query)
-        return deduped[:3]
+        return deduped[:4]
 
     @staticmethod
     def _chunk_text_signature(sc: ScoredChunk) -> str:
@@ -1846,13 +1919,15 @@ class RAGService:
         """
 
         if self._question_mentions_filing_narrative(question):
-            years = sorted({token for token in re.findall(r"\b20\d{2}\b", question)})
+            years = self._requested_years(question)
             year_scope_note = ""
             if years:
                 year_scope_note = (
-                    "- Year-scope handling: interpret requested years as filing-year scope unless the user explicitly "
-                    "asks for fiscal-year scope. In the opening sentence, state both filing date and covered period "
-                    "when they differ.\n"
+                    "- Year-scope handling: when year(s) are requested, explicitly separate filing year from covered "
+                    "period before any analysis.\n"
+                    "- Never convert filing-year references into full-year performance claims unless cited evidence "
+                    "explicitly reports that year as the covered period.\n"
+                    "- If year scope is ambiguous, make the ambiguity explicit and avoid unsupported assumptions.\n"
                 )
             return (
                 "Narrative evidence mode:\n"
@@ -1865,6 +1940,80 @@ class RAGService:
                 "'Not explicitly stated in the provided context.'\n" + year_scope_note
             )
         return None
+
+    @staticmethod
+    def _requested_years(question: str) -> list[int]:
+        """
+        Extract distinct requested years from question text.
+        """
+
+        years = {int(token) for token in re.findall(r"\b20\d{2}\b", question)}
+        return sorted(years)
+
+    @staticmethod
+    def _year_from_iso_date(value: str | None) -> int | None:
+        """
+        Parse a year from an ISO date string.
+        """
+
+        if not isinstance(value, str):
+            return None
+        match = re.match(r"^(20\d{2})-\d{2}-\d{2}$", value.strip())
+        if match is None:
+            return None
+        return int(match.group(1))
+
+    def period_scope_prompt_extra(self, *, question: str, reranked: list[ScoredChunk]) -> str | None:
+        """
+        Add dynamic year-scope reminders based on filing-year vs covered-period metadata.
+        """
+
+        requested_years = self._requested_years(question)
+        if not requested_years or not reranked:
+            return None
+
+        top_window = reranked[: min(len(reranked), 20)]
+        filing_year_counts: dict[int, int] = {}
+        period_year_counts: dict[int, int] = {}
+        for sc in top_window:
+            parsed = chunk_metadata_from_value(sc.chunk.metadata)
+            doc = parsed.doc
+            filing_year = self._year_from_iso_date(doc.filing_date if doc is not None else None)
+            period_year = self._year_from_iso_date(doc.period_end_date if doc is not None else None)
+            if filing_year is not None:
+                filing_year_counts[filing_year] = filing_year_counts.get(filing_year, 0) + 1
+            if period_year is not None:
+                period_year_counts[period_year] = period_year_counts.get(period_year, 0) + 1
+
+        if not filing_year_counts and not period_year_counts:
+            return None
+
+        lines: list[str] = []
+        for year in requested_years:
+            filing_hits = filing_year_counts.get(year, 0)
+            period_hits = period_year_counts.get(year, 0)
+            if filing_hits > 0 and period_hits == 0:
+                lines.append(
+                    f"Requested year {year} appears as filing-year metadata but not covered-period metadata in top "
+                    "context; do not claim operating results for that year unless explicitly stated."
+                )
+            elif filing_hits > 0 and period_hits < filing_hits:
+                lines.append(
+                    f"Requested year {year} has partial covered-period support relative to filing-year matches; "
+                    "qualify conclusions with exact period scope."
+                )
+
+        if not lines:
+            return None
+
+        filing_years = ", ".join(str(year) for year in sorted(filing_year_counts))
+        period_years = ", ".join(str(year) for year in sorted(period_year_counts)) if period_year_counts else "(none)"
+        return (
+            "Period scope notes:\n"
+            f"- Observed filing years in top context: {filing_years}\n"
+            f"- Observed covered-period years in top context: {period_years}\n"
+            "- " + "\n- ".join(lines)
+        )
 
     def context_coverage_prompt_extra(self, *, question: str, reranked: list[ScoredChunk]) -> str | None:
         """
@@ -1891,6 +2040,9 @@ class RAGService:
                 "Retrieved context does not contain explicit risk disclosures; state that risk details are not "
                 "explicitly stated unless directly quoted."
             )
+        period_scope_extra = self.period_scope_prompt_extra(question=question, reranked=reranked)
+        if period_scope_extra:
+            lines.append(period_scope_extra)
         if not lines:
             return None
         return "Context coverage notes:\n- " + "\n- ".join(lines)
