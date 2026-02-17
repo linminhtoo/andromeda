@@ -2059,3 +2059,60 @@
 
 ### Resume condition
 - Resume only after Postgres accepts connections again on configured DSN.
+
+## 2026-02-17 - Judge alignment audit + prompt iterations (manual-labeled dev/test)
+
+### Baseline audit harness + labels
+- Commit: `99b3552`
+- Added judge reliability tooling and manual-audit dataset:
+  - `scripts/judge_reliability.py` (decision-level audit builder + dev/test metrics + bootstrap CIs)
+  - manual review prep scripts and curated open-ended scoring utility under `agent_logs/`
+  - baseline decision audit: `agent_logs/judge_audit_open71_plus_eval100_20260217.csv` (`n=167` decisions)
+  - baseline alignment report: `agent_logs/judge_reliability_baseline_20260217.json`
+- Manual labeling scope:
+  - target judges with non-zero fail rates: `faithfulness_v1`, `factual_correctness_v1`, factual `helpfulness_v1`, `focus_v1`
+  - source runs: single-eval100 + open-ended 71-sample curated subset
+  - labels stored in `human_label`/`human_notes` columns; manual overrides captured for known judge mistakes.
+- Baseline alignment (held-out test):
+  - `faithfulness_v1`: precision_fail `0.6667`, recall_fail `1.0000`, f1_fail `0.8000`, accuracy `0.9524`
+  - `factual_correctness_v1`: no fail-positives in test slice (`accuracy=1.0`, fail metrics degenerate)
+  - `focus_v1`: no fail-positives in test slice (`accuracy=1.0`, fail metrics degenerate)
+  - factual `helpfulness_v1`: no fail-positives in test slice (`accuracy=1.0`, fail metrics degenerate)
+
+### Iteration 1 (materiality-lenient faithfulness prompt)
+- Commit: `a6c3a66`
+- Artifacts:
+  - run script: `agent_logs/20260217_203100_judge_iter1_materiality_rescore.sh`
+  - audit snapshot: `agent_logs/judge_audit_open71_plus_eval100_iter1_materiality_20260217.csv`
+  - alignment report: `agent_logs/judge_reliability_iter1_materiality_20260217.json`
+- Result:
+  - reduced raw open-ended fail rates in rescoring summaries
+  - but **alignment regressed** on labeled test set for `faithfulness_v1`:
+    - precision_fail `0.6667 -> 0.5000`
+    - recall_fail `1.0000 -> 0.5000`
+    - f1_fail `0.8000 -> 0.5000`
+    - accuracy `0.9524 -> 0.9048`
+- Interpretation:
+  - prompt became too permissive; false negatives increased materially.
+
+### Iteration 2 (re-balanced materiality prompt)
+- Commit: `d33a603`
+- Artifacts:
+  - run script: `agent_logs/20260217_204100_judge_iter2_materiality_balanced_rescore.sh`
+  - audit snapshot: `agent_logs/judge_audit_open71_plus_eval100_iter2_materiality_balanced_20260217.csv`
+  - alignment report: `agent_logs/judge_reliability_iter2_materiality_balanced_20260217.json`
+- Result:
+  - did not recover alignment; remained worse than baseline on `faithfulness_v1` test:
+    - precision_fail `0.3333`
+    - recall_fail `0.5000`
+    - f1_fail `0.4000`
+    - accuracy `0.8571`
+- Interpretation:
+  - this prompt still under-calls fails relative to expert labels.
+
+### Action taken after iterations
+- Reverted `faithfulness_v1` prompt edits (kept original baseline prompt behavior).
+- Decision: keep baseline judge prompt and keep new reliability harness/manual audit workflow for future judge work.
+- Next judge-work direction:
+  - improve reliability via judge aggregation/consensus (harness-level) rather than prompt softening,
+  - keep fixed labeled split and track deltas only against this frozen benchmark.
