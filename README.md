@@ -1,215 +1,163 @@
 # Andromeda
 
-Andromeda is a financial question-answering system grounded in SEC filings, with a tools-first runtime that can combine retrieval-augmented generation (RAG), market data tools, and SEC financial statement tools in a single answer pipeline.
+Andromeda is a tools-first financial QA system over SEC filings, designed to answer both numeric and narrative investor questions with explicit retrieval evidence and structured tool outputs.
 
-## What this system does
+The system is built for production-style constraints:
+- local/self-hosted LLMs (vLLM)
+- PostgreSQL + pgvector retrieval
+- deterministic ingestion/indexing profiles
+- eval-driven iteration with reproducible experiment artifacts
 
-- Answers filing-grounded questions over an indexed SEC corpus.
-- Uses a planner to decide whether to:
-  - run RAG retrieval,
-  - call finance tools (`yfinance`, `edgar`),
-  - or do both.
-- Streams execution stages and partial output to the UI.
-- Supports conversation-aware follow-ups with clarification/refusal handling.
-- Supports profile-scoped ingestion and schema-scoped indexing for reproducible experiments.
+## Why This Project Is Interesting
 
-## System architecture
+This codebase started as a conventional RAG assistant and was evolved into a production-grade, eval-governed retrieval system:
+- planner-routed tools-first execution (yfinance/edgar before RAG when appropriate)
+- multi-ticker map/reduce reasoning path
+- high-recall retrieval with reranking and metadata-aware filtering
+- judge-calibrated evaluation harness with manual-audit alignment workflow
 
-### High-level runtime
+The result is not only better answer quality, but a much stronger engineering story: every major behavior change is backed by experiment artifacts and explicit metric impact.
 
-```mermaid
-flowchart LR
-  U[Web UI] -->|POST /query or /query_stream| API[FastAPI: andromeda.main]
-  API --> C[Conversation resolution]
-  API --> P[Planner: action + tool flags]
-  P --> T[Finance tools stage]
-  P --> R[Optional RAG stage]
-  T --> S[Synthesis prompt builder]
-  R --> S
-  S --> L[LLM draft/final generation]
-  L --> API
-  API --> H[History store]
-  API --> U
-```
+## Architecture
 
-1. UI sends `/query` or `/query_stream`.
-2. Planner produces a structured decision:
-   - action: `answer`, `clarification_required`, `refused`
-   - tool flags: `use_rag`, `use_yfinance`, `use_edgar_financials`
-3. Runtime executes tools-first pipeline:
-   - finance tools (optional)
-   - retrieval/rerank (optional, controlled by `use_rag`)
-   - answer synthesis over tool context + retrieved chunks
-4. API returns:
-   - final answer
-   - chunk citations
+### Request lifecycle
+
+1. API receives `/query` or `/query_stream`.
+2. Conversation state resolves pending clarification context.
+3. Planner decides action and tool mix:
+   - `answer`
+   - `clarification_required`
+   - `refused`
+   plus `use_rag`, `use_yfinance`, `use_edgar_financials`.
+4. Runtime executes tools-first pipeline:
+   - finance tool calls
+   - optional retrieval/rerank
+   - synthesis prompt assembly
+   - draft/final generation
+5. Response returns:
+   - answer text
+   - cited chunks
    - structured `tool_results`
-   - `tool_trace` decision/execution log
+   - `tool_trace` execution log
 
 ### Core backend modules
 
-- `src/andromeda/main.py`
-  - FastAPI wiring, endpoints, stream cancellation, history hooks.
-- `src/andromeda/query_runtime.py`
-  - Planner schema, tools-first pipeline execution, response assembly.
-- `src/andromeda/query_streaming.py`
-  - NDJSON stream orchestration and stage event emission.
-- `src/andromeda/finance_tools.py`
-  - Typed adapters for `yfinance` and `edgar` tool calls.
-- `src/andromeda/retriever.py`, `src/andromeda/db.py`
-  - PostgreSQL hybrid retrieval (`pgvector` + sparse search) and corpus persistence.
-- `src/andromeda/runtime_builders.py`
-  - Environment/profile-driven runtime construction.
+- API + wiring:
+  - `src/andromeda/main.py`
+- Query runtime package:
+  - `src/andromeda/query/runtime.py`
+  - `src/andromeda/query/streaming.py`
+  - `src/andromeda/query/conversation.py`
+- Runtime builders/config:
+  - `src/andromeda/runtime/builders.py`
+- Finance tools:
+  - `src/andromeda/finance_tools.py`
+- Retrieval/indexing:
+  - `src/andromeda/retrieval/retriever.py`
+  - `src/andromeda/retrieval/db.py`
+- Prompt construction:
+  - `src/andromeda/llm/qa.py`
+- History persistence:
+  - `src/andromeda/history/store.py`
+- Eval framework:
+  - `src/andromeda/eval/*`
+  - `scripts/run_eval.py`, `scripts/score_eval.py`, `scripts/judge_reliability.py`
 
-## Tools-first query lifecycle
+## Backend Evolution Story (Technical)
 
-### Planner outputs
+### Phase 1: From monolith to modular runtime
 
-Planner decisions are strongly typed and include:
+Earlier versions concentrated API, orchestration, and helpers in one path.
+Refactors separated concerns into:
+- query execution package (`query/`)
+- runtime construction (`runtime/builders.py`)
+- history/source/ingestion services
 
-- `action`: `answer | clarification_required | refused`
-- `tickers`, `filing_date_from`, `filing_date_to`
-- `use_per_ticker_retrieval`
-- `use_rag`, `use_yfinance`, `use_edgar_financials`
+Impact:
+- easier testing of individual execution stages
+- cleaner extension points for planner/tooling and streaming behavior
 
-When planner output is malformed, runtime falls back to deterministic ticker inference.
+### Phase 2: Tools-first orchestration
 
-### Execution order
+The system moved from implicit “RAG-first everything” to explicit planner-routed execution:
+- numeric/simple market questions can be handled by tools directly
+- narrative SEC questions still use retrieval-backed synthesis
+- mixed-mode answers combine both
 
-For `action=answer`, the runtime executes:
+Impact:
+- fewer avoidable numeric hallucinations
+- clearer traceability through `tool_trace` and structured tool payloads
 
-1. `plan`
-2. `finance tools`
-3. `retrieve` (only if `use_rag=true`)
-4. `rerank` (if enabled by generation settings)
-5. `draft/final` synthesis
+### Phase 3: Retrieval quality and latency engineering
 
-This enables tool-only answers for direct metric/market queries and mixed evidence answers for narrative filing questions.
+Key retrieval improvements:
+- profile-scoped indexing and schema isolation
+- sparse-method compatibility checks (bm25 vs fts)
+- chunk-size tradeoff experiments to choose a better operating point
 
-### App logic flow (`/query` and `/query_stream`)
+Observed result from controlled chunk-size study:
+- `512` chunks outperformed `1024` on both faithfulness and latency in tested settings
 
-```mermaid
-flowchart TD
-  A[Request received] --> B[Resolve conversation context]
-  B --> C[Resolve generation settings]
-  C --> D[Plan query]
-  D --> E{Planner action}
-  E -->|refused| F[Return refused response]
-  E -->|clarification_required| G[Return clarifying question]
-  E -->|answer| H[Execute finance tools]
-  H --> I{use_rag?}
-  I -->|no| J[Skip retrieval/rerank]
-  I -->|yes| K[Hybrid retrieve]
-  K --> L[Optional rerank]
-  J --> M[Build synthesis prompt]
-  L --> M
-  M --> N[Generate draft/final answer]
-  N --> O[Persist history + conversation state]
-  O --> P[Return response / stream done]
-```
+### Phase 4: Eval pipeline as first-class infrastructure
 
-### Streaming contract (`/query_stream`)
+The eval stack was upgraded from ad hoc scoring to a reproducible pipeline:
+- helpfulness as a first-class judge across query kinds
+- Edgar-backed factual validation during dataset creation
+- thread-parallel generation and judge scoring with timeout/retry controls
+- decision-level judge reliability audits with manual labels, dev/test splits, and bootstrap metrics
 
-The stream emits NDJSON events such as:
+Impact:
+- metrics became trustworthy enough to guide roadmap decisions
+- regressions are easier to detect and explain
 
-- `start`
-- `status` (`plan`, `tools`, `retrieve`, `rerank`, `draft`, `final`)
-- `tool_results`
-- `retrieved`
-- `reranked`
-- `draft_delta`, `final_delta`
-- `draft_done`
-- `done`
-- `cancelled`
-- `error`
+## Evaluation Runbook
 
-## Data model and retrieval
+See `README_EVAL.md` for:
+- canonical answer/judge hyperparameters
+- current metric snapshots
+- one-pass full-suite run scripts
+- query generation lineage (including tolerance filtering)
 
-### PostgreSQL schema
+## Data Pipeline
 
-The corpus is intentionally minimal:
-
-- `documents`
-  - filing-level metadata (`ticker`, `filing_date`, etc.)
-- `chunks`
-  - chunk text, metadata, vector embedding, generated `search_tsv`
-- `retrieval_runtime_config`
-  - schema-level sparse-method compatibility guard
-
-### Retrieval strategy
-
-`PostgresHybridRetriever` performs weighted reciprocal-rank fusion over:
-
-- dense rank: `embedding <=> query_vector` (pgvector)
-- sparse rank:
-  - BM25 via `pg_textsearch` (default), or
-  - PostgreSQL FTS (`ts_rank_cd`)
-
-Pre-ranking filters:
-
-- `tickers`
-- `filing_date_from`
-- `filing_date_to`
-
-For multi-ticker comparisons, runtime supports per-ticker retrieval fan-out + merge + ticker-coverage-aware rerank post-processing.
-
-### Sparse-method compatibility safety
-
-Indexing stores the sparse method (`bm25` or `fts`) in `retrieval_runtime_config`.
-Retrieval/indexing fail fast on method mismatch to prevent silent quality regressions.
-
-## Finance tool integration
-
-`src/andromeda/finance_tools.py` normalizes tool outputs into typed results:
-
-- `yfinance_get_ticker_info`
-- `yfinance_get_ticker_news`
-- `yfinance_get_price_history`
-- `edgar_get_financial_metrics`
-- `edgar_get_quarterly_financial_metrics`
-- `edgar_get_financial_statements`
-
-Each result includes:
-
-- `tool`
-- `ticker`
-- `status`: `ok | no_data | error`
-- `summary`
-- `payload` (bounded/normalized)
-
-Tool outputs are exposed in API responses (`QueryResponse.tool_results`) and rendered in a dedicated UI panel.
-
-## Ingestion and indexing
-
-### Pipeline
-
-```mermaid
-flowchart LR
-  EDGAR[SEC EDGAR] --> DL[scripts/download.py]
-  DL --> MD[scripts/process_html_to_markdown.py]
-  MD --> CH[scripts/chunk.py]
-  CH --> IDX[scripts/build_index.py]
-  IDX --> PG[(PostgreSQL)]
-  IDX --> CFG[retrieval_runtime_config]
-```
-
-The ingestion/indexing pipeline is:
-
+Ingestion/indexing pipeline:
 1. `scripts/download.py`
 2. `scripts/process_html_to_markdown.py`
 3. `scripts/chunk.py`
 4. `scripts/build_index.py`
 
-Shell wrappers (`*.sh`) default to profile-scoped artifact paths under `data/ingest_profiles/<profile>/...`.
+For eval assets and full-suite orchestration:
+- `scripts/prepare_eval_assets.sh`
+- `scripts/run_full_eval_suite.sh`
 
-### On-the-fly ticker ingestion
+## Local Setup
 
-Backend jobs (`/ingest`, `/ingest/{job_id}`) run the same pipeline in background threads via `src/andromeda/ingestion_jobs.py`, using persisted profile settings when available.
+```bash
+cp .env.example .env
+source .venv/bin/activate
+pip install -e ".[dev]"
+npm install
+```
 
-## API surface (primary endpoints)
+Set key env values:
+- `POSTGRES_DSN` (or `DATABASE_URL`)
+- `OPENAI_CHAT_BASE_URL`
+- `OPENAI_EMBED_BASE_URL`
+- model names compatible with your hosted endpoints
+
+## Running the App
+
+```bash
+source .venv/bin/activate
+python -m uvicorn andromeda.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+UI:
+- `http://localhost:8000/`
+
+## API Endpoints
 
 - `GET /health`
-- `GET /generation_presets`
 - `POST /query`
 - `POST /query_stream`
 - `POST /cancel`
@@ -222,109 +170,11 @@ Backend jobs (`/ingest`, `/ingest/{job_id}`) run the same pipeline in background
 - `GET /history_entry`
 - `DELETE /history`
 
-## Local development
+## Development Workflow
 
-Run from repository root.
+Use eval and logbook discipline for any quality-impacting change:
+- document intent and run script
+- record run IDs and metric deltas in `agent_logs/LOGBOOK.md`
+- keep reproducible artifacts/scripts under `agent_logs/`
 
-### 1) Environment
-
-```bash
-cp .env.example .env
-```
-
-Set at minimum:
-
-- `POSTGRES_DSN` (or `DATABASE_URL`)
-- `OPENAI_API_KEY` (or provider-specific key)
-- model/base-url settings for your runtime
-
-Recommended for experiment isolation:
-
-- `POSTGRES_SCHEMA`
-- `POSTGRES_SPARSE_SEARCH_METHOD`
-
-### 2) Python/Node setup
-
-```bash
-source .venv/bin/activate
-pip install -e ".[dev]"
-npm install
-```
-
-### 3) Build index
-
-```bash
-bash scripts/download.sh
-bash scripts/process_html_to_markdown.sh
-bash scripts/chunk.sh
-bash scripts/build_index.sh
-```
-
-### 4) Launch app
-
-```bash
-bash scripts/launch_app.sh
-```
-
-Default UI routes:
-
-- `http://localhost:8236/` (Q&A)
-- `http://localhost:8236/review` (evaluation review)
-
-## Testing and quality gates
-
-Python:
-
-```bash
-source .venv/bin/activate
-pre-commit run --all
-pytest -vvv tests/
-```
-
-Frontend:
-
-```bash
-npm run -s test:unit
-npm run -s test:ui
-```
-
-## Design decisions and tradeoffs
-
-- Tools-first orchestration improves flexibility: tool-only, RAG-only, or mixed answers per query.
-- PostgreSQL-first storage/retrieval keeps operational footprint compact and reproducible.
-- Profile + schema scoping makes experiments safer on shared databases.
-- Strict sparse-method compatibility checks prioritize correctness over silent fallback behavior.
-- Modular runtime separation (`main` wiring vs. query/runtime services) reduces endpoint complexity and improves testability.
-
-## PostgreSQL data model
-
-```mermaid
-erDiagram
-  DOCUMENTS {
-    text doc_id PK
-    text source
-    text ticker
-    text company
-    date filing_date
-    jsonb metadata
-  }
-
-  CHUNKS {
-    text chunk_id PK
-    text doc_id FK
-    int chunk_index
-    text retrieval_text
-    text retrieval_context
-    vector embedding
-    tsvector search_tsv
-    jsonb metadata
-  }
-
-  RETRIEVAL_RUNTIME_CONFIG {
-    smallint id PK
-    text sparse_search_method
-    timestamptz updated_at
-  }
-
-  DOCUMENTS ||--o{ CHUNKS : contains
-```
+This repository is optimized for “show your work” engineering: design choice -> experiment -> metric delta -> next action.
