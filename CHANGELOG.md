@@ -12,12 +12,15 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Open-ended iteration summary artifacts:
   - `agent_logs/openended_iteration_metrics_20260217.csv`
   - `agent_logs/openended_iteration_summary_20260217.md`
+- Interactive price-chart modal in the main query UI (`src/andromeda/static/index.html`, `src/andromeda/static/ts/index/main.ts`) with hover inspection and candlestick rendering when OHLC data is available.
 
 ### Changed
 - Project/package rename from `finrag` to `andromeda` across Python module paths, imports, scripts, tests, and project metadata (including `pyproject.toml`, pre-commit path filters, and launch entrypoints).
 - Strengthened narrative answer guardrails in `src/andromeda/qa.py` to explicitly separate filing year vs covered fiscal period.
 - Expanded narrative-intent detection and retrieval-query diversification in `src/andromeda/query_runtime.py` for open-ended prompts (growth/risk/capital-allocation/execution/demand framing).
 - Added dynamic period-scope prompt notes in `src/andromeda/query_runtime.py` based on retrieved chunk metadata (`filing_date` vs `period_end_date`) to reduce unsupported year-scope claims.
+- Refined the "Tool snapshot" cards to avoid header overflow/cramped rendering and replaced internal code-style tool names with polished user-facing titles.
+- Replaced EDGAR tool raw JSON rendering in the UI with structured, human-readable metric/statement tables so financial outputs are understandable to non-technical users.
 
 ### Fixed
 

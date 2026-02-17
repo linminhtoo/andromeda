@@ -2415,3 +2415,19 @@
 
 - Commit:
   - `065abdd`
+
+## 2026-02-18 - Process guardrail for audit-pass logging cadence
+
+### Guardrail
+- For every complete manual audit pass, add a dedicated `Audit pass summary` block to `agent_logs/LOGBOOK.md` immediately before launching the next judge-prompt iteration.
+- Minimum fields to log each pass:
+  - run ID/path audited,
+  - audited fail count,
+  - judge-error vs genuine-fail counts,
+  - top recurring failure buckets,
+  - concrete next-step decision.
+
+### Retroactive confirmation
+- The open200 audit summary preceding Judge Iteration 1 is recorded in:
+  - `agent_logs/LOGBOOK.md` under `## 2026-02-18 - Open200 judge audit pass (faithfulness) + Judge Iteration 1`
+  - subsection `### Audit pass summary (requested cadence: after each complete pass)`.
