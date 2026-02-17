@@ -2431,3 +2431,37 @@
 - The open200 audit summary preceding Judge Iteration 1 is recorded in:
   - `agent_logs/LOGBOOK.md` under `## 2026-02-18 - Open200 judge audit pass (faithfulness) + Judge Iteration 1`
   - subsection `### Audit pass summary (requested cadence: after each complete pass)`.
+
+## 2026-02-18 - Eval documentation refresh + structure cleanup baseline
+
+### What changed
+- Rewrote `README_EVAL.md` as the canonical runbook for current best eval settings:
+  - production-matched generation hyperparameters (`normal` preset, tools enabled, no refine),
+  - judge settings (`judge_context_chars=80000`, timeout/retry/workers),
+  - current metric snapshots across single/multi/open tracks,
+  - one-pass full-suite execution instructions.
+- Added reproducible orchestration scripts:
+  - `scripts/prepare_eval_assets.sh`
+  - `scripts/run_full_eval_suite.sh`
+  (includes manifest output with run paths + score summaries).
+- Reorganized backend module layout for cleaner `src/` grouping:
+  - query runtime modules moved under `src/andromeda/query/`
+  - runtime builders moved under `src/andromeda/runtime/`
+  - history persistence moved under `src/andromeda/history/`
+  - imports updated across app/tests.
+- Added `agent_logs/README.md` and nested folders (`plans/`, `scripts/`, `audits/`, `reports/`, `artifacts/`, `references/`) for future artifacts.
+
+### Important compatibility decision
+- Did **not** move historical top-level `agent_logs/*` artifacts already referenced in this logbook.
+- Reason: preserve all existing path references for reproducibility and handoff continuity.
+
+### Observations
+- Historical eval scripts and docs had diverged from current best operational settings; this made exact replay harder for new contributors.
+- A single run-group manifest materially improves reproducibility/debuggability when multiple eval tracks are launched together.
+
+### Next actionable step
+- Use `PREPARE_ASSETS=1 bash scripts/run_full_eval_suite.sh` for the next baseline sweep, then append run-group manifest path and metric deltas here.
+
+### Validation
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> pass.
+- `source .venv/bin/activate && pytest -vvv tests/` -> pass (`116 passed, 2 warnings`).
