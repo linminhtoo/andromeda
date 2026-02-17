@@ -10,8 +10,8 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - Open-ended eval experiment harness scripts for 100-question faithfulness/helpfulness-focused runs (with `12` generation threads, `12` judge workers, and `350s` timeout settings) under `agent_logs/`.
 - Open-ended iteration summary artifacts:
-  - `agent_logs/openended_iteration_metrics_20260217.csv`
-  - `agent_logs/openended_iteration_summary_20260217.md`
+  - `agent_logs/reports/openended_iteration_metrics_20260217.csv`
+  - `agent_logs/reports/openended_iteration_summary_20260217.md`
 - Interactive price-chart modal in the main query UI (`src/andromeda/static/index.html`, `src/andromeda/static/ts/index/main.ts`) with hover inspection and candlestick rendering when OHLC data is available.
 - Canonical eval orchestration scripts:
   - `scripts/prepare_eval_assets.sh` to rebuild chunk512 eval assets and query sets

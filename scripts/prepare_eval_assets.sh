@@ -21,10 +21,10 @@ fi
 export HOME=/tmp
 
 # Reuse historical, reproducible scripts to keep lineage with LOGBOOK entries.
-bash agent_logs/20260217_042950_build_combined_profile_chunk512.sh
-bash agent_logs/20260217_043020_generate_eval_set_combined512_validated_tol05.sh
-bash agent_logs/20260217_043130_build_eval100_subsets_combined512_tol05.sh
-bash agent_logs/20260217_235950_generate_openended200_diverse_v1.sh
+bash agent_logs/scripts/eval/20260217_042950_build_combined_profile_chunk512.sh
+bash agent_logs/scripts/eval/20260217_043020_generate_eval_set_combined512_validated_tol05.sh
+bash agent_logs/scripts/eval/20260217_043130_build_eval100_subsets_combined512_tol05.sh
+bash agent_logs/scripts/eval/20260217_235950_generate_openended200_diverse_v1.sh
 
 echo "Prepared assets:"
 echo "  - data/ingest_profiles/eval_revamp_combined_512_20260217/sec_filings_md_secparser/chunked_512_64/doc_index.jsonl"

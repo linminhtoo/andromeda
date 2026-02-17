@@ -13,7 +13,7 @@ It reflects the latest preferred setup from `agent_logs/LOGBOOK.md` and the late
 - dense model: `BAAI/bge-m3`
 - sparse method: `bm25`
 
-Rationale: in the controlled sweep (`agent_logs/chunk_size_tradeoff_17Feb2026.md`), `512` dominated `1024` on both latency and faithfulness in the tested setting.
+Rationale: in the controlled sweep (`agent_logs/reports/chunk_size_tradeoff_17Feb2026.md`), `512` dominated `1024` on both latency and faithfulness in the tested setting.
 
 ### Answering hyperparameters (generation side)
 - generation preset: `normal` (`src/andromeda/llm/generation_controls.py`)
@@ -102,10 +102,10 @@ What this executes:
 ## 4) Query Generation Lineage (Including Tolerance Filtering)
 
 The current eval assets are generated with these scripts:
-- profile/index build: `agent_logs/20260217_042950_build_combined_profile_chunk512.sh`
-- validated query generation: `agent_logs/20260217_043020_generate_eval_set_combined512_validated_tol05.sh`
-- subset builder: `agent_logs/20260217_043130_build_eval100_subsets_combined512_tol05.sh`
-- open-ended 200 pool: `agent_logs/20260217_235950_generate_openended200_diverse_v1.sh`
+- profile/index build: `agent_logs/scripts/eval/20260217_042950_build_combined_profile_chunk512.sh`
+- validated query generation: `agent_logs/scripts/eval/20260217_043020_generate_eval_set_combined512_validated_tol05.sh`
+- subset builder: `agent_logs/scripts/eval/20260217_043130_build_eval100_subsets_combined512_tol05.sh`
+- open-ended 200 pool: `agent_logs/scripts/eval/20260217_235950_generate_openended200_diverse_v1.sh`
 
 Key factual-label settings:
 - `--validate-factual-with-edgar`
