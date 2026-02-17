@@ -2204,3 +2204,65 @@
 ### Actionable next steps
 - Keep iter3-style narrative routing/retrieval behavior as baseline for next open-ended improvements.
 - Next potential improvement area (not implemented in this loop): add explicit answer post-check for year-scope claims (claim-level period validator) to reduce remaining period mismatch failures in high-risk families (`growth_risk_balance`, `execution_dependencies`, `risk_materiality`).
+
+## 2026-02-17 - Iter3 faithfulness fail-case manual audit (review.csv human labels)
+
+### Scope
+- Audited every `faithfulness_v1` fail from the best Iter3 run:
+  - `eval/results_revamp/open/eval_run.open_diverse_iter3_narrativecoverage_normal_tools12_norefine_qt350_jt350.20260217_223936`
+- For each failed case, manually reviewed:
+  - question,
+  - final answer,
+  - judge explanation,
+  - cited chunk evidence in run artifacts.
+- Wrote manual annotations into run-local `review.csv` using:
+  - `human_label` (`1` = genuine fail, `0` = judge error)
+  - `human_notes` (short rationale).
+
+### Artifacts updated
+- `eval/results_revamp/open/eval_run.open_diverse_iter3_narrativecoverage_normal_tools12_norefine_qt350_jt350.20260217_223936/review.csv`
+- Supporting audit pack used during review:
+  - `agent_logs/iter3_fail_cases_20260217.md`
+
+### Label results on fail set
+- Judge-predicted fails audited: `18/18`
+- Manual labels:
+  - `judge error (human_label=0)`: `16`
+  - `genuine model fail (human_label=1)`: `2`
+- Estimated fail precision on this audited fail bucket: `2 / 18 = 11.1%`
+  - Note: this is fail-bucket precision only (not full confusion metrics, since only fail rows were manually labeled in this pass).
+
+### Genuine error cases (judge was right)
+- `022c16b7-48dc-45ff-83eb-6be81d6f07cd` (ATI risk materiality)
+  - Answer injected unsupported detail: claimed a new CBA was reached in April 2025; not present in cited context.
+- `9582bacb-591f-4ba2-96f8-f0d090f39910` (APH strategy positioning)
+  - Answer misattributed organic growth percentages to segments (39/15 claim does not match cited segment rows).
+
+### Judge-error cases found (judge was wrong)
+- Temporal-validity false alarms (judge treated provided 2026 filings as non-existent):
+  - `aeb38e88-27dc-40a9-a039-a43e865516f3`
+  - `95554e27-8d56-43e5-ac3c-878e01a9d9e1`
+- Filing-year vs period-end metadata confusion (judge rejected grounded 2025-filed evidence):
+  - `b7d1655d-5194-4db2-92db-670161b28678`
+  - `1ef52375-c59b-471c-a6ce-6681e97b182a`
+  - `99c04bbf-213f-4fb0-b849-7d7b0fa335b6`
+- Missed evidence in cited tables/chunks (judge claimed unsupported values that were present):
+  - `2b462d5b-1ccc-47bf-a8ea-2177f77f16b7`
+  - `4393a735-4c92-469c-9ac0-ac76e7353109`
+  - `d7f3e8cc-a87e-4ed8-bd67-54f5990a544e`
+  - `ad329082-4576-4ba4-8b01-a31d3be6e7cb`
+- Over-strict handling of inference-style prompts where synthesis is expected:
+  - `4c39d465-a8f1-49e4-bc5f-e42717b5f210`
+  - `5a8bf84a-c1f2-4499-af99-6317e2f6763d`
+  - `9cf874e2-1fe7-4c7f-a89e-6fcbc087c9ef`
+  - `c1cd294c-e1a5-4b90-ab5f-5fa93a52f9ea`
+  - `1a21f637-a044-45f5-9c49-0fff90d37a01`
+  - `0bb3d61a-4681-4697-a298-cea294bffffe`
+  - `0ece38a9-c0f8-4238-9521-5013b66012d3`
+
+### Practical takeaway
+- The current judge is substantially over-calling fail on this Iter3 open-ended set.
+- For next judge iteration, priority should be reducing false positive fail calls in these classes:
+  - date/period semantics,
+  - evidence lookup robustness for tables,
+  - calibration for synthesis-heavy prompts where grounded inference is acceptable.
