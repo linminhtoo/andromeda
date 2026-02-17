@@ -2266,3 +2266,115 @@
   - date/period semantics,
   - evidence lookup robustness for tables,
   - calibration for synthesis-heavy prompts where grounded inference is acceptable.
+
+## 2026-02-18 - Tool snapshot UI polish (EDGAR readability + interactive chart modal)
+
+### Previous state
+- Tool snapshot cards could look cramped under dense tool output, and long code-style tool names (notably EDGAR tools) could visually overflow card headers.
+- EDGAR outputs were shown as raw JSON in the answer pane, which was difficult for non-technical users to interpret quickly.
+- Price history was only shown as a small inline sparkline with no expanded inspection mode.
+
+### What changed
+- Updated tool snapshot card styling in `src/andromeda/static/index.html` to improve spacing hierarchy and prevent header overflow:
+  - title wrapping/overflow handling,
+  - better header/meta pill layout,
+  - improved responsive card behavior.
+- Added polished user-facing tool labels in `src/andromeda/static/ts/index/main.ts` (e.g., SEC annual/quarterly metrics, SEC financial statements) instead of raw internal function IDs.
+- Reworked EDGAR rendering in `src/andromeda/static/ts/index/main.ts`:
+  - `edgar_get_financial_metrics` / `edgar_get_quarterly_financial_metrics` now render as metric tables,
+  - `edgar_get_financial_statements` now renders structured statement blocks with parsed line items (and readable line fallback when parsing is sparse),
+  - removed raw JSON-first presentation for EDGAR cards.
+- Added interactive price chart modal UI:
+  - modal markup/styles in `src/andromeda/static/index.html`,
+  - DOM wiring in `src/andromeda/static/ts/index/dom.ts`,
+  - click-to-expand chart behavior in `src/andromeda/static/ts/index/main.ts`,
+  - hover tooltip with date/price/volume inspection,
+  - candlestick rendering in modal when OHLC fields are present; line view fallback otherwise.
+- Rebuilt generated frontend JS with `npm run -s build:ts`.
+
+### Why
+- Make tool outputs presentable and immediately understandable for investment-oriented users, not just developers.
+- Reduce cognitive load in the answer pane by replacing raw payload dumps with structured financial views.
+- Improve chart usability by allowing expanded, interactive data inspection directly inside the app.
+
+### Surprising findings
+- `pre-commit` still cannot write to default cache path in this environment; must use `PRE_COMMIT_HOME=/tmp/pre-commit-cache`.
+- The first `pre-commit run --all` pass auto-fixed trailing whitespace in `agent_logs/iter3_fail_cases_20260217.md`; second pass was clean.
+
+### Validation experiments and results
+- `npm run -s build:ts` -> pass.
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> pass.
+- `source .venv/bin/activate && pytest -vvv tests/` -> pass (`116 passed, 2 warnings`).
+
+## 2026-02-18 - Open200 judge audit pass (faithfulness) + Judge Iteration 1
+
+### Audit pass summary (requested cadence: after each complete pass)
+- Scope:
+  - Completed manual audit on all `43/43` open200 `faithfulness_v1` fail calls from:
+    - `eval/results_revamp/open/eval_run.open_diverse200_iter0_baseline_normal_tools12_norefine_qt350_jt350.20260218_002122`
+  - Wrote labels (`human_label`, `human_notes`) into:
+    - `agent_logs/judge_audit_faithfulness_open71_single100_open200_20260218.csv`
+  - Labeling script artifact:
+    - `agent_logs/20260218_020500_label_open200_faithfulness_fails_manual.py`
+- Manual outcome:
+  - Judge errors: `39`
+  - Genuine model failures: `4`
+  - Genuine fail IDs (material errors):
+    - `3f21a340-59f4-4098-a0b8-c9b96c084390` (dividend total miscomputed)
+    - `b2a9a8c5-c747-4241-90d2-9d057a130e4f` (margin direction claim contradicts cited numbers)
+    - `cd87db11-396f-433a-a829-38ad0b2a0249` (segment-share contradiction + unsupported growth ranges)
+    - `d6125077-0b78-4959-be5f-0064349b7e34` (capex numeric mismatch)
+- Baseline reliability (before prompt iteration):
+  - Report:
+    - `agent_logs/judge_reliability_open71_single100_open200_manual_20260218.json`
+  - Labeled set: `n=125` (`dev=93`, `test=32`)
+  - Test metrics:
+    - `precision_fail=0.1875`
+    - `recall_fail=1.0`
+    - `f1_fail=0.3158`
+    - `accuracy=0.5938`
+  - Observation:
+    - Dominant failure mode was false-positive fail calls (over-strict interpretation of temporal framing/inference).
+
+### Judge Iteration 1 (materiality-aware faithfulness prompt)
+- Prompt change:
+  - Updated `faithfulness_v1` rubric in:
+    - `src/andromeda/eval/judges.py`
+  - Key adjustments:
+    - evaluate material faithfulness (not peripheral issues),
+    - allow grounded synthesis/derived calculations,
+    - avoid outside-world temporal assumptions,
+    - fail only on material unsupported/contradicted claims.
+- Rescore run (fixed generations, judge-only iteration):
+  - Script:
+    - `agent_logs/20260218_021100_judge_iter3_open200_materiality_rescore.sh`
+  - Output:
+    - `eval/results_revamp/judge_tuning/eval_run.open200_judge_iter3_materiality.20260218_010749`
+  - Open200 fail-rate change:
+    - `faithfulness_v1: 0.215 -> 0.08`
+- Harness correction for apples-to-apples reliability:
+  - Found that naive rebuild changed labeled population (`125 -> 144`) because run extraction changed single-run decision coverage.
+  - Fixed by reusing exact baseline labeled decision IDs/splits and swapping only open200 predictions via:
+    - `agent_logs/20260218_022000_merge_iter1_predictions_into_baseline_audit.py`
+  - Apples-to-apples audit file:
+    - `agent_logs/judge_audit_faithfulness_open71_single100_open200_iter1_materiality_apples_20260218.csv`
+  - Iter1 reliability report:
+    - `agent_logs/judge_reliability_open71_single100_open200_iter1_materiality_apples_20260218.json`
+- Apples-to-apples metric delta vs baseline (`n=125` fixed):
+  - Dev:
+    - `precision_fail: 0.2105 -> 0.3889`
+    - `recall_fail: 1.0000 -> 0.8750`
+    - `f1_fail: 0.3478 -> 0.5385`
+    - `accuracy: 0.6774 -> 0.8710`
+    - `cohen_kappa: 0.2398 -> 0.4761`
+  - Test:
+    - `precision_fail: 0.1875 -> 1.0000`
+    - `recall_fail: 1.0000 -> 1.0000`
+    - `f1_fail: 0.3158 -> 1.0000`
+    - `accuracy: 0.5938 -> 1.0000`
+- Caution:
+  - Test sample remains small; despite large gains, this should be treated as promising but provisional.
+  - Next reliability step should label additional pass-predicted rows to measure false-negative drift under the softer rubric.
+
+- Commit:
+  - pending (will be filled immediately after commit in next LOGBOOK update entry)

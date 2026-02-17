@@ -1,0 +1,99 @@
+{
+  "audit_csv": "agent_logs/judge_audit_faithfulness_open71_single100_open200_iter1_materiality_apples_20260218.csv",
+  "seed": 42,
+  "dev_fraction": 0.75,
+  "n_bootstrap": 2000,
+  "judges": {
+    "faithfulness_v1": {
+      "n_labeled": 125,
+      "n_dev": 93,
+      "n_test": 32,
+      "dev": {
+        "n": 93,
+        "tp": 7,
+        "fp": 11,
+        "tn": 74,
+        "fn": 1,
+        "accuracy": 0.8709677419354839,
+        "precision_fail": 0.3888888888888889,
+        "recall_fail": 0.875,
+        "f1_fail": 0.5384615384615384,
+        "specificity_pass": 0.8705882352941177,
+        "balanced_accuracy": 0.8727941176470588,
+        "cohen_kappa": 0.47605633802816905,
+        "judge_fail_rate": 0.1935483870967742,
+        "human_fail_rate": 0.08602150537634409,
+        "bootstrap_ci95": {
+          "accuracy": {
+            "mean": 0.8729193548387096,
+            "ci95_lo": 0.7956989247311828,
+            "ci95_hi": 0.9354838709677419
+          },
+          "precision_fail": {
+            "mean": 0.3901658714558047,
+            "ci95_lo": 0.15789473684210525,
+            "ci95_hi": 0.6363636363636364
+          },
+          "recall_fail": {
+            "mean": 0.875766655210115,
+            "ci95_lo": 0.5714285714285714,
+            "ci95_hi": 1.0
+          },
+          "f1_fail": {
+            "mean": 0.5260710762500401,
+            "ci95_lo": 0.25,
+            "ci95_hi": 0.75
+          },
+          "balanced_accuracy": {
+            "mean": 0.8754571219359886,
+            "ci95_lo": 0.7318181818181818,
+            "ci95_hi": 0.9634146341463414
+          }
+        }
+      },
+      "test": {
+        "n": 32,
+        "tp": 3,
+        "fp": 0,
+        "tn": 29,
+        "fn": 0,
+        "accuracy": 1.0,
+        "precision_fail": 1.0,
+        "recall_fail": 1.0,
+        "f1_fail": 1.0,
+        "specificity_pass": 1.0,
+        "balanced_accuracy": 1.0,
+        "cohen_kappa": 1.0,
+        "judge_fail_rate": 0.09375,
+        "human_fail_rate": 0.09375,
+        "bootstrap_ci95": {
+          "accuracy": {
+            "mean": 1.0,
+            "ci95_lo": 1.0,
+            "ci95_hi": 1.0
+          },
+          "precision_fail": {
+            "mean": 0.9565,
+            "ci95_lo": 0.0,
+            "ci95_hi": 1.0
+          },
+          "recall_fail": {
+            "mean": 0.9585,
+            "ci95_lo": 0.0,
+            "ci95_hi": 1.0
+          },
+          "f1_fail": {
+            "mean": 0.959,
+            "ci95_lo": 0.0,
+            "ci95_hi": 1.0
+          },
+          "balanced_accuracy": {
+            "mean": 0.977,
+            "ci95_lo": 0.5,
+            "ci95_hi": 1.0
+          }
+        }
+      }
+    }
+  }
+}
