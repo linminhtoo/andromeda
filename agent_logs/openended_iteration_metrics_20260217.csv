@@ -1,0 +1,5 @@
+iteration,strategy,run_dir,n,n_ok,n_err,avg_total_ms,wall_total_ms,faithfulness_fail_rate,helpfulness_fail_rate,faithfulness_fail_pct,helpfulness_fail_pct
+iter1,baseline diverse open-ended set,eval/results_revamp/open/eval_run.open_diverse_iter1_baseline_normal_tools12_norefine_qt350_jt350.20260217_220205,100,100,0,76652.63,664463.61,0.220000000000,0.000000000000,22.00%,0.00%
+iter2,period-scope guardrail prompt additions,eval/results_revamp/open/eval_run.open_diverse_iter2_periodscope_normal_tools12_norefine_qt350_jt350.20260217_222053,100,100,0,78127.36,680486.50,0.260000000000,0.000000000000,26.00%,0.00%
+iter3,expanded narrative intent + diversified retrieval queries,eval/results_revamp/open/eval_run.open_diverse_iter3_narrativecoverage_normal_tools12_norefine_qt350_jt350.20260217_223936,100,100,0,74754.20,663397.43,0.180000000000,0.000000000000,18.00%,0.00%
+iter4,narrative draft temperature=0 (ablation),eval/results_revamp/open/eval_run.open_diverse_iter4_narrativetemp0_normal_tools12_norefine_qt350_jt350.20260217_225755,100,99,1,84879.85,803361.40,0.232323232323,0.000000000000,23.23%,0.00%
