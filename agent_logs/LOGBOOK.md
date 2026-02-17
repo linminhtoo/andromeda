@@ -2044,3 +2044,18 @@
 ### Actionable next step after this checkpoint
 - Keep chunk-512 + generation retry as baseline runtime settings.
 - Revert/soften the v2 prompt-tightening changes and prioritize judge reliability + targeted factual ambiguity handling next.
+
+## 2026-02-17 - Iteration pause due Postgres outage (per instruction)
+
+### Detection
+- While resuming eval iterations, a direct DB connectivity check failed:
+  - DSN host: `127.0.0.1`
+  - port: `6543`
+  - error: `psycopg.OperationalError: connection refused`
+
+### Action taken
+- Stopped all eval iteration work immediately.
+- Did not launch new generation/index/eval jobs after failure detection.
+
+### Resume condition
+- Resume only after Postgres accepts connections again on configured DSN.
