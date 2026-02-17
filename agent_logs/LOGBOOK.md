@@ -2377,4 +2377,4 @@
   - Next reliability step should label additional pass-predicted rows to measure false-negative drift under the softer rubric.
 
 - Commit:
-  - pending (will be filled immediately after commit in next LOGBOOK update entry)
+  - `79a0ac5`
