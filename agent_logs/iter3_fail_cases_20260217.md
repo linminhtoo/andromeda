@@ -119,57 +119,57 @@ The 2026 10-K filing for GOOGL (filed February 5, 2026, covering the fiscal year
 
 ---
 
-**1. Supply Chain and Manufacturing Risks**  
-*Why it matters:* Disruptions in supply chains could delay product launches, impair technical infrastructure expansion, and increase costs, directly affecting revenue and margins.  
-*Direct quote:* “We face a number of manufacturing and supply chain risks that could affect our ability to supply our products and services and harm our business, financial condition, and operating results.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_28]  
+**1. Supply Chain and Manufacturing Risks**
+*Why it matters:* Disruptions in supply chains could delay product launches, impair technical infrastructure expansion, and increase costs, directly affecting revenue and margins.
+*Direct quote:* “We face a number of manufacturing and supply chain risks that could affect our ability to supply our products and services and harm our business, financial condition, and operating results.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_28]
 *Additional context:* The company relies on limited suppliers for AI chips (e.g., TPUs and GPUs), and global energy constraints are increasing complexity in securing compute capacity. A supply interruption could delay data center expansions or consumer product availability. [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_28]
 
 ---
 
-**2. Cybersecurity and Data Privacy Risks**  
-*Why it matters:* Breaches or misuse of user data could lead to legal liabilities, regulatory penalties, reputational damage, and loss of user trust, which are critical for Google’s advertising and platform-based business.  
-*Direct quote:* “Computer viruses, software bugs or defects, security breaches, and attacks on our systems could result in the improper disclosure and use of user data and interference with our users' and customers' ability to use our products and services, harming our business and reputation.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_36]  
+**2. Cybersecurity and Data Privacy Risks**
+*Why it matters:* Breaches or misuse of user data could lead to legal liabilities, regulatory penalties, reputational damage, and loss of user trust, which are critical for Google’s advertising and platform-based business.
+*Direct quote:* “Computer viruses, software bugs or defects, security breaches, and attacks on our systems could result in the improper disclosure and use of user data and interference with our users' and customers' ability to use our products and services, harming our business and reputation.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_36]
 *Additional context:* AI is increasing the sophistication of cyber attacks, including phishing and impersonation of executives. The company also faces risks from insider errors and nation-state actors, especially targeting public sector customers. [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_38]
 
 ---
 
-**3. Advertising Revenue Dependence and Market Shifts**  
-*Why it matters:* Over 70% of 2025 revenues came from online advertising, making the company vulnerable to economic downturns, advertiser spending shifts, and technological changes like ad-blocking or AI-driven personalization challenges.  
-*Direct quote:* “We generated more than 70% of total revenues from online advertising in 2025.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_19]  
+**3. Advertising Revenue Dependence and Market Shifts**
+*Why it matters:* Over 70% of 2025 revenues came from online advertising, making the company vulnerable to economic downturns, advertiser spending shifts, and technological changes like ad-blocking or AI-driven personalization challenges.
+*Direct quote:* “We generated more than 70% of total revenues from online advertising in 2025.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_19]
 *Additional context:* AI is reshaping advertising, and failure to adapt could harm competitiveness. Advertisers may shift to alternative platforms or technologies that block ads, reducing Google’s monetization effectiveness. [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_19]
 
 ---
 
-**4. AI-Related Risks and Investment Uncertainties**  
-*Why it matters:* Heavy investments in AI infrastructure and products carry high costs and uncertain returns, and could divert resources from core operations or fail to deliver expected value.  
-*Direct quote:* “Our increasing investment in new businesses, products, services, and technologies is inherently risky, and could divert management attention and harm our business, financial condition, and operating results.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_19]  
+**4. AI-Related Risks and Investment Uncertainties**
+*Why it matters:* Heavy investments in AI infrastructure and products carry high costs and uncertain returns, and could divert resources from core operations or fail to deliver expected value.
+*Direct quote:* “Our increasing investment in new businesses, products, services, and technologies is inherently risky, and could divert management attention and harm our business, financial condition, and operating results.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_19]
 *Additional context:* AI development increases exposure to cyber attacks, ethical concerns, and regulatory scrutiny. The company may incur unanticipated liabilities or fail to achieve commercial viability in new AI ventures. [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_21]
 
 ---
 
-**5. Regulatory and Legal Risks**  
-*Why it matters:* Ongoing antitrust and privacy investigations could result in fines, operational restrictions, or reputational damage, affecting business practices and financial performance.  
-*Direct quote:* “We are and may continue to be subject to claims, lawsuits, regulatory and government inquiries and investigations, enforcement actions, consent orders, and other forms of regulatory scrutiny and legal liability... which could harm our business, reputation, financial condition, and operating results.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_46]  
+**5. Regulatory and Legal Risks**
+*Why it matters:* Ongoing antitrust and privacy investigations could result in fines, operational restrictions, or reputational damage, affecting business practices and financial performance.
+*Direct quote:* “We are and may continue to be subject to claims, lawsuits, regulatory and government inquiries and investigations, enforcement actions, consent orders, and other forms of regulatory scrutiny and legal liability... which could harm our business, reputation, financial condition, and operating results.” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_46]
 *Additional context:* The company faces legal matters with uncertain outcomes, including antitrust cases, which may result in material losses. [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_311]
 
 ---
 
-**6. Brand and Reputation Risks**  
-*Why it matters:* Google’s brand is central to its ability to attract users, advertisers, and partners. Any reputational damage from data misuse, content issues, or product failures could erode trust and reduce engagement.  
-*Direct quote:* “Our strong brands have significantly contributed to the success of our business. Maintaining and enhancing the brands within Google Services, Google Cloud, and Other Bets increases our ability to enter new categories and launch new and innovative products and services...” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_27]  
+**6. Brand and Reputation Risks**
+*Why it matters:* Google’s brand is central to its ability to attract users, advertisers, and partners. Any reputational damage from data misuse, content issues, or product failures could erode trust and reduce engagement.
+*Direct quote:* “Our strong brands have significantly contributed to the success of our business. Maintaining and enhancing the brands within Google Services, Google Cloud, and Other Bets increases our ability to enter new categories and launch new and innovative products and services...” [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_27]
 *Additional context:* Misinformation, data privacy concerns, and product quality issues could harm brand perception. [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_27]
 
 ---
 
 ### Cited Sources
 
-- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_28]  
-- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_36]  
-- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_38]  
-- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_19]  
-- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_21]  
-- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_46]  
-- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_311]  
+- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_28]
+- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_36]
+- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_38]
+- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_19]
+- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_21]
+- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_46]
+- [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_311]
 - [doc=GOOGL_000165204426000018_10-K_2026-02-05 chunk=GOOGL_000165204426000018_10-K_2026-02-05_27]
 
 **Citations Parsed**
@@ -218,38 +218,38 @@ Based on NVDA’s filings in 2025 (covering fiscal year 2026), management priori
 
 ---
 
-**1. Management prioritized long-term investment through increased capital spending and strategic acquisitions.**  
-Why it matters: This indicates a focus on future growth and infrastructure, particularly in AI and domestic manufacturing, rather than maximizing short-term margins.  
+**1. Management prioritized long-term investment through increased capital spending and strategic acquisitions.**
+Why it matters: This indicates a focus on future growth and infrastructure, particularly in AI and domestic manufacturing, rather than maximizing short-term margins.
 Quote: “we plan to increase our u. s. - based manufacturing and invest in specialized equipment and processes to support domestic production.” [doc=NVDA_000104581025000116_10-Q_2025-05-28 chunk=NVDA_000104581025000116_10-Q_2025-05-28_101]
 
 ---
 
-**2. Cash used in investing activities increased in fiscal year 2026 compared to fiscal year 2025, driven by higher purchases of property and equipment and non-marketable equity securities.**  
-Why it matters: This reflects active long-term investment in physical infrastructure and strategic partnerships, such as potential investments in OpenAI and Anthropic.  
+**2. Cash used in investing activities increased in fiscal year 2026 compared to fiscal year 2025, driven by higher purchases of property and equipment and non-marketable equity securities.**
+Why it matters: This reflects active long-term investment in physical infrastructure and strategic partnerships, such as potential investments in OpenAI and Anthropic.
 Quote: “Cash used in investing activities increased in the first nine months of fiscal year 2026 compared to the first nine months of fiscal year 2025, primarily driven by higher purchases of non-marketable equity securities and higher purchases of property and equipment.” [doc=NVDA_000104581025000230_10-Q_2025-11-19 chunk=NVDA_000104581025000230_10-Q_2025-11-19_127]
 
 ---
 
-**3. Management explicitly stated intent to invest up to $10 billion in Anthropic and pursue investments in OpenAI, indicating strategic long-term bets.**  
-Why it matters: These are high-risk, high-reward investments in AI infrastructure, signaling a commitment to long-term dominance in AI rather than near-term profit optimization.  
+**3. Management explicitly stated intent to invest up to $10 billion in Anthropic and pursue investments in OpenAI, indicating strategic long-term bets.**
+Why it matters: These are high-risk, high-reward investments in AI infrastructure, signaling a commitment to long-term dominance in AI rather than near-term profit optimization.
 Quote: “In November 2025, we entered into an agreement, subject to certain closing conditions, to invest up to $10 billion in Anthropic.” [doc=NVDA_000104581025000230_10-Q_2025-11-19 chunk=NVDA_000104581025000230_10-Q_2025-11-19_150]
 
 ---
 
-**4. Despite higher investments, net income and operating income grew significantly year-over-year, suggesting profitability is not being sacrificed entirely.**  
-Why it matters: While investing heavily, the company is still generating strong profits, indicating a balance between growth and profitability.  
+**4. Despite higher investments, net income and operating income grew significantly year-over-year, suggesting profitability is not being sacrificed entirely.**
+Why it matters: While investing heavily, the company is still generating strong profits, indicating a balance between growth and profitability.
 Quote: “Net income $31,910.0 million in Q3 FY2026 vs. $19,309.0 million in Q3 FY2025, a 65% year-over-year increase.” [doc=NVDA_000104581025000230_10-Q_2025-11-19 chunk=NVDA_000104581025000230_10-Q_2025-11-19_106]
 
 ---
 
-**5. Share repurchases increased significantly, indicating confidence in long-term value creation.**  
-Why it matters: This suggests management believes in the company’s future growth and is returning capital to shareholders, even while investing heavily.  
+**5. Share repurchases increased significantly, indicating confidence in long-term value creation.**
+Why it matters: This suggests management believes in the company’s future growth and is returning capital to shareholders, even while investing heavily.
 Quote: “Cash used in financing activities increased in the first quarter of fiscal year 2026 compared to the first quarter of fiscal year 2025, mainly due to higher share repurchases.” [doc=NVDA_000104581025000116_10-Q_2025-05-28 chunk=NVDA_000104581025000116_10-Q_2025-05-28_121]
 
 ---
 
-**6. Gross margin declined in Q1 FY2026 compared to prior quarters, likely due to increased investment in manufacturing and supply chain.**  
-Why it matters: This is a direct trade-off — higher investment in long-term capacity (e.g., U.S. manufacturing) may temporarily reduce gross margins.  
+**6. Gross margin declined in Q1 FY2026 compared to prior quarters, likely due to increased investment in manufacturing and supply chain.**
+Why it matters: This is a direct trade-off — higher investment in long-term capacity (e.g., U.S. manufacturing) may temporarily reduce gross margins.
 Quote: “Gross margin 60.5% in Q1 FY2026 vs. 73.0% in Q4 FY2025, a 12.5-point decline.” [doc=NVDA_000104581025000116_10-Q_2025-05-28 chunk=NVDA_000104581025000116_10-Q_2025-05-28_102]
 
 ---
@@ -293,41 +293,41 @@ The answer claims to be based on IESC's SEC filings in 2025 and lists key growth
 
 **Key Growth Drivers**
 
-1. **Strong Demand in Data Center and Communications Markets**  
-   *Why it matters:* Data centers are a core growth area for IESC, serving multiple segments (Communications, Infrastructure Solutions, Commercial & Industrial), and demand remains particularly strong.  
+1. **Strong Demand in Data Center and Communications Markets**
+   *Why it matters:* Data centers are a core growth area for IESC, serving multiple segments (Communications, Infrastructure Solutions, Commercial & Industrial), and demand remains particularly strong.
    *Quote:* “Demand with respect to data centers, a key end market served by our Communications, Infrastructure Solutions, and Commercial & Industrial segments, remains particularly strong.” [doc=IESC_000104826825000174_10-K_2025-11-21 chunk=IESC_000104826825000174_10-K_2025-11-21_106]
 
-2. **Record-Level Backlog Across Segments**  
-   *Why it matters:* High backlog indicates strong future revenue visibility and operational momentum.  
+2. **Record-Level Backlog Across Segments**
+   *Why it matters:* High backlog indicates strong future revenue visibility and operational momentum.
    *Quote:* “Heading into fiscal 2026, backlog across our business segments as a whole remains at record levels, reflecting strong demand in key end markets.” [doc=IESC_000104826825000174_10-K_2025-11-21 chunk=IESC_000104826825000174_10-K_2025-11-21_106]
 
-3. **Long-Term Strategy: Expansion of Recurring Revenue and Acquisitions**  
-   *Why it matters:* Focus on recurring revenue models and strategic acquisitions supports sustainable, diversified growth.  
+3. **Long-Term Strategy: Expansion of Recurring Revenue and Acquisitions**
+   *Why it matters:* Focus on recurring revenue models and strategic acquisitions supports sustainable, diversified growth.
    *Quote:* “Key elements of our long-term strategy include continued investment in our employees’ technical expertise and expansion of our on-site maintenance and recurring revenue model, as well as opportunistic acquisitions of businesses that serve our markets…” [doc=IESC_000104826825000174_10-K_2025-11-21 chunk=IESC_000104826825000174_10-K_2025-11-21_14]
 
-4. **Aggregate Year-Over-Year Revenue Growth in Fiscal 2025**  
-   *Why it matters:* Demonstrates successful execution of growth initiatives.  
+4. **Aggregate Year-Over-Year Revenue Growth in Fiscal 2025**
+   *Why it matters:* Demonstrates successful execution of growth initiatives.
    *Quote:* “increased demand for the Company’s services and the Company’s previous investment in growth initiatives and other business-specific factors discussed below resulted in aggregate year-over-year revenue growth in fiscal 2025 as compared to fiscal 2024.” [doc=IESC_000104826825000174_10-K_2025-11-21 chunk=IESC_000104826825000174_10-K_2025-11-21_106]
 
 ---
 
 **Key Risks**
 
-1. **Commodity Price Volatility**  
-   *Why it matters:* Fluctuations in copper, aluminum, steel, fuel, and plastics can impact margins due to fixed-price contracts.  
+1. **Commodity Price Volatility**
+   *Why it matters:* Fluctuations in copper, aluminum, steel, fuel, and plastics can impact margins due to fixed-price contracts.
    *Quote:* “Our exposure to significant market risks includes fluctuations in commodity prices for, among other things, copper, aluminum, steel, electrical components, certain plastics, and fuel. Commodity price risks may have an impact on our results of operations due to the fixed-price nature of many of our contracts.” [doc=IESC_000104826825000106_10-Q_2025-08-01 chunk=IESC_000104826825000106_10-Q_2025-08-01_133]
 
-2. **Labor Constraints and Availability**  
-   *Why it matters:* Labor shortages can limit growth capacity, especially in high-demand segments like data centers.  
-   *Quote:* “the pace of growth in this business may also be slowed by the availability of labor.” [doc=IESC_000104826825000174_10-K_2025-11-21 chunk=IESC_000104826825000174_10-K_2025-11-21_14]  
+2. **Labor Constraints and Availability**
+   *Why it matters:* Labor shortages can limit growth capacity, especially in high-demand segments like data centers.
+   *Quote:* “the pace of growth in this business may also be slowed by the availability of labor.” [doc=IESC_000104826825000174_10-K_2025-11-21 chunk=IESC_000104826825000174_10-K_2025-11-21_14]
    *Also:* “availability of labor and capacity could constrain the rate at which we are able to grow this business.” [doc=IESC_000104826825000174_10-K_2025-11-21 chunk=IESC_000104826825000174_10-K_2025-11-21_106]
 
-3. **Residential Market Challenges Due to Housing Affordability and Interest Rates**  
-   *Why it matters:* Elevated mortgage rates and inflation are reducing demand in the single-family and multi-family housing markets.  
+3. **Residential Market Challenges Due to Housing Affordability and Interest Rates**
+   *Why it matters:* Elevated mortgage rates and inflation are reducing demand in the single-family and multi-family housing markets.
    *Quote:* “In our Residential business, we expect the challenges that affected demand for our services in the single-family market throughout fiscal 2025 will continue to affect us going into fiscal 2026, as housing affordability continues to be negatively impacted by elevated mortgage rates and the impact of inflation on materials and labor costs.” [doc=IESC_000104826825000174_10-K_2025-11-21 chunk=IESC_000104826825000174_10-K_2025-11-21_106]
 
-4. **Cash Flow and Capital Access Risks**  
-   *Why it matters:* Growth and operations depend on cash flow, credit facility availability, and capital markets access.  
+4. **Cash Flow and Capital Access Risks**
+   *Why it matters:* Growth and operations depend on cash flow, credit facility availability, and capital markets access.
    *Quote:* “To continue to grow our business, including through acquisitions and the funding of working capital, we may require a significant amount of cash. Our ability to generate or otherwise access cash depends on many externally influenced factors…” [doc=IESC_000104826825000174_10-K_2025-11-21 chunk=IESC_000104826825000174_10-K_2025-11-21_106]
 
 ---
@@ -372,43 +372,43 @@ The answer claims to be based on MSFT's SEC filings in 2025 and presents key gro
 
 ### **Key Growth Drivers**
 
-1. **Strategic Focus on Cloud Growth and Segment Realignment**  
-   *Why it matters:* Microsoft is reorganizing its business segments to better align with its strategic focus on cloud services, particularly Microsoft 365 Commercial, which is now a dedicated growth metric. This realignment reflects a shift toward higher-margin, subscription-based cloud revenue.  
+1. **Strategic Focus on Cloud Growth and Segment Realignment**
+   *Why it matters:* Microsoft is reorganizing its business segments to better align with its strategic focus on cloud services, particularly Microsoft 365 Commercial, which is now a dedicated growth metric. This realignment reflects a shift toward higher-margin, subscription-based cloud revenue.
    *Direct quote:* “The key change was bringing the commercial components of Microsoft 365 together and creating a new Microsoft 365 Commercial cloud revenue growth metric. Other changes include combining Windows OEM and Devices into a single revenue growth metric that brings revenue from PC market-driven businesses together, as well as elevating our cloud revenue growth metrics to align to our strategic focus on cloud growth.” [doc=MSFT_000095017025010491_10-Q_2025-01-29 chunk=MSFT_000095017025010491_10-Q_2025-01-29_118]
 
-2. **Strong Revenue and Profit Growth in Fiscal 2025**  
-   *Why it matters:* Microsoft reported significant year-over-year growth in revenue, gross margin, and net income in fiscal 2025, indicating robust top-line and bottom-line expansion.  
+2. **Strong Revenue and Profit Growth in Fiscal 2025**
+   *Why it matters:* Microsoft reported significant year-over-year growth in revenue, gross margin, and net income in fiscal 2025, indicating robust top-line and bottom-line expansion.
    *Direct quote:* “Revenue $281,724 million in 2025 vs. $245,122 million in 2024 (15% increase); Net income $101,832 million in 2025 vs. $88,136 million in 2024 (16% increase).” [doc=MSFT_000095017025100235_10-K_2025-07-30 chunk=MSFT_000095017025100235_10-K_2025-07-30_91]
 
-3. **Increased Investment in Research and Development (R&D)**  
-   *Why it matters:* Microsoft is scaling R&D spending to drive innovation, which is critical for maintaining competitive advantage in AI, cloud, and enterprise software.  
+3. **Increased Investment in Research and Development (R&D)**
+   *Why it matters:* Microsoft is scaling R&D spending to drive innovation, which is critical for maintaining competitive advantage in AI, cloud, and enterprise software.
    *Direct quote:* “Research and development $32,488 million in 2025 vs. $29,510 million in 2024 (10% increase).” [doc=MSFT_000095017025100235_10-K_2025-07-30 chunk=MSFT_000095017025100235_10-K_2025-07-30_97]
 
 ---
 
 ### **Key Risks**
 
-1. **Cybersecurity and Data Privacy Vulnerabilities**  
-   *Why it matters:* Cyberattacks could lead to revenue loss, increased costs, liability, and reputational damage, especially given Microsoft’s extensive platform exposure.  
+1. **Cybersecurity and Data Privacy Vulnerabilities**
+   *Why it matters:* Cyberattacks could lead to revenue loss, increased costs, liability, and reputational damage, especially given Microsoft’s extensive platform exposure.
    *Direct quote:* “Cyberattacks and security vulnerabilities could lead to reduced revenue, increased costs, liability claims, or harm to our reputation or competitive position.” [doc=MSFT_000095017025010491_10-Q_2025-01-29 chunk=MSFT_000095017025010491_10-Q_2025-01-29_186]
 
-2. **Legal and Regulatory Contingencies**  
-   *Why it matters:* Ongoing legal proceedings could result in significant financial liabilities or operational disruptions.  
+2. **Legal and Regulatory Contingencies**
+   *Why it matters:* Ongoing legal proceedings could result in significant financial liabilities or operational disruptions.
    *Direct quote:* “Refer to Note 14 – contingencies of the notes to financial statements (Part I, Item 1 of this Form 10-Q) for information regarding legal proceedings in which we are involved.” [doc=MSFT_000095017025061046_10-Q_2025-04-30 chunk=MSFT_000095017025061046_10-Q_2025-04-30_163]
 
-3. **Economic and Market Volatility**  
-   *Why it matters:* External economic conditions and industry slowdowns could impact growth rates in key segments.  
+3. **Economic and Market Volatility**
+   *Why it matters:* External economic conditions and industry slowdowns could impact growth rates in key segments.
    *Direct quote:* “...slower growth rates in industry segments in which we participate.” [doc=MSFT_000095017025010491_10-Q_2025-01-29 chunk=MSFT_000095017025010491_10-Q_2025-01-29_186]
 
 ---
 
 ### **Cited Sources**
 
-- [doc=MSFT_000095017025010491_10-Q_2025-01-29 chunk=MSFT_000095017025010491_10-Q_2025-01-29_118]  
-- [doc=MSFT_000095017025100235_10-K_2025-07-30 chunk=MSFT_000095017025100235_10-K_2025-07-30_91]  
-- [doc=MSFT_000095017025100235_10-K_2025-07-30 chunk=MSFT_000095017025100235_10-K_2025-07-30_97]  
-- [doc=MSFT_000095017025010491_10-Q_2025-01-29 chunk=MSFT_000095017025010491_10-Q_2025-01-29_186]  
-- [doc=MSFT_000095017025061046_10-Q_2025-04-30 chunk=MSFT_000095017025061046_10-Q_2025-04-30_163]  
+- [doc=MSFT_000095017025010491_10-Q_2025-01-29 chunk=MSFT_000095017025010491_10-Q_2025-01-29_118]
+- [doc=MSFT_000095017025100235_10-K_2025-07-30 chunk=MSFT_000095017025100235_10-K_2025-07-30_91]
+- [doc=MSFT_000095017025100235_10-K_2025-07-30 chunk=MSFT_000095017025100235_10-K_2025-07-30_97]
+- [doc=MSFT_000095017025010491_10-Q_2025-01-29 chunk=MSFT_000095017025010491_10-Q_2025-01-29_186]
+- [doc=MSFT_000095017025061046_10-Q_2025-04-30 chunk=MSFT_000095017025061046_10-Q_2025-04-30_163]
 - [doc=MSFT_000095017025010491_10-Q_2025-01-29 chunk=MSFT_000095017025010491_10-Q_2025-01-29_186]
 
 **Citations Parsed**
@@ -552,43 +552,43 @@ The provided context is from AMD’s 10-K filing dated February 4, 2026, which c
 
 ### **Top Three Growth Opportunities for AMD in 2026**
 
-**1. Expansion of AI Capabilities and Generative AI Solutions**  
-*Why it matters:* AI is a strategic growth driver for AMD, particularly in the data center segment, where demand for AI accelerators has been significant. The company is investing in hardware and software tools to support scalable AI solutions, positioning itself to benefit from the growing adoption of generative AI.  
+**1. Expansion of AI Capabilities and Generative AI Solutions**
+*Why it matters:* AI is a strategic growth driver for AMD, particularly in the data center segment, where demand for AI accelerators has been significant. The company is investing in hardware and software tools to support scalable AI solutions, positioning itself to benefit from the growing adoption of generative AI.
 *Direct quote:* “As part of our pervasive AI strategy, we have a portfolio of hardware products and software tools to allow our customers to develop scalable and pervasive AI solutions. We are actively building AI capabilities into our products…” [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_66]
 
-**2. Strategic Acquisitions and Integration of New Technologies**  
-*Why it matters:* AMD has completed acquisitions (e.g., ZT Systems in March 2025) to expand its product offerings and services. Successful integration of these businesses can drive innovation, cost efficiencies, and market expansion.  
+**2. Strategic Acquisitions and Integration of New Technologies**
+*Why it matters:* AMD has completed acquisitions (e.g., ZT Systems in March 2025) to expand its product offerings and services. Successful integration of these businesses can drive innovation, cost efficiencies, and market expansion.
 *Direct quote:* “We have acquired and invested in businesses, and may continue to do so, that offer products, services and technologies that we believe will help expand our product offerings and services and grow our business…” [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_117]
 
-**3. Global Market Expansion in High-Growth Adjacent Emerging Markets**  
-*Why it matters:* AMD’s growth is tied to demand in emerging global markets. Success in these regions depends on establishing local infrastructure and relationships, which, if achieved, could open new revenue streams.  
+**3. Global Market Expansion in High-Growth Adjacent Emerging Markets**
+*Why it matters:* AMD’s growth is tied to demand in emerging global markets. Success in these regions depends on establishing local infrastructure and relationships, which, if achieved, could open new revenue streams.
 *Direct quote:* “The growth of our business is also dependent on continued demand for our products from high-growth adjacent emerging global markets. Our ability to be successful in such markets depends in part on our ability to establish adequate local infrastructure, as well as our ability to cultivate and maintain local relationships in these markets.” [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_62]
 
 ---
 
 ### **Top Three Downside Risks for AMD in 2026**
 
-**1. Intense Competition and Pricing Pressure from Rivals (e.g., Nvidia, Intel)**  
-*Why it matters:* Competitors like Nvidia and Intel have strong market positions, financial resources, and ecosystem advantages that can lead to aggressive pricing, reduced market share, and lower margins for AMD.  
+**1. Intense Competition and Pricing Pressure from Rivals (e.g., Nvidia, Intel)**
+*Why it matters:* Competitors like Nvidia and Intel have strong market positions, financial resources, and ecosystem advantages that can lead to aggressive pricing, reduced market share, and lower margins for AMD.
 *Direct quote:* “Nvidia leverages its market position in data center GPU, financial resources, and proprietary software ecosystem to promote its systems and influences customers who do business with us.” [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_61]
 
-**2. Highly Cyclical Semiconductor Industry and Economic Downturns**  
-*Why it matters:* The semiconductor industry is prone to severe downturns, which have historically led to price erosion, excess inventory, and reduced demand. Economic uncertainty can further dampen consumer and business spending.  
+**2. Highly Cyclical Semiconductor Industry and Economic Downturns**
+*Why it matters:* The semiconductor industry is prone to severe downturns, which have historically led to price erosion, excess inventory, and reduced demand. Economic uncertainty can further dampen consumer and business spending.
 *Direct quote:* “The semiconductor industry is highly cyclical and has experienced severe downturns that have materially adversely affected, and may continue to materially adversely affect, our business in the future.” [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_62]
 
-**3. Supply Chain Vulnerabilities and Dependence on Limited Suppliers**  
-*Why it matters:* AMD relies on third-party manufacturers and a limited number of suppliers for critical materials. Disruptions or price increases could impair production and profitability.  
+**3. Supply Chain Vulnerabilities and Dependence on Limited Suppliers**
+*Why it matters:* AMD relies on third-party manufacturers and a limited number of suppliers for critical materials. Disruptions or price increases could impair production and profitability.
 *Direct quote:* “Because some of the equipment and materials that we and our third-party manufacturers purchase are complex, it is sometimes difficult to substitute one equipment or materials supplier for another. From time to time, suppliers may extend lead times, limit supply or increase prices due to capacity constraints or other factors.” [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_78]
 
 ---
 
 ### **Cited Sources**
 
-- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_66]  
-- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_117]  
-- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_62]  
-- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_61]  
-- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_62]  
+- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_66]
+- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_117]
+- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_62]
+- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_61]
+- [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_62]
 - [doc=AMD_000000248826000018_10-K_2026-02-04 chunk=AMD_000000248826000018_10-K_2026-02-04_78]
 
 **Citations Parsed**
@@ -703,8 +703,8 @@ The provided context includes management commentary from APH’s 10-Q filings fo
 
 *Why it matters:* The Communications Solutions segment is the largest segment (approximately 50–53% of net sales), and its performance is a key indicator of overall demand trends. The segment’s growth is explicitly attributed to high-demand areas like AI and IT datacom, which are growth-oriented markets.
 
-*Direct quote:*  
-“Net sales in the Communications Solutions segment (approximately 53% of net sales) in the third quarter of 2025 increased 96% in U.S. dollars, 96% in constant currencies and 75% organically, compared to the third quarter of 2024. The increase in the third quarter of 2025 was driven by robust organic growth in the IT datacom market, with particular strength in artificial intelligence (“AI”)-related applications, as well as strong organic growth in the communications networks, automotive and industrial markets, along with contributions from the Company’s acquisition program.”  
+*Direct quote:*
+“Net sales in the Communications Solutions segment (approximately 53% of net sales) in the third quarter of 2025 increased 96% in U.S. dollars, 96% in constant currencies and 75% organically, compared to the third quarter of 2024. The increase in the third quarter of 2025 was driven by robust organic growth in the IT datacom market, with particular strength in artificial intelligence (“AI”)-related applications, as well as strong organic growth in the communications networks, automotive and industrial markets, along with contributions from the Company’s acquisition program.”
 [doc=APH_000110465925102142_10-Q_2025-10-24 chunk=APH_000110465925102142_10-Q_2025-10-24_105]
 
 This indicates a clear signal of improving demand, particularly in high-growth, technology-driven markets.
@@ -715,12 +715,12 @@ This indicates a clear signal of improving demand, particularly in high-growth, 
 
 *Why it matters:* The organic growth in the Communications Solutions segment has been consistently strong across Q1, Q2, and Q3 of 2025, suggesting sustained demand rather than a one-time spike.
 
-*Direct quote:*  
-“Net sales in the Communications Solutions segment (approximately 51% of net sales) in the second quarter of 2025 increased 101% in U.S. dollars, 101% in constant currencies and 78% organically, compared to the second quarter of 2024.”  
+*Direct quote:*
+“Net sales in the Communications Solutions segment (approximately 51% of net sales) in the second quarter of 2025 increased 101% in U.S. dollars, 101% in constant currencies and 78% organically, compared to the second quarter of 2024.”
 [doc=APH_000155837025009610_10-Q_2025-07-25 chunk=APH_000155837025009610_10-Q_2025-07-25_98]
 
-*Direct quote:*  
-“Net sales in the Communications Solutions segment (approximately 52% of net sales) in the first six months of 2025 increased 96% in U.S. dollars, 97% in constant currencies and 76% organically, compared to the first six months of 2024.”  
+*Direct quote:*
+“Net sales in the Communications Solutions segment (approximately 52% of net sales) in the first six months of 2025 increased 96% in U.S. dollars, 97% in constant currencies and 76% organically, compared to the first six months of 2024.”
 [doc=APH_000155837025009610_10-Q_2025-07-25 chunk=APH_000155837025009610_10-Q_2025-07-25_98]
 
 This consistency reinforces the signal of improving demand, especially in AI and IT datacom applications.
@@ -731,12 +731,12 @@ This consistency reinforces the signal of improving demand, especially in AI and
 
 *Why it matters:* This segment serves industrial, defense, and aerospace markets, which are typically more stable but less growth-oriented. Its growth, while positive, is more moderate, indicating demand is stable but not accelerating as rapidly as in the Communications Solutions segment.
 
-*Direct quote:*  
-“Net sales in the Harsh Environment Solutions segment... increased 38% in U.S. dollars, 39% in constant currencies and 32% organically, compared to the first quarter of 2024.”  
+*Direct quote:*
+“Net sales in the Harsh Environment Solutions segment... increased 38% in U.S. dollars, 39% in constant currencies and 32% organically, compared to the first quarter of 2024.”
 [doc=APH_000155837025005558_10-Q_2025-04-25 chunk=APH_000155837025005558_10-Q_2025-04-25_92]
 
-*Direct quote:*  
-“Net sales in the Harsh Environment Solutions segment... increased 38% in U.S. dollars, 37% in constant currencies and 19% organically, compared to the second quarter of 2024.”  
+*Direct quote:*
+“Net sales in the Harsh Environment Solutions segment... increased 38% in U.S. dollars, 37% in constant currencies and 19% organically, compared to the second quarter of 2024.”
 [doc=APH_000155837025009610_10-Q_2025-07-25 chunk=APH_000155837025009610_10-Q_2025-07-25_100]
 
 This indicates stable, improving demand, but not at the same pace as the Communications Solutions segment.
@@ -747,12 +747,12 @@ This indicates stable, improving demand, but not at the same pace as the Communi
 
 *Why it matters:* This segment serves automotive, industrial, and IT markets. Its growth is modest, suggesting demand is stable but not surging.
 
-*Direct quote:*  
-“Net sales in the Interconnect and Sensor Systems segment... increased 5% in U.S. dollars, 6% in constant currencies and 6% organically, compared to the first quarter of 2024.”  
+*Direct quote:*
+“Net sales in the Interconnect and Sensor Systems segment... increased 5% in U.S. dollars, 6% in constant currencies and 6% organically, compared to the first quarter of 2024.”
 [doc=APH_000155837025005558_10-Q_2025-04-25 chunk=APH_000155837025005558_10-Q_2025-04-25_92]
 
-*Direct quote:*  
-“Net sales in the Interconnect and Sensor Systems segment... increased 16% in U.S. dollars, 14% in constant currencies and 14% organically, compared to the second quarter of 2024.”  
+*Direct quote:*
+“Net sales in the Interconnect and Sensor Systems segment... increased 16% in U.S. dollars, 14% in constant currencies and 14% organically, compared to the second quarter of 2024.”
 [doc=APH_000155837025009610_10-Q_2025-07-25 chunk=APH_000155837025009610_10-Q_2025-07-25_100]
 
 This suggests moderate, improving demand, but not a major growth driver.
@@ -763,8 +763,8 @@ This suggests moderate, improving demand, but not a major growth driver.
 
 *Why it matters:* Management commentary does not identify any segment or market experiencing declining demand. Even in the automotive market, which saw a “moderate organic decline” in Q2 2025, the overall segment growth was still positive due to strong performance in other markets.
 
-*Direct quote:*  
-“...partially offset by an organic decline in the automotive market.”  
+*Direct quote:*
+“...partially offset by an organic decline in the automotive market.”
 [doc=APH_000155837025009610_10-Q_2025-07-25 chunk=APH_000155837025009610_10-Q_2025-07-25_98]
 
 However, this is an offsetting factor, not a primary trend, and the overall segment growth remains strong.
@@ -775,8 +775,8 @@ However, this is an offsetting factor, not a primary trend, and the overall segm
 
 *Why it matters:* Management emphasizes organic growth as the key metric for assessing underlying demand trends, and acquisition contributions are explicitly separated.
 
-*Direct quote:*  
-“Management evaluates the Company’s sales performance based on actual sales growth in U.S. dollars, as well as constant currency net sales growth (as defined above) and organic net sales growth, and believes that such information is useful to investors to assess the underlying sales trends.”  
+*Direct quote:*
+“Management evaluates the Company’s sales performance based on actual sales growth in U.S. dollars, as well as constant currency net sales growth (as defined above) and organic net sales growth, and believes that such information is useful to investors to assess the underlying sales trends.”
 [doc=APH_000110465925102142_10-Q_2025-10-24 chunk=APH_000110465925102142_10-Q_2025-10-24_148]
 
 This reinforces that the strong organic growth signals are the most relevant for assessing demand trends.
@@ -1062,44 +1062,44 @@ The following are the most material risks and uncertainties ATI highlights in it
 
 ---
 
-**1. Ongoing Litigation Related to Pension Plan Annuity Contracts**  
-*Why it matters:* This litigation involves significant legal and financial uncertainty, with potential material impact on results of operations if resolved unfavorably. Although ATI intends to defend vigorously, the outcome is unpredictable, and the matter remains pending.  
-*Quote:* “In August 2024, the Company received notice that it and certain of its affiliates are parties to two lawsuits, filed in federal district court for the Western District of Pennsylvania, that assert various claims associated with the Company’s October 2023 purchase of group annuity contracts to transfer a portion of its U.S. qualified defined benefit pension plan obligations to Athene Annuity and Life Company and Athene Annuity & Life Assurance of New York. These two lawsuits were consolidated in late 2024. In January 2025, we filed a Motion to Dismiss the consolidated claims, and briefing on the Motion has been completed. We intend to vigorously defend against these claims, but given the preliminary nature of these matters, cannot predict their outcome or estimate any range of reasonably possible loss at this time.”  
+**1. Ongoing Litigation Related to Pension Plan Annuity Contracts**
+*Why it matters:* This litigation involves significant legal and financial uncertainty, with potential material impact on results of operations if resolved unfavorably. Although ATI intends to defend vigorously, the outcome is unpredictable, and the matter remains pending.
+*Quote:* “In August 2024, the Company received notice that it and certain of its affiliates are parties to two lawsuits, filed in federal district court for the Western District of Pennsylvania, that assert various claims associated with the Company’s October 2023 purchase of group annuity contracts to transfer a portion of its U.S. qualified defined benefit pension plan obligations to Athene Annuity and Life Company and Athene Annuity & Life Assurance of New York. These two lawsuits were consolidated in late 2024. In January 2025, we filed a Motion to Dismiss the consolidated claims, and briefing on the Motion has been completed. We intend to vigorously defend against these claims, but given the preliminary nature of these matters, cannot predict their outcome or estimate any range of reasonably possible loss at this time.”
 [doc=ATI_000162828025036963_10-Q_2025-07-31 chunk=ATI_000162828025036963_10-Q_2025-07-31_166]
 
 ---
 
-**2. Labor Disputes and Collective Bargaining Agreement Renegotiations**  
-*Why it matters:* ATI’s workforce is heavily unionized (35% covered by CBAs), and unresolved negotiations could lead to strikes or work stoppages, disrupting production and impacting financial performance. Although a new CBA was reached in April 2025, the risk remains for future negotiations.  
-*Quote:* “At various times, our CBAs expire and are subject to renegotiation. Generally, collective bargaining agreements that expire may be terminated after notice by the union. After termination, the union may authorize a strike. A labor dispute, which could lead to a strike, lockout, or other work stoppage by the employees covered by one or more of the collective bargaining agreements, could have a material adverse effect on production at one or more of our facilities and, depending upon the length of such dispute or work stoppage, on our operating results.”  
+**2. Labor Disputes and Collective Bargaining Agreement Renegotiations**
+*Why it matters:* ATI’s workforce is heavily unionized (35% covered by CBAs), and unresolved negotiations could lead to strikes or work stoppages, disrupting production and impacting financial performance. Although a new CBA was reached in April 2025, the risk remains for future negotiations.
+*Quote:* “At various times, our CBAs expire and are subject to renegotiation. Generally, collective bargaining agreements that expire may be terminated after notice by the union. After termination, the union may authorize a strike. A labor dispute, which could lead to a strike, lockout, or other work stoppage by the employees covered by one or more of the collective bargaining agreements, could have a material adverse effect on production at one or more of our facilities and, depending upon the length of such dispute or work stoppage, on our operating results.”
 [doc=ATI_000162828025046675_10-Q_2025-10-28 chunk=ATI_000162828025046675_10-Q_2025-10-28_173]
 
 ---
 
-**3. Cybersecurity Threats and Information Technology Risks**  
-*Why it matters:* As a high-tech manufacturer, ATI faces increasing cyber threats that could compromise data, disrupt operations, and damage reputation. A breach could lead to significant remediation costs and operational downtime.  
-*Quote:* “Increased global information technology threats, vulnerabilities, and a rise in sophisticated and targeted international computer crime pose a risk to the security of our systems and networks and the confidentiality, availability and integrity of our data. We believe that ATI faces the threat of such cyberattacks due to the markets we serve, the products we manufacture, the locations of our operations, and global interest in our technology.”  
+**3. Cybersecurity Threats and Information Technology Risks**
+*Why it matters:* As a high-tech manufacturer, ATI faces increasing cyber threats that could compromise data, disrupt operations, and damage reputation. A breach could lead to significant remediation costs and operational downtime.
+*Quote:* “Increased global information technology threats, vulnerabilities, and a rise in sophisticated and targeted international computer crime pose a risk to the security of our systems and networks and the confidentiality, availability and integrity of our data. We believe that ATI faces the threat of such cyberattacks due to the markets we serve, the products we manufacture, the locations of our operations, and global interest in our technology.”
 [doc=ATI_000162828025007092_10-K_2025-02-21 chunk=ATI_000162828025007092_10-K_2025-02-21_38]
 
 ---
 
-**4. Disruptions to Manufacturing Processes**  
-*Why it matters:* Manufacturing is complex and exacting; disruptions from equipment failure, supply chain issues, or pandemics could impair product quality, delay deliveries, and lead to financial losses.  
-*Quote:* “If we encounter disruptions to our manufacturing processes due to equipment malfunction, failure to follow specific protocols, specifications and procedures, supply chain interruptions, natural disasters, health pandemics, labor unrest, or otherwise, it could have an adverse impact on our ability to fulfill orders or on product quality or performance which could result in significant costs to and liability for us that could have a material adverse effect on our business, financial condition or results of operations.”  
+**4. Disruptions to Manufacturing Processes**
+*Why it matters:* Manufacturing is complex and exacting; disruptions from equipment failure, supply chain issues, or pandemics could impair product quality, delay deliveries, and lead to financial losses.
+*Quote:* “If we encounter disruptions to our manufacturing processes due to equipment malfunction, failure to follow specific protocols, specifications and procedures, supply chain interruptions, natural disasters, health pandemics, labor unrest, or otherwise, it could have an adverse impact on our ability to fulfill orders or on product quality or performance which could result in significant costs to and liability for us that could have a material adverse effect on our business, financial condition or results of operations.”
 [doc=ATI_000162828025007092_10-K_2025-02-21 chunk=ATI_000162828025007092_10-K_2025-02-21_45]
 
 ---
 
-**5. Environmental Matters and Regulatory Liabilities**  
-*Why it matters:* Past and future environmental liabilities, including contamination or remediation costs, could materially affect financial condition.  
-*Quote:* “Future developments, administrative actions or liabilities relating to environmental matters, however, could have a material adverse effect on our financial condition or results of operations.”  
+**5. Environmental Matters and Regulatory Liabilities**
+*Why it matters:* Past and future environmental liabilities, including contamination or remediation costs, could materially affect financial condition.
+*Quote:* “Future developments, administrative actions or liabilities relating to environmental matters, however, could have a material adverse effect on our financial condition or results of operations.”
 [doc=ATI_000162828025007092_10-K_2025-02-21 chunk=ATI_000162828025007092_10-K_2025-02-21_44]
 
 ---
 
-**6. Volatility in Raw Materials and International Trade Risks**  
-*Why it matters:* ATI relies on critical raw materials (e.g., nickel, cobalt, titanium) sourced globally, including from China, where export controls could disrupt supply. Trade policy changes, tariffs, and exchange rate fluctuations also pose risks.  
-*Quote:* “We source some materials from China, which has and may in the future continue to impose export controls that could limit or significantly delay our access to such materials and could compel us to identify alternative sources, which we may not be able to do in a timely fashion or at all.”  
+**6. Volatility in Raw Materials and International Trade Risks**
+*Why it matters:* ATI relies on critical raw materials (e.g., nickel, cobalt, titanium) sourced globally, including from China, where export controls could disrupt supply. Trade policy changes, tariffs, and exchange rate fluctuations also pose risks.
+*Quote:* “We source some materials from China, which has and may in the future continue to impose export controls that could limit or significantly delay our access to such materials and could compel us to identify alternative sources, which we may not be able to do in a timely fashion or at all.”
 [doc=ATI_000162828025007092_10-K_2025-02-21 chunk=ATI_000162828025007092_10-K_2025-02-21_45]
 
 ---
@@ -1322,7 +1322,7 @@ APH’s competitive positioning in 2025 appears **strong and defensible**, drive
 APH’s organic net sales growth in 2025 (first nine months) was **39%** for Communications Solutions and **15%** for Harsh Environment Solutions, indicating strong underlying demand and market share gains. This growth is not driven by acquisitions but by core business performance.
 
 > **Why it matters**: Organic growth reflects sustainable competitive strength and market penetration, not just acquisition-driven expansion.
-> 
+>
 > **Quote**: “Organic Net Sales Growth (4) — 39%” for Communications Solutions and “15%” for Harsh Environment Solutions in the nine months ended September 30, 2025 [doc=APH_000110465925102142_10-Q_2025-10-24 chunk=APH_000110465925102142_10-Q_2025-10-24_115].
 
 ---
@@ -1331,7 +1331,7 @@ APH’s organic net sales growth in 2025 (first nine months) was **39%** for Com
 APH is strategically investing in its Communications Solutions segment to capitalize on AI applications, which are driving demand for high-speed interconnects and datacom infrastructure. The company expects **elevated capital spending to continue in 2025** to support this growth.
 
 > **Why it matters**: AI is a high-growth, high-margin trend; APH’s proactive investment positions it to capture long-term market share.
-> 
+>
 > **Quote**: “the elevated capital expenditures for the first six months of 2025 were driven by investments primarily in support of the growth in our it datacom and defense markets. we currently expect this elevated level of capital spending to continue in 2025 to support the significant growth we are experiencing related to ai applications in our it datacom market.” [doc=APH_000155837025009610_10-Q_2025-07-25 chunk=APH_000155837025009610_10-Q_2025-07-25_122].
 
 ---
@@ -1340,7 +1340,7 @@ APH is strategically investing in its Communications Solutions segment to capita
 APH operates three reportable segments—Harsh Environment Solutions, Communications Solutions, and Interconnect and Sensor Systems—each serving multiple end markets (defense, aerospace, automotive, IT, etc.). This diversification reduces reliance on any single market and enhances resilience.
 
 > **Why it matters**: Diversification mitigates risk and provides stable revenue streams across economic cycles.
-> 
+>
 > **Quote**: “The Company aligns its businesses into the following three reportable business segments: ●Harsh Environment Solutions… ●Communications Solutions… ●Interconnect and Sensor Systems…” [doc=APH_000155837025009610_10-Q_2025-07-25 chunk=APH_000155837025009610_10-Q_2025-07-25_72].
 
 ---
@@ -1349,7 +1349,7 @@ APH operates three reportable segments—Harsh Environment Solutions, Communicat
 APH’s adjusted operating margin for the nine months ended September 30, 2025, was **25.7%**, up from **21.4%** in the same period in 2024. This reflects operational efficiency and pricing power.
 
 > **Why it matters**: Margin expansion indicates strong cost control and competitive pricing power, which are hallmarks of a defensible position.
-> 
+>
 > **Quote**: “Adjusted (non-GAAP) (2) Operating Margin (1) — 25.7%” for the nine months ended September 30, 2025 [doc=APH_000110465925102142_10-Q_2025-10-24 chunk=APH_000110465925102142_10-Q_2025-10-24_116].
 
 ---
@@ -1358,7 +1358,7 @@ APH’s adjusted operating margin for the nine months ended September 30, 2025, 
 APH’s balance sheet remains strong, with **$1.67 billion in cash and short-term investments** as of March 31, 2025, and **$18.5 billion in total assets**. The company is using capital to fund growth, not to deleverage.
 
 > **Why it matters**: Financial strength enables APH to invest in growth, withstand market volatility, and outcompete peers with less liquidity.
-> 
+>
 > **Quote**: “Total cash, cash equivalents and short-term investments — $1671.7 million” as of March 31, 2025 [doc=APH_000155837025005558_10-Q_2025-04-25 chunk=APH_000155837025005558_10-Q_2025-04-25_1].
 
 ---
@@ -1367,7 +1367,7 @@ APH’s balance sheet remains strong, with **$1.67 billion in cash and short-ter
 Management evaluates performance using **organic net sales growth** and **constant currency growth**, which removes noise from foreign exchange and acquisitions, emphasizing true operational performance.
 
 > **Why it matters**: This focus on core metrics suggests management is prioritizing sustainable, defensible growth over short-term, external drivers.
-> 
+>
 > **Quote**: “management evaluates the company ’ s sales performance based on actual sales growth in u. s. dollars, as well as constant currency net sales growth ( as defined above ) and organic net sales growth, and believes that such information is useful to investors to assess the underlying sales trends.” [doc=APH_000110465925102142_10-Q_2025-10-24 chunk=APH_000110465925102142_10-Q_2025-10-24_148].
 
 ---
@@ -1415,7 +1415,7 @@ The 2026 10-K filing for AMZN (filed February 6, 2026, covering Q1 2026) explici
 
 AMZN acknowledges reliance on a limited or single-source of supply for critical components, particularly semiconductor products used in AI infrastructure.
 
-> “We rely on a limited group of suppliers for semiconductor products, including products related to artificial intelligence infrastructure such as graphics processing units. Constraints on the availability of these products could adversely affect our ability to develop and operate artificial intelligence technologies, products, or services.”  
+> “We rely on a limited group of suppliers for semiconductor products, including products related to artificial intelligence infrastructure such as graphics processing units. Constraints on the availability of these products could adversely affect our ability to develop and operate artificial intelligence technologies, products, or services.”
 [doc=AMZN_000101872426000004_10-K_2026-02-06 chunk=AMZN_000101872426000004_10-K_2026-02-06_41]
 
 **Why it matters**: This dependency creates a bottleneck in AI development and could delay or limit expansion of AI-driven services, directly impacting innovation and competitive positioning.
@@ -1426,7 +1426,7 @@ AMZN acknowledges reliance on a limited or single-source of supply for critical 
 
 AMZN highlights challenges in optimizing its fulfillment and data center networks, including staffing, inventory management, and capacity planning.
 
-> “Failures to adequately predict customer demand and consumer spending patterns or otherwise optimize and operate our fulfillment network and data centers successfully from time to time result in excess or insufficient fulfillment or data center capacity, service interruptions, increased costs, and impairment charges, any of which could materially harm our business.”  
+> “Failures to adequately predict customer demand and consumer spending patterns or otherwise optimize and operate our fulfillment network and data centers successfully from time to time result in excess or insufficient fulfillment or data center capacity, service interruptions, increased costs, and impairment charges, any of which could materially harm our business.”
 [doc=AMZN_000101872426000004_10-K_2026-02-06 chunk=AMZN_000101872426000004_10-K_2026-02-06_37]
 
 **Why it matters**: Inefficiencies in fulfillment and data centers can lead to higher costs, service disruptions, and reduced customer satisfaction, all of which may negatively affect revenue and margins.
@@ -1437,7 +1437,7 @@ AMZN highlights challenges in optimizing its fulfillment and data center network
 
 AMZN notes that regional labor market constraints increase payroll costs and hinder hiring, training, and deployment of fulfillment network staff.
 
-> “Productivity across our fulfillment network is affected by regional labor market constraints, which increase payroll costs and make it difficult to hire, train, and deploy a sufficient number of people to operate our fulfillment network as efficiently as we would like.”  
+> “Productivity across our fulfillment network is affected by regional labor market constraints, which increase payroll costs and make it difficult to hire, train, and deploy a sufficient number of people to operate our fulfillment network as efficiently as we would like.”
 [doc=AMZN_000101872426000004_10-K_2026-02-06 chunk=AMZN_000101872426000004_10-K_2026-02-06_37]
 
 **Why it matters**: Labor shortages can reduce operational efficiency, increase costs, and limit scalability of fulfillment operations, especially during peak demand periods.
@@ -1448,7 +1448,7 @@ AMZN notes that regional labor market constraints increase payroll costs and hin
 
 AMZN faces significant inventory risks due to seasonality, demand forecasting errors, and long lead times for certain products.
 
-> “We endeavor to accurately predict these trends and avoid overstocking or understocking products we manufacture and/or sell. Demand for products, however, can change significantly between the time inventory or components are ordered and the date of sale.”  
+> “We endeavor to accurately predict these trends and avoid overstocking or understocking products we manufacture and/or sell. Demand for products, however, can change significantly between the time inventory or components are ordered and the date of sale.”
 [doc=AMZN_000101872426000004_10-K_2026-02-06 chunk=AMZN_000101872426000004_10-K_2026-02-06_46]
 
 **Why it matters**: Overstocking leads to carrying costs and potential obsolescence; understocking results in lost sales and customer dissatisfaction. Both scenarios can harm profitability and growth.
@@ -1459,7 +1459,7 @@ AMZN faces significant inventory risks due to seasonality, demand forecasting er
 
 AMZN relies on a limited number of shipping companies for inbound and outbound logistics, which introduces operational risk.
 
-> “We rely on a limited number of shipping companies to deliver inventory to us and completed orders to our customers. An inability to negotiate acceptable terms with these companies or performance problems, staffing limitations, or other difficulties experienced by these companies... could negatively impact our operating results and customer experience.”  
+> “We rely on a limited number of shipping companies to deliver inventory to us and completed orders to our customers. An inability to negotiate acceptable terms with these companies or performance problems, staffing limitations, or other difficulties experienced by these companies... could negatively impact our operating results and customer experience.”
 [doc=AMZN_000101872426000004_10-K_2026-02-06 chunk=AMZN_000101872426000004_10-K_2026-02-06_37]
 
 **Why it matters**: Disruptions in shipping can delay deliveries, increase costs, and degrade customer experience, potentially affecting retention and brand reputation.
@@ -1470,7 +1470,7 @@ AMZN relies on a limited number of shipping companies for inbound and outbound l
 
 AMZN depends on third parties for payment processing and is subject to evolving regulations, which could disrupt services or increase costs.
 
-> “We rely on third parties to provide certain Amazon-branded payment methods and payment processing services... it could disrupt our business if these companies become unwilling or unable to provide these services to us.”  
+> “We rely on third parties to provide certain Amazon-branded payment methods and payment processing services... it could disrupt our business if these companies become unwilling or unable to provide these services to us.”
 [doc=AMZN_000101872426000004_10-K_2026-02-06 chunk=AMZN_000101872426000004_10-K_2026-02-06_48]
 
 **Why it matters**: Loss of payment processing services or regulatory non-compliance could impair customer transactions, damage trust, and lead to financial penalties.
