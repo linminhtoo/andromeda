@@ -2378,3 +2378,40 @@
 
 - Commit:
   - `79a0ac5`
+
+## 2026-02-18 - Judge Iteration 2 (numeric-consistency addendum) and rollback decision
+
+### What changed
+- Added one extra line to `faithfulness_v1` prompt in `src/andromeda/eval/judges.py`:
+  - explicit fail instruction when arithmetic/totals/direction-of-change conflicts with cited numbers.
+- Rescored same fixed open200 generations with identical runtime settings:
+  - script: `agent_logs/20260218_023000_judge_iter4_materiality_numeric_consistency_rescore.sh`
+  - run: `eval/results_revamp/judge_tuning/eval_run.open200_judge_iter4_materiality_numeric_consistency.20260218_012738`
+  - open200 fail rates:
+    - `faithfulness_v1: 0.095`
+    - `helpfulness_v1: 0.01`
+- Built apples-to-apples alignment file (same labeled IDs/split as baseline):
+  - merge script: `agent_logs/20260218_024000_merge_iter2_predictions_into_baseline_audit.py`
+  - audit: `agent_logs/judge_audit_faithfulness_open71_single100_open200_iter2_materiality_numeric_apples_20260218.csv`
+  - report: `agent_logs/judge_reliability_open71_single100_open200_iter2_materiality_numeric_apples_20260218.json`
+
+### Observations
+- Compared to Iteration 1, Iteration 2 regressed:
+  - Dev:
+    - `precision_fail: 0.3889 -> 0.3684`
+    - `f1_fail: 0.5385 -> 0.5185`
+    - `accuracy: 0.8710 -> 0.8602`
+    - `cohen_kappa: 0.4761 -> 0.4522`
+  - Test:
+    - `precision_fail: 1.0000 -> 0.6000`
+    - `f1_fail: 1.0000 -> 0.7500`
+    - `accuracy: 1.0000 -> 0.9375`
+- Net takeaway:
+  - numeric-consistency addendum recovered no new true positives on held-out labeled test but introduced extra false positives.
+
+### Action taken
+- Reverted the extra numeric-consistency sentence, returning to the Iteration-1 materiality prompt as current best.
+- Current best judge prompt state remains the Iteration-1 materiality calibration.
+
+- Commit:
+  - pending (will be filled immediately after commit in next LOGBOOK update entry)
