@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel
 
-from andromeda.llm_clients import ChatMessage
+from andromeda.llm.clients import ChatMessage
 
 
 EmbedFn = Callable[[list[str]], np.ndarray]
@@ -28,7 +28,7 @@ def keyword_count_embed(texts: list[str], *, keywords: list[str]) -> np.ndarray:
 @dataclass
 class RecordingLLM:
     """
-    Small in-memory fake for `andromeda.llm_clients.LLMClient`.
+    Small in-memory fake for `andromeda.llm.clients.LLMClient`.
 
     - Records `chat()` and `chat_stream()` calls for assertions.
     - `embed_texts()` uses a caller-supplied embedding function.

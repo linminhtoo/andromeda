@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-import andromeda.context_support as cs
+import andromeda.processing.context_support as cs
 from andromeda.dataclasses import DocChunk
 from tests.fakes import RecordingLLM
 

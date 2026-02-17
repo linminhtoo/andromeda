@@ -3,8 +3,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, cast
 
 from andromeda.dataclasses import DocChunk
-from andromeda.llm_clients import LLMClient
-from andromeda.metadata_models import chunk_metadata_from_value
+from andromeda.llm.clients import LLMClient
+from andromeda.processing.metadata_models import chunk_metadata_from_value
 
 ContextBuilder = Callable[[DocChunk], str]
 

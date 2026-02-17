@@ -7,7 +7,7 @@ from loguru import logger
 from sentence_transformers import CrossEncoder
 
 from andromeda.dataclasses import DocChunk, ScoredChunk
-from andromeda.db import (
+from andromeda.retrieval.db import (
     ChunkRecord,
     DocumentRecord,
     HybridSearchRow,
@@ -17,8 +17,8 @@ from andromeda.db import (
     SparseSearchMethod,
     normalize_iso_date,
 )
-from andromeda.llm_clients import LLMClient
-from andromeda.metadata_models import ChunkMetadata, chunk_metadata_from_value
+from andromeda.llm.clients import LLMClient
+from andromeda.processing.metadata_models import ChunkMetadata, chunk_metadata_from_value
 
 
 class EmbeddingError(RuntimeError):

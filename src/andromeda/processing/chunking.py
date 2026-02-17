@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from andromeda.dataclasses import DocChunk
-from andromeda.chunk_postprocess import ChunkPostprocessor, ChunkPostprocessorPipeline
+from andromeda.processing.chunk_postprocess import ChunkPostprocessor, ChunkPostprocessorPipeline
 
 if TYPE_CHECKING:
     from andromeda.ocr import MistralOCRClient

@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from andromeda.eval.io import load_jsonl
 from andromeda.eval.runner import RunConfig, run_generation, save_json
 from andromeda.eval.schema import EvalQuery
+from andromeda.llm.generation_controls import AnsweringEffort
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -63,9 +64,16 @@ def main() -> None:
     ap.add_argument("--top-k-rerank", type=int, default=None)
     ap.add_argument("--draft-max-tokens", type=int, default=None)
     ap.add_argument("--final-max-tokens", type=int, default=None)
+    ap.add_argument("--brief-max-tokens", type=int, default=None)
     ap.add_argument("--enable-rerank", type=int, default=None, help="1/0 override (defaults to preset).")
     ap.add_argument("--enable-refine", type=int, default=None, help="1/0 override (defaults to preset).")
     ap.add_argument("--draft-temperature", type=float, default=None)
+    ap.add_argument(
+        "--answering-effort",
+        choices=[eff.value for eff in AnsweringEffort],
+        default=None,
+        help="Override answering effort (low|medium|high).",
+    )
 
     # Output controls.
     ap.add_argument("--max-chunks", type=int, default=50)
@@ -147,8 +155,10 @@ def main() -> None:
         top_k_rerank=args.top_k_rerank,
         draft_max_tokens=args.draft_max_tokens,
         final_max_tokens=args.final_max_tokens,
+        brief_max_tokens=args.brief_max_tokens,
         enable_rerank=(bool(args.enable_rerank) if args.enable_rerank is not None else None),
         enable_refine=(bool(args.enable_refine) if args.enable_refine is not None else None),
+        answering_effort=(AnsweringEffort(args.answering_effort) if args.answering_effort is not None else None),
         draft_temperature=args.draft_temperature,
         concurrency=args.concurrency,
         parallel_backend=args.parallel_backend,

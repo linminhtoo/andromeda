@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
-from andromeda.llm_clients import ChatMessage, LLMClient, get_llm_client
+from andromeda.llm.clients import ChatMessage, LLMClient, get_llm_client
 
 
 class JudgeOutput(BaseModel):
@@ -263,12 +263,7 @@ def run_judge(
     for attempt_idx in range(attempts):
         try:
             try:
-                raw = llm.chat(
-                    messages,
-                    temperature=spec.temperature,
-                    response_model=JudgeOutput,
-                    timeout_s=timeout_s,
-                )
+                raw = llm.chat(messages, temperature=spec.temperature, response_model=JudgeOutput, timeout_s=timeout_s)
             except TypeError:
                 # Back-compat for non-updated client wrappers.
                 raw = llm.chat(messages, temperature=spec.temperature, response_model=JudgeOutput)

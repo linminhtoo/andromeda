@@ -8,7 +8,7 @@ from typing import Protocol
 from loguru import logger
 
 from andromeda.dataclasses import DocChunk
-from andromeda.metadata_models import DocumentMetadata, chunk_metadata_from_value
+from andromeda.processing.metadata_models import DocumentMetadata, chunk_metadata_from_value
 
 
 class ChunkPostprocessor(Protocol):

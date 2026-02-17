@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from andromeda.chunk_postprocess import (
+from andromeda.processing.chunk_postprocess import (
     DocumentContextPostprocessor,
     HeuristicSummaryPostprocessor,
     SectionLinkPostprocessor,

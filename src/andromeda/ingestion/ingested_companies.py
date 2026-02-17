@@ -6,13 +6,13 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from andromeda.ingest_profile import (
+from andromeda.ingestion.ingest_profile import (
     ingest_profile_layout,
     ingest_profile_step_settings,
     load_ingest_profile,
     resolve_ingest_profile_name,
 )
-from andromeda.source_access import read_text_file
+from andromeda.review.source_access import read_text_file
 
 
 @dataclass(frozen=True)
@@ -358,7 +358,7 @@ class IngestedCompaniesService:
         if use_yahoo:
             if self.yahoo_company_resolver is None:
                 try:
-                    from andromeda.chunk_postprocess import YahooFinanceCompanyNameResolver
+                    from andromeda.processing.chunk_postprocess import YahooFinanceCompanyNameResolver
 
                     self.yahoo_company_resolver = YahooFinanceCompanyNameResolver()
                 except Exception:  # noqa: BLE001 - best-effort resolver

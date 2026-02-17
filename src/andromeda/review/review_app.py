@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from andromeda.review_ui import router as review_router
+from andromeda.review.review_ui import router as review_router
 
 
 app = FastAPI(title="FinRAG Review UI")

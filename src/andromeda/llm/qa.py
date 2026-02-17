@@ -2,9 +2,9 @@ import os
 from typing import Sequence
 
 from andromeda.dataclasses import ScoredChunk
-from andromeda.generation_controls import AnswerStyle, AnsweringEffort
-from andromeda.llm_clients import ChatMessage, LLMClient
-from andromeda.metadata_models import chunk_metadata_from_value
+from andromeda.llm.generation_controls import AnswerStyle, AnsweringEffort
+from andromeda.llm.clients import ChatMessage, LLMClient
+from andromeda.processing.metadata_models import chunk_metadata_from_value
 
 
 IRRELEVANT_CHUNK_IGNORE_PROMPT = (

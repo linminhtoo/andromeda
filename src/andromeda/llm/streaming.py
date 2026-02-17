@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from andromeda.llm_clients import LLMClient
+from andromeda.llm.clients import LLMClient
 
 
 def _env_int(name: str, default: int) -> int:
