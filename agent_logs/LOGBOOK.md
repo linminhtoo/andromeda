@@ -2116,3 +2116,91 @@
 - Next judge-work direction:
   - improve reliability via judge aggregation/consensus (harness-level) rather than prompt softening,
   - keep fixed labeled split and track deltas only against this frozen benchmark.
+
+## 2026-02-17 - Open-ended faithfulness loop (diverse 100-question set, iterations 1-4)
+
+### Commits in this loop
+- `44d791c` - open-ended eval harness scripts, plan doc, and iteration summary artifacts.
+- `cf92d90` - runtime/prompt guardrails for narrative year-scope and broader narrative-intent retrieval coverage.
+
+### Scope and setup
+- Objective: reduce open-ended `faithfulness_v1` failure while keeping `helpfulness_v1` stable, using open-ended-only evals.
+- Dataset build script: `agent_logs/20260217_221500_generate_openended100_diverse_v1.sh`.
+- Eval scripts:
+  - `agent_logs/20260217_221700_eval_openended100_iter1_baseline.sh`
+  - `agent_logs/20260217_221900_eval_openended100_iter2_periodscope.sh`
+  - `agent_logs/20260217_222000_eval_openended100_iter3_narrative_coverage.sh`
+  - `agent_logs/20260217_222100_eval_openended100_iter4_narrative_temp0.sh`
+- Shared eval controls across this loop:
+  - generation: `concurrency=12`, `parallel-backend=thread`, `query-timeout-s=350`, `query-max-retries=1`
+  - scoring: `judge-workers=12`, `judge-context-chars=80000`, `judge-timeout-s=350`, `judge-max-retries=1`
+  - profile/schema: `eval_revamp_combined_512_20260217`
+
+### Dataset diversity snapshot (new 100 open-ended set)
+- File: `eval/eval_queries_openended100_diverse_20260217_v1.jsonl`
+- Count: `100` open-ended questions
+- Coverage:
+  - unique tickers: `20`
+  - template families: `10`
+  - family distribution captured in generation script output and in tags (`family_*`).
+
+### Iteration table
+- Iteration summary artifact: `agent_logs/openended_iteration_summary_20260217.md`
+- CSV: `agent_logs/openended_iteration_metrics_20260217.csv`
+
+| Iteration | Strategy | Run | n_ok | Faithfulness fail | Helpfulness fail |
+|---|---|---|---:|---:|---:|
+| iter1 | Baseline on diverse open-ended set | `eval/results_revamp/open/eval_run.open_diverse_iter1_baseline_normal_tools12_norefine_qt350_jt350.20260217_220205` | 100 | 0.22 | 0.00 |
+| iter2 | Period-scope guardrail prompt additions | `eval/results_revamp/open/eval_run.open_diverse_iter2_periodscope_normal_tools12_norefine_qt350_jt350.20260217_222053` | 100 | 0.26 | 0.00 |
+| iter3 | Expanded narrative-intent detection + retrieval diversification | `eval/results_revamp/open/eval_run.open_diverse_iter3_narrativecoverage_normal_tools12_norefine_qt350_jt350.20260217_223936` | 100 | 0.18 | 0.00 |
+| iter4 | Narrative `draft_temperature=0` ablation | `eval/results_revamp/open/eval_run.open_diverse_iter4_narrativetemp0_normal_tools12_norefine_qt350_jt350.20260217_225755` | 99 | 0.232323 | 0.00 |
+
+### Iteration-by-iteration notes (N=1 style)
+1) Iteration 1 (`iter1`, baseline)
+- What changed: no runtime changes; only diverse open-ended dataset and fixed eval settings.
+- Main issue observed:
+  - dominant failure mode was unsupported extrapolation/hallucination;
+  - a major subtype was filing-year vs covered-period confusion (questions asking "in 2025/2026" answered as if full-period evidence existed when context mostly reflected other covered periods).
+- Strategy options considered after analysis:
+  - prompt-level year-scope guardrails,
+  - broader narrative-intent routing + retrieval diversification,
+  - lower draft temperature for narrative answers.
+- Chosen next strategy: prompt-level period-scope guardrails first.
+
+2) Iteration 2 (`iter2`, period-scope guardrails)
+- What changed:
+  - `src/andromeda/qa.py`: stronger evidence discipline rules for filing year vs covered period handling.
+  - `src/andromeda/query_runtime.py`: added dynamic `period_scope_prompt_extra(...)` from retrieved metadata and stricter year-scope notes.
+- Result: faithfulness regressed (`0.22 -> 0.26`), helpfulness stayed `0.00`.
+- Surprising finding:
+  - this fixed a subset of period issues but introduced broader regressions elsewhere.
+- Chosen next strategy: improve narrative-intent detection/retrieval coverage (generalizable, non-template-specific) rather than further tightening this prompt branch.
+
+3) Iteration 3 (`iter3`, narrative-intent + retrieval diversification)
+- What changed:
+  - expanded `_question_mentions_filing_narrative(...)` coverage for open-ended families (growth opportunities, dependencies, management commentary, capital allocation, margin/cash-flow framing, etc).
+  - added focused retrieval query augmentations for:
+    - risk/uncertainty,
+    - capital allocation/margin/cash flow,
+    - execution dependencies/demand commentary.
+- Result: best in this series (`faithfulness 0.18`, `helpfulness 0.00`).
+- Surprising finding:
+  - larger, better-targeted retrieval query diversification improved both quality and latency profile vs iter2.
+- Action taken: treat iter3 runtime behavior as current best candidate.
+
+4) Iteration 4 (`iter4`, narrative temp=0 ablation)
+- What changed:
+  - forced narrative-answer draft temperature to `0.0` (ablation).
+- Generation anomaly:
+  - two timeout retries were triggered;
+  - one query exhausted retries and failed (`n_ok=99/100`), query id `3f876e95-8c43-44b2-91e2-bc44d806e0d6`.
+- Result: degraded vs iter3 (`faithfulness 0.232323`, `helpfulness 0.00`).
+- Decision: do not keep this ablation as default behavior.
+
+### Reliability/harness observations
+- In iter4, after a timed-out generation failure, the wrapper script required interruption to progress to scoring; run artifacts were still valid and scoring completed after manual continuation.
+- For this loop, continue treating `iter3` as best run for quality among evaluated variants.
+
+### Actionable next steps
+- Keep iter3-style narrative routing/retrieval behavior as baseline for next open-ended improvements.
+- Next potential improvement area (not implemented in this loop): add explicit answer post-check for year-scope claims (claim-level period validator) to reduce remaining period mismatch failures in high-risk families (`growth_risk_balance`, `execution_dependencies`, `risk_materiality`).
