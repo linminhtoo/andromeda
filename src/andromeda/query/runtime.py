@@ -8,7 +8,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, cast
 
@@ -44,6 +44,11 @@ class PlannerAction(str, Enum):
     ANSWER = "answer"
     CLARIFICATION_REQUIRED = "clarification_required"
     REFUSED = "refused"
+
+
+class RetrievalBudgetProfile(str, Enum):
+    DEFAULT = "default"
+    SIMPLE_NUMERIC = "simple_numeric"
 
 
 class QueryRequest(BaseModel):
@@ -801,6 +806,24 @@ class RAGService:
         raw = (os.getenv("FINRAG_ENABLE_MMR_DIVERSITY") or "0").strip().lower()
         return raw in {"1", "true", "yes", "on"}
 
+    @staticmethod
+    def narrative_query_expansion_enabled() -> bool:
+        """
+        Return whether diversified narrative retrieval-query expansion is enabled.
+        """
+
+        raw = (os.getenv("FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION") or "1").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def narrative_aspect_coverage_enabled() -> bool:
+        """
+        Return whether narrative growth/risk aspect-coverage enforcement is enabled.
+        """
+
+        raw = (os.getenv("FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE") or "1").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
     def _question_is_simple_numeric_metric(self, question: str) -> bool:
         """
         Return whether the question is a direct numeric metric lookup.
@@ -835,6 +858,66 @@ class RAGService:
             and has_explicit_numeric_intent
             and token_count <= 24
         )
+
+    @staticmethod
+    def adaptive_retrieval_budget_enabled() -> bool:
+        """
+        Return whether adaptive retrieval-budget scheduling is enabled.
+        """
+
+        raw = (os.getenv("FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET") or "1").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    def apply_adaptive_retrieval_budget(
+        self, *, question: str, settings: GenerationSettings, planned: PlannedQuery
+    ) -> tuple[GenerationSettings, ToolTraceEvent | None]:
+        """
+        Adjust retrieval depth for simple tool-first numeric lookups.
+
+        The scheduler only reduces retrieval/rerank depth for low-complexity
+        numeric questions and leaves all other queries unchanged.
+        """
+
+        if not self.adaptive_retrieval_budget_enabled():
+            return settings, None
+
+        if not self._question_is_simple_numeric_metric(question):
+            return settings, None
+
+        if len(planned.tickers) > 1 or self._question_mentions_comparison(question):
+            return settings, None
+
+        if self._question_mentions_filing_narrative(question):
+            return settings, None
+
+        target_top_k_retrieve = max(12, int(round(settings.top_k_retrieve * 0.70)))
+        target_top_k_rerank = max(8, int(round(settings.top_k_rerank * 0.60)))
+        target_top_k_retrieve = min(settings.top_k_retrieve, target_top_k_retrieve)
+        target_top_k_rerank = min(settings.top_k_rerank, target_top_k_rerank, target_top_k_retrieve)
+
+        if (
+            target_top_k_retrieve == settings.top_k_retrieve
+            and target_top_k_rerank == settings.top_k_rerank
+        ):
+            return settings, None
+
+        adjusted_settings = replace(
+            settings,
+            top_k_retrieve=target_top_k_retrieve,
+            top_k_rerank=target_top_k_rerank,
+        )
+        trace_event = self._tool_event(
+            "adaptive_retrieval_budget",
+            args={
+                "profile": RetrievalBudgetProfile.SIMPLE_NUMERIC.value,
+                "old_top_k_retrieve": settings.top_k_retrieve,
+                "old_top_k_rerank": settings.top_k_rerank,
+                "new_top_k_retrieve": adjusted_settings.top_k_retrieve,
+                "new_top_k_rerank": adjusted_settings.top_k_rerank,
+            },
+            result="Applied adaptive retrieval budget for simple numeric query.",
+        )
+        return adjusted_settings, trace_event
 
     def resolve_tool_usage_from_decision(self, *, question: str, decision: PlannerDecision) -> tuple[bool, bool, bool]:
         """
@@ -1388,7 +1471,11 @@ class RAGService:
 
         if not planned.use_per_ticker_retrieval or len(planned.tickers) <= 1:
             retrieval_queries = [question]
-            if planned.use_rag and self._question_mentions_filing_narrative(question):
+            if (
+                planned.use_rag
+                and self._question_mentions_filing_narrative(question)
+                and self.narrative_query_expansion_enabled()
+            ):
                 retrieval_queries = self.narrative_retrieval_queries(question)
 
             if len(retrieval_queries) == 1:
@@ -1697,16 +1784,25 @@ class RAGService:
                         result=f"Applied bounded MMR diversification (size={len(reranked)}).",
                     )
                 )
-            reranked = self._enforce_narrative_aspect_coverage(
-                question=question, primary=reranked, fallback=hybrid, limit=settings.top_k_rerank
-            )
-            trace.append(
-                self._tool_event(
-                    "enforce_narrative_aspect_coverage",
-                    args={"top_k_rerank": settings.top_k_rerank},
-                    result=(f"Adjusted reranked list for narrative aspect coverage (size={len(reranked)})."),
+            if self.narrative_aspect_coverage_enabled():
+                reranked = self._enforce_narrative_aspect_coverage(
+                    question=question, primary=reranked, fallback=hybrid, limit=settings.top_k_rerank
                 )
-            )
+                trace.append(
+                    self._tool_event(
+                        "enforce_narrative_aspect_coverage",
+                        args={"top_k_rerank": settings.top_k_rerank},
+                        result=(f"Adjusted reranked list for narrative aspect coverage (size={len(reranked)})."),
+                    )
+                )
+            else:
+                trace.append(
+                    self._tool_event(
+                        "enforce_narrative_aspect_coverage_skip",
+                        args={"reason": "disabled_by_env"},
+                        result="Skipped narrative aspect coverage enforcement per environment toggle.",
+                    )
+                )
         return reranked, trace
 
     def execute_query_pipeline(
@@ -1766,6 +1862,16 @@ class RAGService:
             )
             use_rag_for_execution = True
 
+        retrieval_settings = settings
+        if use_rag_for_execution:
+            retrieval_settings, adaptive_budget_trace = self.apply_adaptive_retrieval_budget(
+                question=question,
+                settings=settings,
+                planned=planned,
+            )
+            if adaptive_budget_trace is not None:
+                execution.tool_trace.append(adaptive_budget_trace)
+
         if planned.use_multi_ticker_briefs and len(planned.tickers) > 1:
             retrieve_t0 = time.perf_counter()
             per_ticker_hybrid: dict[str, list[ScoredChunk]] = {}
@@ -1776,7 +1882,7 @@ class RAGService:
                     ticker: ex.submit(
                         self._retrieve_and_rerank_for_ticker,
                         question=question,
-                        settings=settings,
+                        settings=retrieval_settings,
                         planned=planned,
                         ticker=ticker,
                     )
@@ -1791,9 +1897,9 @@ class RAGService:
                             "retrieve_rerank_per_ticker",
                             args={
                                 "ticker": ticker,
-                                "top_k_retrieve": settings.top_k_retrieve,
-                                "top_k_rerank": settings.top_k_rerank,
-                                "enable_rerank": settings.enable_rerank,
+                                "top_k_retrieve": retrieval_settings.top_k_retrieve,
+                                "top_k_rerank": retrieval_settings.top_k_rerank,
+                                "enable_rerank": retrieval_settings.enable_rerank,
                             },
                             result=(
                                 f"Retrieved {len(ticker_hybrid)} and reranked {len(ticker_reranked)} chunks for "
@@ -1810,7 +1916,7 @@ class RAGService:
             )
             execution.reranked = self._dedupe_scored_chunks(
                 [item for chunks in per_ticker_reranked.values() for item in chunks]
-            )[: settings.top_k_rerank]
+            )[: retrieval_settings.top_k_rerank]
             execution.tool_trace.append(
                 self._tool_event(
                     "merge_multi_ticker_candidates",
@@ -1852,13 +1958,13 @@ class RAGService:
             return execution
 
         retrieve_t0 = time.perf_counter()
-        hybrid, retrieve_trace = self.retrieve_chunks_for_plan(question, settings, planned)
+        hybrid, retrieve_trace = self.retrieve_chunks_for_plan(question, retrieval_settings, planned)
         execution.retrieve_step_ms = (time.perf_counter() - retrieve_t0) * 1000.0
         execution.hybrid = hybrid
         execution.tool_trace.extend(retrieve_trace)
 
         rerank_t0 = time.perf_counter()
-        reranked, rerank_trace = self.rerank_chunks_for_plan(question, settings, planned, hybrid)
+        reranked, rerank_trace = self.rerank_chunks_for_plan(question, retrieval_settings, planned, hybrid)
         execution.rerank_step_ms = (time.perf_counter() - rerank_t0) * 1000.0
         execution.reranked = reranked
         execution.tool_trace.extend(rerank_trace)

@@ -183,6 +183,113 @@ def test_tools_plus_rag_runs_retrieval(monkeypatch) -> None:
     assert len(pipeline.reranked) == 1
 
 
+def test_adaptive_retrieval_budget_reduces_depth_for_simple_numeric_query(monkeypatch) -> None:
+    finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No market data.")
+    service, retriever, _llm = build_service(finance_tools)
+    monkeypatch.setenv("FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET", "1")
+
+    monkeypatch.setattr(
+        service,
+        "_planner_decision_from_llm",
+        lambda **_kwargs: PlannerDecision(
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_yfinance=True, use_edgar_financials=False
+        ),
+    )
+
+    settings = resolve_generation_settings(mode="normal", enable_refine=False)
+    pipeline = service.execute_query_pipeline(question="What is AAPL revenue value", settings=settings)
+
+    assert pipeline.planned.status == QueryStatus.ANSWERED
+    assert retriever.retrieve_calls == 1
+
+    adaptive_events = [event for event in pipeline.tool_trace if event.tool == "adaptive_retrieval_budget"]
+    assert len(adaptive_events) == 1
+    adaptive_args = adaptive_events[0].args
+    assert adaptive_args["old_top_k_retrieve"] == 40
+    assert adaptive_args["old_top_k_rerank"] == 25
+    assert adaptive_args["new_top_k_retrieve"] == 28
+    assert adaptive_args["new_top_k_rerank"] == 15
+
+    retrieve_events = [event for event in pipeline.tool_trace if event.tool == "retrieve_chunks"]
+    assert len(retrieve_events) == 1
+    assert retrieve_events[0].args["top_k_retrieve"] == 28
+
+
+def test_adaptive_retrieval_budget_does_not_apply_to_narrative_queries(monkeypatch) -> None:
+    finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No tool data.")
+    service, retriever, _llm = build_service(finance_tools)
+    monkeypatch.setenv("FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET", "1")
+
+    monkeypatch.setattr(
+        service,
+        "_planner_decision_from_llm",
+        lambda **_kwargs: PlannerDecision(
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
+        ),
+    )
+
+    settings = resolve_generation_settings(mode="normal", enable_refine=False)
+    pipeline = service.execute_query_pipeline(
+        question="Based on AAPL SEC filings, explain growth drivers and key risks.", settings=settings
+    )
+
+    assert pipeline.planned.status == QueryStatus.ANSWERED
+    assert retriever.retrieve_calls >= 1
+    assert all(event.tool != "adaptive_retrieval_budget" for event in pipeline.tool_trace)
+
+    retrieve_events = [event for event in pipeline.tool_trace if event.tool == "retrieve_chunks"]
+    assert len(retrieve_events) == 1
+    assert retrieve_events[0].args["top_k_retrieve"] == 40
+
+
+def test_narrative_query_expansion_can_be_disabled(monkeypatch) -> None:
+    finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No tool data.")
+    service, retriever, _llm = build_service(finance_tools)
+    monkeypatch.setenv("FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION", "0")
+
+    monkeypatch.setattr(
+        service,
+        "_planner_decision_from_llm",
+        lambda **_kwargs: PlannerDecision(
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
+        ),
+    )
+
+    settings = resolve_generation_settings(mode="normal", enable_refine=False)
+    pipeline = service.execute_query_pipeline(
+        question="Based on AAPL SEC filings, explain growth drivers and key risks.", settings=settings
+    )
+
+    retrieve_events = [event for event in pipeline.tool_trace if event.tool == "retrieve_chunks"]
+    assert len(retrieve_events) == 1
+    retrieval_queries = retrieve_events[0].args["retrieval_queries"]
+    assert retrieval_queries == ["Based on AAPL SEC filings, explain growth drivers and key risks."]
+    assert retriever.retrieve_calls == 1
+
+
+def test_narrative_aspect_coverage_can_be_disabled(monkeypatch) -> None:
+    finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No tool data.")
+    service, retriever, _llm = build_service(finance_tools)
+    monkeypatch.setenv("FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE", "0")
+
+    monkeypatch.setattr(
+        service,
+        "_planner_decision_from_llm",
+        lambda **_kwargs: PlannerDecision(
+            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
+        ),
+    )
+
+    settings = resolve_generation_settings(mode="normal", enable_refine=False)
+    pipeline = service.execute_query_pipeline(
+        question="Based on AAPL SEC filings, explain growth drivers and key risks.", settings=settings
+    )
+
+    assert retriever.retrieve_calls >= 1
+    assert all(event.tool != "enforce_narrative_aspect_coverage" for event in pipeline.tool_trace)
+    assert any(event.tool == "enforce_narrative_aspect_coverage_skip" for event in pipeline.tool_trace)
+
+
 def test_finance_tools_can_be_disabled_by_env(monkeypatch) -> None:
     finance_tools = FakeFinanceTools()
     service, retriever, _llm = build_service(finance_tools)
