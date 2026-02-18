@@ -10,6 +10,9 @@ Violations will cause runs to be blocked or reverted and large multimillion doll
 * Strictly follow existing style in the codebase.
 * Ensure every function is properly documented following the existing style.
 * Write in-line comments strategically, especially for key business logic. Do this sparingly, and strategically.
+* DEVELOP A STRONG DISTASTE FOR REGEX/TEXT HEURISTICS.
+    - Favor using established external libraries instead
+    - Favor using proper, generalized functions
 * Keep code concise, tasteful and elegant.
 * Don't overcomplicate things. Don't implement more than you need to.
 * Ensure code is readable by humans, easy to extend and maintain.
