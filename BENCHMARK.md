@@ -120,6 +120,27 @@ Interpretation:
 
 ![Chunk Size Tradeoffs](agent_logs/reports/benchmark_figures_20260218/chunk_size_tradeoffs.png)
 
+## Explaining Surprising Results
+
+### Why did the tight token budget reduce throughput?
+- The drop was mostly a long-tail retry artifact, not a broad decoding-speed improvement/regression signal.
+- `tight_tokens_32k_16k` had `1` retried query in `single100` (`query_attempts=2`) that took `388,467ms`; baseline had `0` retries.
+- The same query in baseline took `44,097ms`, so that one outlier added most of the wall-clock delta.
+- Single-run wall time moved from `439,551ms` (baseline) to `779,984ms` (tight), even though average per-query latency only moved from `49,616ms` to `52,348ms`.
+- Counterfactual check: replacing only that outlier with the run median recovers throughput from `0.1077` to `0.1395 qps` (near baseline `0.1408 qps`).
+
+### Why can deeper retrieval worsen faithfulness?
+- Important nuance: in the explicit depth sweep, open-ended faithfulness did **not** worsen (`0.1667` baseline vs `0.0667` at `60/35`); what worsened strongly was factual correctness (`0.0857` -> `0.1714`) and latency.
+- Mechanism observed in traces: depth `60/35` increased reranked context volume from about `30.8k` chars/query to `44.9k` chars/query (top chunks), and top chunk count from `21.0` to `29.7`.
+- Additional factual fails were mostly period/column confusion in financial tables (for example 3-month vs 9-month values, attribution columns, fiscal-period mismatches), consistent with context dilution/competition.
+- Related retrieval-strategy runs also show the same pattern risk: settings that reduce targeting quality can increase open-faithfulness fails (for example `adaptive=0` runs at `0.1000`).
+
+### Why is chunk size 512 the best operating point here?
+- `512` is the best balance between retrieval precision and context completeness in this benchmark.
+- `256` fragments evidence too much for this pipeline configuration and had tail instability (`2` retries, with outliers at `503,718ms` and `397,521ms`), which hurt throughput (`0.1321 qps`).
+- `1024` and `2048` increase per-query injected context size materially (mean top-chunk text: `37.6k` and `42.9k` chars vs `30.8k` at `512`), which raises context mixing and weakens grounding selectivity.
+- That aligns with observed quality: open-faithfulness fail rises from `0.0667` (`512`) to `0.1000` (`1024`) and `0.2000` (`2048`), while `512` also has the best factual-fail rate (`0.0571`) among chunk sizes.
+
 ## Judge Stability (Fixed Generations)
 6 independent rescoring passes on the same single100 baseline generations.
 

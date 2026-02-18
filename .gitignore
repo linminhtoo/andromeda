@@ -10,6 +10,7 @@
 /notebooks/
 /test-results/
 resume_without_bold.tex
+BENCHMARK_v0_bad.md
 
 # JS files are generated from TS files by the build process, so we ignore them.
 src/andromeda/static/js/
