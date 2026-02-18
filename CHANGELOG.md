@@ -8,6 +8,20 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+### Dev
+
+
+
+## v1.9.0 - 18 Feb 2026
+
+### Added
 - Open-ended eval experiment harness scripts for 100-question faithfulness/helpfulness-focused runs (with `12` generation threads, `12` judge workers, and `350s` timeout settings) under `agent_logs/`.
 - Open-ended iteration summary artifacts:
   - `agent_logs/reports/openended_iteration_metrics_20260217.csv`
@@ -42,10 +56,6 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `runtime_builders.py` -> `runtime/builders.py`
   - `history_store.py` -> `history/store.py`
   with import updates across app code and tests.
-
-### Fixed
-
-### Deprecated
 
 ### Dev
 - Added github `ci.yaml`
