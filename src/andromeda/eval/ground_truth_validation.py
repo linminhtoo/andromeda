@@ -5,17 +5,9 @@ from dataclasses import dataclass
 from andromeda.eval.schema import EvalQuery
 from andromeda.finance_tools import FinanceToolStatus, FinanceTools, number_or_none
 
-_METRIC_TO_EDGAR_KEYS: dict[str, tuple[str, ...]] = {
-    "total revenue": ("revenue",),
-    "net income": ("net_income",),
-}
+_METRIC_TO_EDGAR_KEYS: dict[str, tuple[str, ...]] = {"total revenue": ("revenue",), "net income": ("net_income",)}
 
-_SCALE_TO_FACTOR: dict[str, float] = {
-    "units": 1.0,
-    "thousands": 1e3,
-    "millions": 1e6,
-    "billions": 1e9,
-}
+_SCALE_TO_FACTOR: dict[str, float] = {"units": 1.0, "thousands": 1e3, "millions": 1e6, "billions": 1e9}
 
 
 @dataclass(frozen=True)
@@ -44,6 +36,7 @@ class EdgarValidationStats:
             "skipped_missing_ticker": self.skipped_missing_ticker,
             "skipped_no_tool_data": self.skipped_no_tool_data,
         }
+
 
 def _expected_value_candidates(raw_value: float, declared_scale: str | None) -> list[tuple[str, float]]:
     """
@@ -146,10 +139,7 @@ def validate_factual_queries_with_edgar(
         if edgar_keys is None:
             skipped_unsupported_metric += 1
             tagged = query.model_copy(deep=True)
-            tagged.generator["edgar_validation"] = {
-                "status": "skipped_unsupported_metric",
-                "metric": metric_name,
-            }
+            tagged.generator["edgar_validation"] = {"status": "skipped_unsupported_metric", "metric": metric_name}
             kept.append(tagged)
             continue
 
@@ -157,10 +147,7 @@ def validate_factual_queries_with_edgar(
         if ticker is None:
             skipped_missing_ticker += 1
             tagged = query.model_copy(deep=True)
-            tagged.generator["edgar_validation"] = {
-                "status": "skipped_missing_ticker",
-                "metric": metric_name,
-            }
+            tagged.generator["edgar_validation"] = {"status": "skipped_missing_ticker", "metric": metric_name}
             kept.append(tagged)
             continue
 

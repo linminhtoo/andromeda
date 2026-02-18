@@ -20,7 +20,12 @@ from tqdm import tqdm
 
 from andromeda.dataclasses import TopChunk
 from andromeda.eval.schema import EvalGeneration, EvalKind, EvalQuery, RetrievedChunk
-from andromeda.llm.generation_controls import AnswerStyle, AnsweringEffort, GenerationSettings, resolve_generation_settings
+from andromeda.llm.generation_controls import (
+    AnswerStyle,
+    AnsweringEffort,
+    GenerationSettings,
+    resolve_generation_settings,
+)
 
 if TYPE_CHECKING:
     from andromeda.main import RAGService

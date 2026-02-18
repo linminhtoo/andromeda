@@ -381,23 +381,17 @@ def generate_factual_queries(
 _OPEN_ENDED_TEMPLATES: list[OpenEndedTemplate] = [
     OpenEndedTemplate(
         family=OpenEndedQuestionFamily.INVESTMENT_THESIS,
-        text=(
-            "Evaluate {company} as a long-term investment based on its business trajectory in {year}. "
-            "Cite sources."
-        ),
+        text=("Evaluate {company} as a long-term investment based on its business trajectory in {year}. Cite sources."),
     ),
     OpenEndedTemplate(
         family=OpenEndedQuestionFamily.GROWTH_RISK_BALANCE,
         text=(
-            "Based on {company}'s SEC filings in {year}, what are the key growth drivers and key risks? "
-            "Cite sources."
+            "Based on {company}'s SEC filings in {year}, what are the key growth drivers and key risks? Cite sources."
         ),
     ),
     OpenEndedTemplate(
         family=OpenEndedQuestionFamily.STRATEGY_POSITIONING,
-        text=(
-            "Summarize {company}'s strategy and competitive positioning in {year}, with supporting citations."
-        ),
+        text=("Summarize {company}'s strategy and competitive positioning in {year}, with supporting citations."),
     ),
     OpenEndedTemplate(
         family=OpenEndedQuestionFamily.RISK_MATERIALITY,
@@ -727,7 +721,9 @@ def generate_distractor_queries(docs: Iterable[CompanyYearTarget], *, n: int, se
                 id=str(uuid.uuid4()),
                 kind="distractor",
                 question=question,
-                tags=[t for t in ["distractor", d_kind, "sec", ticker, str(year), f"family_{main_tmpl.family.value}"] if t],
+                tags=[
+                    t for t in ["distractor", d_kind, "sec", ticker, str(year), f"family_{main_tmpl.family.value}"] if t
+                ],
                 created_at=now,
                 distractor=DistractorSpec(
                     main_question=main_q,

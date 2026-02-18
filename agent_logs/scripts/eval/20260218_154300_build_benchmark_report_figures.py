@@ -84,13 +84,7 @@ def build_frontier_scatter(rows: list[dict[str, str]], out_path: Path) -> None:
         ys = [as_float(row, "open_ended_faithfulness_fail_rate") for row in axis_rows]
         ax.scatter(xs, ys, label=axis_name, s=95, alpha=0.9, color=color, edgecolors="black", linewidths=0.4)
 
-    highlight_ids = {
-        "baseline_normal",
-        "mode_quick_true",
-        "effort_low",
-        "strategy_mmr_on",
-        "narrative_full_guardrails",
-    }
+    highlight_ids = {"baseline_normal", "mode_quick_true", "effort_low", "strategy_mmr_on", "narrative_full_guardrails"}
     for row in rows:
         if row["exp_id"] not in highlight_ids:
             continue
@@ -126,13 +120,7 @@ def build_throughput_ranking(rows: list[dict[str, str]], out_path: Path) -> None
     ax.grid(alpha=0.25, axis="x")
 
     for bar, value in zip(bars, values, strict=False):
-        ax.text(
-            bar.get_width() + 0.0015,
-            bar.get_y() + (bar.get_height() / 2),
-            f"{value:.3f}",
-            va="center",
-            fontsize=8,
-        )
+        ax.text(bar.get_width() + 0.0015, bar.get_y() + (bar.get_height() / 2), f"{value:.3f}", va="center", fontsize=8)
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=180)
@@ -179,31 +167,13 @@ def build_retrieval_strategy_tradeoff(rows: list[dict[str, str]], out_path: Path
     right = [val + width for val in x]
 
     factual_bars = axes[1].bar(
-        left,
-        factual_fail,
-        width=width,
-        color="#d62728",
-        edgecolor="black",
-        linewidth=0.4,
-        label="factual_fail",
+        left, factual_fail, width=width, color="#d62728", edgecolor="black", linewidth=0.4, label="factual_fail"
     )
     open_bars = axes[1].bar(
-        middle,
-        open_faith_fail,
-        width=width,
-        color="#ff7f0e",
-        edgecolor="black",
-        linewidth=0.4,
-        label="open_faith_fail",
+        middle, open_faith_fail, width=width, color="#ff7f0e", edgecolor="black", linewidth=0.4, label="open_faith_fail"
     )
     comparison_bars = axes[1].bar(
-        right,
-        comparison_fail,
-        width=width,
-        color="#2ca02c",
-        edgecolor="black",
-        linewidth=0.4,
-        label="comparison_fail",
+        right, comparison_fail, width=width, color="#2ca02c", edgecolor="black", linewidth=0.4, label="comparison_fail"
     )
 
     axes[1].set_xticks(x)
