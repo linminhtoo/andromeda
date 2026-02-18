@@ -23,6 +23,16 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Strengthened narrative answer guardrails in `src/andromeda/llm/qa.py` to explicitly separate filing year vs covered fiscal period.
 - Expanded narrative-intent detection and retrieval-query diversification in `src/andromeda/query/runtime.py` for open-ended prompts (growth/risk/capital-allocation/execution/demand framing).
 - Added dynamic period-scope prompt notes in `src/andromeda/query/runtime.py` based on retrieved chunk metadata (`filing_date` vs `period_end_date`) to reduce unsupported year-scope claims.
+- Updated benchmark-backed default generation profile to `normal` mode with high answering effort (`top_k_retrieve=40`, `top_k_rerank=25`, `draft_max_tokens=65536`, `final_max_tokens=32768`, rerank on, refine off).
+- Switched narrative query expansion to default-off (`FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION=0`) while keeping narrative aspect-coverage default-on.
+- Updated eval CLI/harness defaults for current local-vLLM operating point:
+  - `scripts/run_eval.py`: concurrency `12`, `thread` backend, query timeout `350s`
+  - `scripts/score_eval.py`: judge workers `12`, judge timeout `350s`
+  - `src/andromeda/eval/runner.py` and `src/andromeda/eval/scoring.py` defaults aligned accordingly.
+- Simplified frontend trade-off controls in `src/andromeda/static/index.html` and index JS/TS:
+  - removed raw per-request retrieval/token numeric knobs from UI,
+  - kept high-impact knobs only (`mode`, `answering_effort`, optional `enable_refine`).
+- Refreshed `.env.example` to benchmark-backed defaults (`chunk 512/64`, `eval_revamp_combined_512_20260217` profile path/schema, narrative retrieval toggles).
 - Refined the "Tool snapshot" cards to avoid header overflow/cramped rendering and replaced internal code-style tool names with polished user-facing titles.
 - Replaced EDGAR tool raw JSON rendering in the UI with structured, human-readable metric/statement tables so financial outputs are understandable to non-technical users.
 - Reorganized backend module layout for clearer grouping:

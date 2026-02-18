@@ -2634,3 +2634,59 @@
 
 ### Result
 - Benchmark story is now auditable in one pass: what was run, why, and what happened.
+
+## 2026-02-18 - Golden default profile rollout + UI control simplification
+
+### Context
+- Follow-up request after frontier analysis: codify a benchmark-backed default profile, disable query expansion by default, and simplify user-facing latency/quality knobs.
+
+### What changed
+- `BENCHMARK.md`:
+  - Added final "Golden Defaults (Recommended Moving Forward)" section summarizing retrieval, runtime, and eval harness defaults.
+- Backend defaults:
+  - `src/andromeda/query/runtime.py`
+    - `FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION` default changed from on -> off.
+  - `src/andromeda/llm/generation_controls.py`
+    - `normal` preset answering effort changed from `medium` -> `high`.
+- Eval CLI/harness defaults:
+  - `scripts/run_eval.py`
+    - `--concurrency` default `12`
+    - `--parallel-backend` default `thread`
+    - `--query-timeout-s` default `350`
+  - `src/andromeda/eval/runner.py`
+    - `RunConfig.concurrency` default `12`
+    - `RunConfig.parallel_backend` default `thread`
+    - `RunConfig.query_timeout_s` default `350.0`
+  - `scripts/score_eval.py`
+    - `--judge-workers` default `12`
+    - `--judge-timeout-s` default `350`
+  - `src/andromeda/eval/scoring.py`
+    - `score_one(... judge_timeout_s=350.0)` default aligned.
+  - `scripts/run_eval.sh`
+    - wrapper updated to `normal`, `12` workers, thread backend, `350s` timeout.
+- Frontend control surface:
+  - `src/andromeda/static/index.html`
+    - removed raw retrieval/token numeric controls from Advanced options.
+    - kept: `Mode`, `Answering effort`, optional `Run draft + refine`.
+  - `src/andromeda/static/ts/index/main.ts` + `src/andromeda/static/js/index/main.js`
+    - request settings payload now sends only high-impact controls (`mode`, `answering_effort`, `enable_refine`).
+    - mode preset application now updates answering effort only.
+  - `src/andromeda/static/ts/index/generation.ts` + `src/andromeda/static/js/index/generation.js`
+    - fallback preset values aligned to backend (`quick=20/10`, `normal=40/25`, `thinking=60/35`) and normal-effort high.
+  - `src/andromeda/static/ts/index/dom.ts` + `src/andromeda/static/js/index/dom.js`
+    - removed stale top-k/token element bindings.
+- Config/docs:
+  - `.env.example` refreshed to chunk512/profile defaults and explicit narrative toggle recommendations.
+  - `README_EVAL.md` updated with default-off query expansion and default-on aspect coverage.
+  - `CHANGELOG.md` updated under `Unreleased`.
+
+### Rationale
+- Frontier/chunk studies indicate `chunk=512` + `normal` mode is the best practical operating point.
+- `answering_effort=high` improves quality with modest throughput impact relative to medium.
+- Query expansion can drift user intent; keeping it default-off is safer for product behavior.
+- UI simplification reduces knob overfitting and keeps user control on the settings that consistently moved latency/quality.
+
+### Validation
+- Pending final repo checks at wrap-up:
+  - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - `source .venv/bin/activate && pytest -vvv tests/`

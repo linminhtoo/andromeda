@@ -24,7 +24,13 @@ Rationale: in the controlled sweep (`agent_logs/reports/chunk_size_tradeoff_17Fe
   - `final_max_tokens=32768`
   - `enable_rerank=true`
   - `enable_refine=false`
-  - `draft_temperature=0.1`
+- `answering_effort=high`
+- `draft_temperature=0.1`
+- retrieval toggles:
+  - `FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION=0`
+  - `FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE=1`
+  - `FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET=1`
+  - `FINRAG_ENABLE_MMR_DIVERSITY=0`
 - tools: enabled by default (no `--disable-finance-tools`)
 - workers/backend: `concurrency=12`, `parallel_backend=thread`
 - generation timeout/retry (recommended): `query_timeout_s=350`, `query_max_retries=1`
