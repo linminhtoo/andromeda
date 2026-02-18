@@ -31,7 +31,11 @@ from andromeda.processing.chunk_postprocess import (
 )
 from andromeda.processing.chunking import DoclingHybridChunker, MarkdownTablePreservingChunker
 from andromeda.dataclasses import DocChunk
-from andromeda.ingestion.ingest_profile import ingest_profile_layout, resolve_ingest_profile_name, update_ingest_profile_step
+from andromeda.ingestion.ingest_profile import (
+    ingest_profile_layout,
+    resolve_ingest_profile_name,
+    update_ingest_profile_step,
+)
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

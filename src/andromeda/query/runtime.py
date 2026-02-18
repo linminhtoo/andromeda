@@ -895,17 +895,10 @@ class RAGService:
         target_top_k_retrieve = min(settings.top_k_retrieve, target_top_k_retrieve)
         target_top_k_rerank = min(settings.top_k_rerank, target_top_k_rerank, target_top_k_retrieve)
 
-        if (
-            target_top_k_retrieve == settings.top_k_retrieve
-            and target_top_k_rerank == settings.top_k_rerank
-        ):
+        if target_top_k_retrieve == settings.top_k_retrieve and target_top_k_rerank == settings.top_k_rerank:
             return settings, None
 
-        adjusted_settings = replace(
-            settings,
-            top_k_retrieve=target_top_k_retrieve,
-            top_k_rerank=target_top_k_rerank,
-        )
+        adjusted_settings = replace(settings, top_k_retrieve=target_top_k_retrieve, top_k_rerank=target_top_k_rerank)
         trace_event = self._tool_event(
             "adaptive_retrieval_budget",
             args={
@@ -922,6 +915,12 @@ class RAGService:
     def resolve_tool_usage_from_decision(self, *, question: str, decision: PlannerDecision) -> tuple[bool, bool, bool]:
         """
         Resolve planner tool flags into effective `use_rag`, `use_yfinance`, and `use_edgar_financials`.
+
+        FIXME
+        -----
+        - do not use regex/text heuristics to classify question.
+        - we should use planner LLM to do this.
+        - the heuristics should only be a fallback when planner LLM output was an error (eg invalid JSON format)
         """
 
         simple_numeric_query = self._question_is_simple_numeric_metric(question)
@@ -1865,9 +1864,7 @@ class RAGService:
         retrieval_settings = settings
         if use_rag_for_execution:
             retrieval_settings, adaptive_budget_trace = self.apply_adaptive_retrieval_budget(
-                question=question,
-                settings=settings,
-                planned=planned,
+                question=question, settings=settings, planned=planned
             )
             if adaptive_budget_trace is not None:
                 execution.tool_trace.append(adaptive_budget_trace)
