@@ -50,12 +50,12 @@ class RunConfig:
     draft_temperature: float | None = None
 
     # Parallelism. (Latency does not matter for offline eval runs.)
-    concurrency: int = 8
-    parallel_backend: str = "process"
+    concurrency: int = 12
+    parallel_backend: str = "thread"
 
     # Output controls.
     max_chunks: int = 50
-    query_timeout_s: float | None = None
+    query_timeout_s: float | None = 350.0
     query_max_retries: int = 1
 
     def resolved_settings(self) -> GenerationSettings:

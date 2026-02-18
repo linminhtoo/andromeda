@@ -86,7 +86,7 @@ _PRESETS: dict[str, GenerationPreset] = {
     "normal": GenerationPreset(
         key="normal",
         label="Normal",
-        description="Balanced quality/speed. Uses reranking.",
+        description="Balanced quality/speed. Uses reranking with high synthesis effort.",
         top_k_retrieve=40,
         top_k_rerank=25,
         draft_max_tokens=65_536,
@@ -95,7 +95,7 @@ _PRESETS: dict[str, GenerationPreset] = {
         enable_rerank=True,
         enable_refine=False,
         answer_style="normal",
-        answering_effort=AnsweringEffort.MEDIUM,
+        answering_effort=AnsweringEffort.HIGH,
         draft_temperature=0.1,
     ),
     "thinking": GenerationPreset(

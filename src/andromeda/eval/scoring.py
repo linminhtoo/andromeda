@@ -183,7 +183,7 @@ def score_one(
     judge_llm: LLMClient | None,
     judge_specs: list[JudgeSpec] | None = None,
     judge_context_chars: int = 80_000,
-    judge_timeout_s: float | None = 300.0,
+    judge_timeout_s: float | None = 350.0,
     judge_max_retries: int = 1,
 ) -> EvalScore:
     resolved_judge_specs = list(judge_specs) if judge_specs is not None else default_judge_specs_for_query(query)

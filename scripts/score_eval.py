@@ -133,14 +133,14 @@ def main() -> None:
     ap.add_argument(
         "--judge-timeout-s",
         type=float,
-        default=300.0,
+        default=350.0,
         help="Per-judge-call timeout in seconds (set <=0 to disable provider timeout override).",
     )
     ap.add_argument("--judge-max-retries", type=int, default=1, help="Retry count after the first failed judge call.")
     ap.add_argument(
         "--judge-workers",
         type=int,
-        default=1,
+        default=12,
         help="Thread parallelism for judge API calls (only used when judge is enabled).",
     )
     ap.add_argument("--max-items", type=int, default=None)

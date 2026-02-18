@@ -39,11 +39,11 @@ def main() -> None:
     ap.add_argument("--out-dir", required=True, help="Directory to write run artifacts.")
     ap.add_argument("--run-name", default=None, help="Optional run name prefix (e.g. 'baseline').")
     ap.add_argument("--mode", default="normal", help="Generation preset (quick|normal|thinking).")
-    ap.add_argument("--concurrency", type=int, default=8, help="Max parallel questions to run (set 1 to disable).")
+    ap.add_argument("--concurrency", type=int, default=12, help="Max parallel questions to run (set 1 to disable).")
     ap.add_argument(
         "--parallel-backend",
         choices=["process", "thread"],
-        default="process",
+        default="thread",
         help="Parallel execution backend when concurrency > 1.",
     )
     ap.add_argument(
@@ -80,7 +80,7 @@ def main() -> None:
     ap.add_argument(
         "--query-timeout-s",
         type=float,
-        default=120.0,
+        default=350.0,
         help="Optional per-query timeout in seconds for generation (set <=0 to disable).",
     )
     ap.add_argument(

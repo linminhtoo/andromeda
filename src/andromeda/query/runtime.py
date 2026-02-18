@@ -812,7 +812,7 @@ class RAGService:
         Return whether diversified narrative retrieval-query expansion is enabled.
         """
 
-        raw = (os.getenv("FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION") or "1").strip().lower()
+        raw = (os.getenv("FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION") or "0").strip().lower()
         return raw in {"1", "true", "yes", "on"}
 
     @staticmethod
