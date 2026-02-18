@@ -2581,3 +2581,56 @@
 
 ### In-flight
 - Final retrieval-strategy condition now running: `strategy_mmr_on_adaptive_off`.
+
+## 2026-02-18 - Benchmark wrap-up documentation
+
+### What was added
+- New top-level benchmark report:
+  - `BENCHMARK.md`
+- New figure-generation script:
+  - `agent_logs/scripts/eval/20260218_154300_build_benchmark_report_figures.py`
+- New benchmark report figures:
+  - `eval/results_revamp/benchmark_report_20260218/frontier_open_faithfulness_scatter.png`
+  - `eval/results_revamp/benchmark_report_20260218/retrieval_strategy_tradeoffs.png`
+  - `eval/results_revamp/benchmark_report_20260218/narrative_guardrails_tradeoffs.png`
+  - `eval/results_revamp/benchmark_report_20260218/judge_variance_replicates.png`
+
+### Documentation focus
+- Consolidated all recent benchmark outcomes into one report:
+  - latency-accuracy frontier summary,
+  - retrieval strategy ablation (MMR/adaptive toggles),
+  - narrative guardrail ablation,
+  - chunk-size ablation (80k judge context),
+  - judge variance and interpretation guidance.
+- Embedded all key plots directly in markdown for interview/demo readiness.
+
+### Note
+- At wrap-up time there were no active eval benchmark processes; latest frontier rows and figures were already materialized and incorporated.
+
+## 2026-02-18 - Benchmark report readability pass
+
+### Motivation
+- User feedback: Topline frontier narrative was hard to parse, experiment names were under-explained, and some charts were hard to read (x-axis label crowding, ambiguous bars).
+
+### Changes made
+- Rewrote `BENCHMARK.md` to include:
+  - explicit experiment catalog (exact runs + rationale),
+  - full results summary table across all frontier experiments,
+  - clarified definitions for ambiguous IDs (especially `strategy_baseline_flags_explicit`).
+- Rebuilt benchmark figure pipeline:
+  - script updated: `agent_logs/scripts/eval/20260218_154300_build_benchmark_report_figures.py`
+  - outputs moved to tracked report path:
+    - `agent_logs/reports/benchmark_figures_20260218/frontier_open_faithfulness_scatter.png`
+    - `agent_logs/reports/benchmark_figures_20260218/frontier_throughput_ranked.png`
+    - `agent_logs/reports/benchmark_figures_20260218/retrieval_strategy_tradeoffs.png`
+    - `agent_logs/reports/benchmark_figures_20260218/narrative_guardrails_tradeoffs.png`
+    - `agent_logs/reports/benchmark_figures_20260218/chunk_size_tradeoffs.png`
+    - `agent_logs/reports/benchmark_figures_20260218/judge_variance_replicates.png`
+
+### Specific chart fixes
+- Throughput chart switched to ranked horizontal bars to avoid unreadable x-axis labels.
+- Retrieval-strategy failure chart now includes grouped bars for `factual_fail`, `open_faith_fail`, and `comparison_fail` with value labels and explicit edges.
+- Frontier scatter reduced annotation clutter and only labels key anchor points.
+
+### Result
+- Benchmark story is now auditable in one pass: what was run, why, and what happened.
