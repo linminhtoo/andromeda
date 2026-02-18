@@ -821,22 +821,12 @@ function renderPerTickerBriefs(briefs: Record<string, string>): void {
 
 /** Read current generation controls into API request settings payload. */
 function currentSettings(): any {
-  const toInt = (v: unknown, fallback: number): number => {
-    const n = Number(v);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
-  };
-
   const mode = String(els.genMode?.value || '').trim().toLowerCase() || generationModes.getDefaultMode() || 'normal';
 
   return {
     mode,
     enable_refine: Boolean(els.enableRefine?.checked),
-    top_k_retrieve: toInt(els.topKRetrieve.value, 30),
-    top_k_rerank: toInt(els.topKRerank.value, 8),
-    draft_max_tokens: toInt(els.draftMaxTokens.value, 65536),
-    final_max_tokens: toInt(els.finalMaxTokens.value, 32768),
-    brief_max_tokens: toInt(els.briefMaxTokens.value, 8000),
-    answering_effort: String(els.answeringEffort?.value || 'medium').trim().toLowerCase() || 'medium',
+    answering_effort: String(els.answeringEffort?.value || 'high').trim().toLowerCase() || 'high',
   };
 }
 
@@ -851,11 +841,6 @@ function applySettings(settings: any): void {
     generationModes.updateModeHelp(selected, els.genModeHelp);
   }
 
-  if (settings.top_k_retrieve) els.topKRetrieve.value = settings.top_k_retrieve;
-  if (settings.top_k_rerank) els.topKRerank.value = settings.top_k_rerank;
-  if (settings.draft_max_tokens) els.draftMaxTokens.value = settings.draft_max_tokens;
-  if (settings.final_max_tokens) els.finalMaxTokens.value = settings.final_max_tokens;
-  if (settings.brief_max_tokens) els.briefMaxTokens.value = settings.brief_max_tokens;
   if (els.answeringEffort) {
     const effort = String(settings.answering_effort || '').trim().toLowerCase();
     if (effort === 'low' || effort === 'medium' || effort === 'high') {
@@ -1925,11 +1910,6 @@ els.sourceToggleModeBtn.addEventListener('click', async () => {
 els.genMode?.addEventListener('change', () => {
   const mode = String(els.genMode.value || '').trim().toLowerCase();
   generationModes.applyModePreset(mode, {
-    topKRetrieve: els.topKRetrieve,
-    topKRerank: els.topKRerank,
-    draftMaxTokens: els.draftMaxTokens,
-    finalMaxTokens: els.finalMaxTokens,
-    briefMaxTokens: els.briefMaxTokens,
     answeringEffort: els.answeringEffort,
   });
   generationModes.updateModeHelp(mode, els.genModeHelp);
@@ -1948,11 +1928,6 @@ els.enableRefine?.addEventListener('change', () => {
   writeSettings(currentSettings());
 });
 [
-  els.topKRetrieve,
-  els.topKRerank,
-  els.draftMaxTokens,
-  els.finalMaxTokens,
-  els.briefMaxTokens,
   els.answeringEffort,
 ].forEach((node) => {
   node?.addEventListener('change', () => {
@@ -1985,11 +1960,6 @@ els.ingestTicker?.addEventListener('keydown', (e: KeyboardEvent) => {
   generationModes.applyModePreset(
     mode,
     {
-      topKRetrieve: els.topKRetrieve,
-      topKRerank: els.topKRerank,
-      draftMaxTokens: els.draftMaxTokens,
-      finalMaxTokens: els.finalMaxTokens,
-      briefMaxTokens: els.briefMaxTokens,
       answeringEffort: els.answeringEffort,
     },
     { overwriteAdvanced: true },

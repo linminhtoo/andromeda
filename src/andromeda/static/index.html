@@ -920,41 +920,19 @@
                         </div>
                       </div>
                       <div style="margin-bottom: 0.75rem;">
+                        <label class="muted" for="answeringEffort">Answering effort (quality vs speed)</label>
+                        <select id="answeringEffort">
+                          <option value="low">low</option>
+                          <option value="medium">medium</option>
+                          <option value="high" selected>high</option>
+                        </select>
+                      </div>
+                      <div style="margin-bottom: 0.75rem;">
                         <label class="row" style="gap: 0.5rem; align-items: center;">
                           <input id="enableRefine" type="checkbox" style="width:auto; margin: 0;" />
                           <span class="muted">Run draft + refine (two-stage generation)</span>
                         </label>
                       </div>
-	                    <div class="kv">
-	                      <div>
-	                        <label class="muted" for="topKRetrieve">top_k_retrieve</label>
-	                        <input id="topKRetrieve" type="number" min="1" step="1" value="30" />
-	                      </div>
-	                      <div>
-	                        <label class="muted" for="topKRerank">top_k_rerank</label>
-	                        <input id="topKRerank" type="number" min="1" step="1" value="8" />
-	                      </div>
-	                      <div>
-	                        <label class="muted" for="draftMaxTokens">draft_max_tokens</label>
-	                        <input id="draftMaxTokens" type="number" min="1" step="1" value="65536" />
-	                      </div>
-	                      <div>
-	                        <label class="muted" for="finalMaxTokens">final_max_tokens</label>
-	                        <input id="finalMaxTokens" type="number" min="1" step="1" value="32768" />
-	                      </div>
-                        <div>
-                          <label class="muted" for="briefMaxTokens">brief_max_tokens</label>
-                          <input id="briefMaxTokens" type="number" min="1" step="1" value="8000" />
-                        </div>
-                        <div>
-                          <label class="muted" for="answeringEffort">answering_effort</label>
-                          <select id="answeringEffort">
-                            <option value="low">low</option>
-                            <option value="medium" selected>medium</option>
-                            <option value="high">high</option>
-                          </select>
-                        </div>
-	                    </div>
 	                  </div>
 	                </details>
 

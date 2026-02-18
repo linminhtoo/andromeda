@@ -163,3 +163,41 @@ Implication:
 - `agent_logs/scripts/eval/20260218_115700_extend_latency_accuracy_frontier_narrative_flags.sh`
 - `agent_logs/scripts/eval/20260218_113300_judge_stability_rescore_single100_baseline.sh`
 - `agent_logs/scripts/eval/20260218_154300_build_benchmark_report_figures.py`
+
+## Golden Defaults (Recommended Moving Forward)
+
+This is the recommended default profile for deployed usage and future eval loops.
+
+### Retrieval + index
+- chunking: `512` max tokens, `64` overlap.
+- sparse retrieval: `bm25`.
+- retrieval mode: full chunk text (deploy-matched).
+
+### Answering runtime
+- mode: `normal`.
+- answering effort: `high`.
+- preset-resolved controls:
+  - `top_k_retrieve=40`
+  - `top_k_rerank=25`
+  - `draft_max_tokens=65536`
+  - `final_max_tokens=32768`
+  - `brief_max_tokens=8000`
+  - `enable_rerank=true`
+  - `enable_refine=false`
+- retrieval strategy toggles:
+  - `FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION=0` (default off)
+  - `FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE=1`
+  - `FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET=1`
+  - `FINRAG_ENABLE_MMR_DIVERSITY=0`
+
+### Eval harness defaults
+- generation workers: `12` (thread backend).
+- judge workers: `12`.
+- generation timeout/retries: `350s`, `1` retry.
+- judge context/timeout/retries: `80000`, `350s`, `1` retry.
+
+### Why this profile
+- `chunk=512` is the best measured latency/quality compromise in the rerun (`80k` judge context).
+- `normal + high effort` gave the strongest overall quality trade-off in the frontier with near-baseline throughput.
+- query expansion is disabled by default to avoid semantic drift away from the user’s original request.
+- judge settings above are required for stable faithfulness behavior (per LOGBOOK + judge-variance analysis).
