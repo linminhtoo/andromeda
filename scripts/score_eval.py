@@ -36,6 +36,35 @@ def _compact_top_chunks(gen: EvalGeneration, *, max_chars: int = 2400, max_chunk
     return "\n".join(parts).strip()
 
 
+def _tool_trace_summary(gen: EvalGeneration) -> dict[str, Any]:
+    tool_names: list[str] = []
+    for event in gen.tool_trace or []:
+        if not isinstance(event, dict):
+            continue
+        name = str(event.get("tool") or "").strip()
+        if name:
+            tool_names.append(name)
+
+    result_tools: list[str] = []
+    for item in gen.tool_results or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("tool") or "").strip()
+        if name:
+            result_tools.append(name)
+
+    all_tools = sorted(set(tool_names + result_tools))
+    lowered = [name.lower() for name in all_tools]
+    return {
+        "tool_event_count": len(tool_names),
+        "tool_names": " ".join(all_tools),
+        "tool_results_count": len(gen.tool_results or []),
+        "finance_event_count": sum(1 for name in lowered if "finance" in name or "edgar" in name or "yfinance" in name),
+        "used_yfinance": any("yfinance" in name for name in lowered),
+        "used_edgar_financials": any("edgar" in name for name in lowered),
+    }
+
+
 def _write_review_csv(rows: list[dict[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -100,11 +129,18 @@ def main() -> None:
     ap.add_argument("--judge-provider", default=None)
     ap.add_argument("--judge-model", default=None)
     ap.add_argument("--judge-base-url", default=None)
-    ap.add_argument("--judge-context-chars", type=int, default=65_000)
+    ap.add_argument("--judge-context-chars", type=int, default=80_000)
+    ap.add_argument(
+        "--judge-timeout-s",
+        type=float,
+        default=350.0,
+        help="Per-judge-call timeout in seconds (set <=0 to disable provider timeout override).",
+    )
+    ap.add_argument("--judge-max-retries", type=int, default=1, help="Retry count after the first failed judge call.")
     ap.add_argument(
         "--judge-workers",
         type=int,
-        default=1,
+        default=12,
         help="Thread parallelism for judge API calls (only used when judge is enabled).",
     )
     ap.add_argument("--max-items", type=int, default=None)
@@ -149,6 +185,8 @@ def main() -> None:
 
     if args.judge_workers < 1:
         raise SystemExit("--judge-workers must be >= 1")
+    if args.judge_max_retries < 0:
+        raise SystemExit("--judge-max-retries must be >= 0")
 
     judge_client_kwargs = {
         "provider": args.judge_provider,
@@ -169,7 +207,14 @@ def main() -> None:
         scores: list[EvalScore] = []
         for q in tqdm(queries, total=len(queries), desc="Scoring eval queries"):
             scores.append(
-                score_one(q, gens_by_id.get(q.id), judge_llm=judge_llm, judge_context_chars=args.judge_context_chars)
+                score_one(
+                    q,
+                    gens_by_id.get(q.id),
+                    judge_llm=judge_llm,
+                    judge_context_chars=args.judge_context_chars,
+                    judge_timeout_s=args.judge_timeout_s,
+                    judge_max_retries=args.judge_max_retries,
+                )
             )
     else:
         thread_local = threading.local()
@@ -182,7 +227,12 @@ def main() -> None:
                     base_url=judge_client_kwargs["base_url"],
                 )
             return score_one(
-                q, gens_by_id.get(q.id), judge_llm=thread_local.judge_llm, judge_context_chars=args.judge_context_chars
+                q,
+                gens_by_id.get(q.id),
+                judge_llm=thread_local.judge_llm,
+                judge_context_chars=args.judge_context_chars,
+                judge_timeout_s=args.judge_timeout_s,
+                judge_max_retries=args.judge_max_retries,
             )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.judge_workers) as ex:
@@ -224,6 +274,7 @@ def main() -> None:
         judge_preds, judge_explanations = _judge_maps(s)
         helpfulness_prediction = judge_preds["helpfulness_v1"] if "helpfulness_v1" in judge_preds else ""
         helpfulness_explanation = judge_explanations["helpfulness_v1"] if "helpfulness_v1" in judge_explanations else ""
+        tool_summary = _tool_trace_summary(g) if g is not None else {}
         target_tickers: list[str] = []
         if q.open_ended is not None and q.open_ended.target_ticker:
             target_tickers.append(q.open_ended.target_ticker)
@@ -261,6 +312,12 @@ def main() -> None:
                 "judge_explanations_json": json.dumps(judge_explanations, ensure_ascii=False, sort_keys=True),
                 "helpfulness_prediction": helpfulness_prediction,
                 "helpfulness_explanation": helpfulness_explanation,
+                "tool_event_count": tool_summary.get("tool_event_count", ""),
+                "tool_names": tool_summary.get("tool_names", ""),
+                "tool_results_count": tool_summary.get("tool_results_count", ""),
+                "finance_event_count": tool_summary.get("finance_event_count", ""),
+                "used_yfinance": tool_summary.get("used_yfinance", ""),
+                "used_edgar_financials": tool_summary.get("used_edgar_financials", ""),
                 "final_answer": (g.final_answer if g is not None and g.final_answer else ""),
                 "top_chunks_compact": (_compact_top_chunks(g) if g is not None else ""),
                 "human_label": (existing_labels.get(q.id, ("", ""))[0]),

@@ -97,9 +97,437 @@ function expandProgressLog(): void {
   els.progressLogDetails.open = true;
 }
 
+type PricePoint = {
+  t: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number;
+  volume: number | null;
+};
+
+type ToolChartPayload = {
+  ticker: string;
+  title: string;
+  summary: string;
+  period: string;
+  interval: string;
+  points: PricePoint[];
+};
+
+type ToolStatementRow = {
+  label: string;
+  value: string;
+};
+
+const TOOL_DISPLAY_NAMES = new Map<string, string>([
+  ['yfinance_get_price_history', 'Price history'],
+  ['yfinance_get_ticker_info', 'Company profile'],
+  ['yfinance_get_ticker_news', 'Recent news'],
+  ['edgar_get_financial_metrics', 'SEC annual financial metrics'],
+  ['edgar_get_quarterly_financial_metrics', 'SEC quarterly financial metrics'],
+  ['edgar_get_financial_statements', 'SEC financial statements'],
+]);
+
+const TOOL_CHART_MODAL_WIDTH = 960;
+const TOOL_CHART_MODAL_HEIGHT = 420;
+const toolChartPayloadByKey = new Map<string, ToolChartPayload>();
+let toolChartRenderVersion = 0;
+let activeToolChartKey: string | null = null;
+let activeToolChartHoverIndex: number | null = null;
+
+/** Convert a value to finite number if possible, else `null`. */
+function asNumber(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Return object payload when value is a plain object, else an empty object. */
+function asPayloadObject(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
+  return payload as Record<string, unknown>;
+}
+
+/** Return concise display label for a snake_case identifier. */
+function titleCaseLabel(rawLabel: string): string {
+  const text = String(rawLabel || '').trim().replace(/[_-]+/g, ' ');
+  if (!text) return '';
+  const acronymMap = new Map<string, string>([
+    ['eps', 'EPS'],
+    ['ebit', 'EBIT'],
+    ['ebitda', 'EBITDA'],
+    ['gaap', 'GAAP'],
+    ['sec', 'SEC'],
+    ['pe', 'P/E'],
+    ['roe', 'ROE'],
+    ['roa', 'ROA'],
+    ['cagr', 'CAGR'],
+  ]);
+  return text
+    .split(/\s+/g)
+    .map((part) => {
+      const lookup = acronymMap.get(part.toLowerCase());
+      if (lookup) return lookup;
+      if (/^\d+$/.test(part)) return part;
+      return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
+/** Return a polished display name for a tool identifier. */
+function toolDisplayName(tool: string): string {
+  const normalized = String(tool || '').trim().toLowerCase();
+  const mapped = TOOL_DISPLAY_NAMES.get(normalized);
+  if (mapped) return mapped;
+  const fallback = titleCaseLabel(normalized);
+  return fallback || 'Tool result';
+}
+
+/** Return formatted card title with ticker prefix when available. */
+function toolCardTitle(item: any): string {
+  const tool = String(item?.tool || '').trim().toLowerCase();
+  const ticker = String(item?.ticker || '').trim().toUpperCase();
+  const label = toolDisplayName(tool);
+  return ticker ? `${ticker} ${label}` : label;
+}
+
+/** Return readable numeric/text value for compact UI tables. */
+function formatMetricValue(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const abs = Math.abs(value);
+    if (abs >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  }
+  if (typeof value === 'string') return value.trim();
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
+/** Clamp number to inclusive min/max bounds. */
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+/** Return a short date label from ISO timestamp text. */
+function formatChartDateLabel(rawTs: string): string {
+  const text = String(rawTs || '').trim();
+  if (!text) return 'n/a';
+  const parsed = Date.parse(text);
+  if (!Number.isFinite(parsed)) return text.slice(0, 10);
+  return new Date(parsed).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+/** Return normalized OHLCV points from raw payload series list. */
+function normalizePriceSeries(rawSeries: unknown): PricePoint[] {
+  const series = Array.isArray(rawSeries) ? rawSeries : [];
+  const out: PricePoint[] = [];
+  for (const point of series) {
+    const close = asNumber((point as any)?.close);
+    if (close === null) continue;
+    out.push({
+      t: String((point as any)?.t || ''),
+      open: asNumber((point as any)?.open),
+      high: asNumber((point as any)?.high),
+      low: asNumber((point as any)?.low),
+      close,
+      volume: asNumber((point as any)?.volume),
+    });
+  }
+  return out;
+}
+
+/** Return true when series has complete OHLC values for candlestick view. */
+function hasCandleData(points: PricePoint[]): boolean {
+  return points.every((point) => point.open !== null && point.high !== null && point.low !== null);
+}
+
+/** Build two-column data table HTML with escaped content. */
+function renderDataTable(
+  headers: { left: string; right: string },
+  rows: Array<{ left: string; right: string }>,
+): string {
+  if (!rows.length) return '';
+  return `
+    <div class="toolDataTableWrap">
+      <table class="toolDataTable">
+        <thead>
+          <tr>
+            <th>${safeText(headers.left)}</th>
+            <th>${safeText(headers.right)}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map((row) => `<tr><td>${safeText(row.left)}</td><td>${safeText(row.right)}</td></tr>`)
+            .join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/** Render generic payload preview when no dedicated renderer exists. */
+function renderFallbackPayload(payload: unknown): string {
+  if (payload === null || payload === undefined) return '';
+  if (typeof payload === 'string') {
+    const text = payload.trim();
+    if (!text) return '';
+    const clipped = text.length > 1200 ? `${text.slice(0, 1200)}…` : text;
+    return `<p class="toolPayloadText">${safeText(clipped)}</p>`;
+  }
+
+  if (typeof payload === 'number' && Number.isFinite(payload)) {
+    return `<p class="toolPayloadText">${safeText(formatMetricValue(payload))}</p>`;
+  }
+
+  if (typeof payload === 'object' && !Array.isArray(payload)) {
+    const rows = Object.entries(payload as Record<string, unknown>)
+      .slice(0, 10)
+      .map(([key, value]) => {
+        const compact =
+          value !== null && typeof value === 'object'
+            ? JSON.stringify(value).slice(0, 120)
+            : String(value ?? '').slice(0, 120);
+        return { left: titleCaseLabel(key), right: compact };
+      });
+    return renderDataTable({ left: 'Field', right: 'Value' }, rows);
+  }
+
+  const compact = JSON.stringify(payload).slice(0, 1200);
+  return compact ? `<p class="toolPayloadText">${safeText(compact)}</p>` : '';
+}
+
+/** Parse statement text into best-effort line item rows for readable display. */
+function parseStatementRows(statementText: string, maxRows: number): ToolStatementRow[] {
+  const rows: ToolStatementRow[] = [];
+  const seen = new Set<string>();
+  const numericPattern = /[\-($]?\d[\d,]*(?:\.\d+)?\)?/;
+  const numericAllPattern = /[\-($]?\d[\d,]*(?:\.\d+)?\)?/g;
+
+  for (const rawLine of String(statementText || '').split(/\r?\n/g)) {
+    const line = rawLine.replace(/\|/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!line) continue;
+    if (/^[-=:_\s]+$/.test(line)) continue;
+
+    const firstNumeric = line.match(numericPattern);
+    if (!firstNumeric || firstNumeric.index === undefined) continue;
+
+    const label = line
+      .slice(0, firstNumeric.index)
+      .replace(/[.:;,\-–\s]+$/g, '')
+      .trim();
+    if (!label) continue;
+
+    const numericTokens = line.match(numericAllPattern);
+    if (!numericTokens || !numericTokens.length) continue;
+    const valueToken = numericTokens[0];
+
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ label, value: valueToken });
+    if (rows.length >= maxRows) break;
+  }
+  return rows;
+}
+
+/** Return non-empty readable statement lines for fallback display. */
+function parseStatementLines(statementText: string, maxLines: number): string[] {
+  const lines: string[] = [];
+  for (const rawLine of String(statementText || '').split(/\r?\n/g)) {
+    const line = rawLine.replace(/\|/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!line) continue;
+    if (/^[-=:_\s]+$/.test(line)) continue;
+    lines.push(line);
+    if (lines.length >= maxLines) break;
+  }
+  return lines;
+}
+
+/** Return active tool chart payload when modal has an open selection. */
+function activeToolChartPayload(): ToolChartPayload | null {
+  if (!activeToolChartKey) return null;
+  return toolChartPayloadByKey.get(activeToolChartKey) || null;
+}
+
+/** Hide chart tooltip overlay in interactive modal. */
+function hideToolChartTooltip(): void {
+  if (!els.toolChartModalTooltip) return;
+  els.toolChartModalTooltip.hidden = true;
+  els.toolChartModalTooltip.textContent = '';
+}
+
+/** Draw active chart payload into interactive modal SVG. */
+function renderToolChartModal(payload: ToolChartPayload, hoverIndex: number | null = null): void {
+  if (!els.toolChartModalSvg) return;
+  const points = payload.points;
+  if (!points.length) {
+    els.toolChartModalSvg.innerHTML = '';
+    return;
+  }
+
+  const chartHasCandles = hasCandleData(points);
+  const width = TOOL_CHART_MODAL_WIDTH;
+  const height = TOOL_CHART_MODAL_HEIGHT;
+  const padLeft = 66;
+  const padRight = 16;
+  const padTop = 16;
+  const padBottom = 34;
+  const plotWidth = width - padLeft - padRight;
+  const plotHeight = height - padTop - padBottom;
+
+  const highs = points.map((point) => (point.high === null ? point.close : point.high));
+  const lows = points.map((point) => (point.low === null ? point.close : point.low));
+  const minValue = Math.min(...lows);
+  const maxValue = Math.max(...highs);
+  const rawSpan = maxValue - minValue || 1;
+  const yMin = minValue - rawSpan * 0.05;
+  const yMax = maxValue + rawSpan * 0.05;
+  const ySpan = yMax - yMin || 1;
+
+  const xPos = points.map((_, idx) => padLeft + (plotWidth * idx) / Math.max(points.length - 1, 1));
+  const toY = (value: number): number => padTop + ((yMax - value) / ySpan) * plotHeight;
+
+  const gridLines = [0, 1, 2, 3, 4]
+    .map((tick) => {
+      const ratio = tick / 4;
+      const y = padTop + ratio * plotHeight;
+      const value = yMax - ratio * ySpan;
+      return `
+        <line x1="${padLeft}" y1="${y.toFixed(2)}" x2="${(width - padRight).toFixed(2)}" y2="${y.toFixed(2)}" stroke="rgba(41,70,93,0.15)" stroke-width="1"></line>
+        <text x="${(padLeft - 8).toFixed(2)}" y="${(y + 4).toFixed(2)}" text-anchor="end" font-size="11" fill="#557088" font-family="var(--mono)">${safeText(formatMetricValue(value))}</text>
+      `;
+    })
+    .join('');
+
+  const xAxis = `
+    <line x1="${padLeft}" y1="${(height - padBottom).toFixed(2)}" x2="${(width - padRight).toFixed(2)}" y2="${(height - padBottom).toFixed(2)}" stroke="rgba(41,70,93,0.24)" stroke-width="1"></line>
+    <text x="${padLeft}" y="${(height - 10).toFixed(2)}" text-anchor="start" font-size="11" fill="#557088">${safeText(formatChartDateLabel(points[0].t))}</text>
+    <text x="${(padLeft + plotWidth / 2).toFixed(2)}" y="${(height - 10).toFixed(2)}" text-anchor="middle" font-size="11" fill="#557088">${safeText(formatChartDateLabel(points[Math.floor(points.length / 2)].t))}</text>
+    <text x="${(width - padRight).toFixed(2)}" y="${(height - 10).toFixed(2)}" text-anchor="end" font-size="11" fill="#557088">${safeText(formatChartDateLabel(points[points.length - 1].t))}</text>
+  `;
+
+  let seriesMarkup = '';
+  if (chartHasCandles) {
+    const candleWidth = clamp((plotWidth / Math.max(points.length, 1)) * 0.68, 3, 11);
+    const candles = points.map((point, idx) => {
+      const x = xPos[idx];
+      const open = Number(point.open);
+      const high = Number(point.high);
+      const low = Number(point.low);
+      const close = Number(point.close);
+      const wickTop = toY(high);
+      const wickBottom = toY(low);
+      const openY = toY(open);
+      const closeY = toY(close);
+      const bodyTop = Math.min(openY, closeY);
+      const bodyHeight = Math.max(Math.abs(closeY - openY), 1.2);
+      const up = close >= open;
+      const color = up ? '#0f766e' : '#be123c';
+      return `
+        <line x1="${x.toFixed(2)}" y1="${wickTop.toFixed(2)}" x2="${x.toFixed(2)}" y2="${wickBottom.toFixed(2)}" stroke="${color}" stroke-width="1.3"></line>
+        <rect x="${(x - candleWidth / 2).toFixed(2)}" y="${bodyTop.toFixed(2)}" width="${candleWidth.toFixed(2)}" height="${bodyHeight.toFixed(2)}" fill="${color}" rx="1"></rect>
+      `;
+    });
+    seriesMarkup = candles.join('');
+  } else {
+    const pointsAttr = points
+      .map((point, idx) => `${xPos[idx].toFixed(2)},${toY(point.close).toFixed(2)}`)
+      .join(' ');
+    seriesMarkup = `<polyline points="${safeText(pointsAttr)}" fill="none" stroke="#0f766e" stroke-width="2.2"></polyline>`;
+  }
+
+  let hoverMarkup = '';
+  if (hoverIndex !== null && hoverIndex >= 0 && hoverIndex < points.length) {
+    const x = xPos[hoverIndex];
+    const y = toY(points[hoverIndex].close);
+    hoverMarkup = `
+      <line x1="${x.toFixed(2)}" y1="${padTop}" x2="${x.toFixed(2)}" y2="${(height - padBottom).toFixed(2)}" stroke="rgba(14,116,144,0.45)" stroke-width="1" stroke-dasharray="3 3"></line>
+      <line x1="${padLeft}" y1="${y.toFixed(2)}" x2="${(width - padRight).toFixed(2)}" y2="${y.toFixed(2)}" stroke="rgba(14,116,144,0.3)" stroke-width="1" stroke-dasharray="3 3"></line>
+      <circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3.2" fill="#0f766e" stroke="#ffffff" stroke-width="1"></circle>
+    `;
+  }
+
+  els.toolChartModalSvg.innerHTML = `
+    <rect x="0" y="0" width="${width}" height="${height}" fill="#f6fbff"></rect>
+    ${gridLines}
+    ${xAxis}
+    ${seriesMarkup}
+    ${hoverMarkup}
+  `;
+
+  if (els.toolChartModalTitle) els.toolChartModalTitle.textContent = payload.title;
+  if (els.toolChartModalPeriodPill) els.toolChartModalPeriodPill.textContent = payload.period || 'period';
+  if (els.toolChartModalIntervalPill) els.toolChartModalIntervalPill.textContent = payload.interval || 'interval';
+  if (els.toolChartModalLegend) {
+    els.toolChartModalLegend.textContent = chartHasCandles
+      ? `Candlestick view · ${payload.points.length} sessions · hover for OHLC + volume.`
+      : `Line view · ${payload.points.length} sessions · hover to inspect close values.`;
+  }
+}
+
+/** Show tooltip content for a hovered point in the expanded chart modal. */
+function showToolChartTooltip(payload: ToolChartPayload, index: number, event: MouseEvent): void {
+  if (!els.toolChartModalTooltip || !els.toolChartModalPlotWrap) return;
+  const point = payload.points[index];
+  if (!point) return;
+
+  const hasCandle = hasCandleData(payload.points);
+  const bits = [`<div><b>${safeText(formatChartDateLabel(point.t))}</b></div>`, `<div>Close: ${safeText(formatMetricValue(point.close))}</div>`];
+  if (hasCandle) {
+    bits.push(`<div>Open: ${safeText(formatMetricValue(point.open))}</div>`);
+    bits.push(`<div>High: ${safeText(formatMetricValue(point.high))}</div>`);
+    bits.push(`<div>Low: ${safeText(formatMetricValue(point.low))}</div>`);
+  }
+  if (point.volume !== null) bits.push(`<div>Volume: ${safeText(formatMetricValue(point.volume))}</div>`);
+
+  els.toolChartModalTooltip.innerHTML = bits.join('');
+  els.toolChartModalTooltip.hidden = false;
+  const wrapRect = els.toolChartModalPlotWrap.getBoundingClientRect();
+
+  let left = event.clientX - wrapRect.left + 14;
+  let top = event.clientY - wrapRect.top + 14;
+  const maxLeft = wrapRect.width - els.toolChartModalTooltip.offsetWidth - 8;
+  const maxTop = wrapRect.height - els.toolChartModalTooltip.offsetHeight - 8;
+
+  left = clamp(left, 8, Math.max(8, maxLeft));
+  top = clamp(top, 8, Math.max(8, maxTop));
+  els.toolChartModalTooltip.style.left = `${left}px`;
+  els.toolChartModalTooltip.style.top = `${top}px`;
+}
+
+/** Open interactive modal for a price chart card key. */
+function openToolChartModal(chartKey: string): void {
+  const key = String(chartKey || '').trim();
+  if (!key) return;
+  const payload = toolChartPayloadByKey.get(key);
+  if (!payload || !els.toolChartModal) return;
+
+  activeToolChartKey = key;
+  activeToolChartHoverIndex = null;
+  renderToolChartModal(payload);
+  hideToolChartTooltip();
+  els.toolChartModal.hidden = false;
+  els.toolChartModal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('toolChartModalOpen');
+}
+
+/** Close interactive price chart modal and reset hover state. */
+function closeToolChartModal(): void {
+  if (!els.toolChartModal) return;
+  activeToolChartKey = null;
+  activeToolChartHoverIndex = null;
+  hideToolChartTooltip();
+  els.toolChartModal.hidden = true;
+  els.toolChartModal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('toolChartModalOpen');
+}
+
 /** Render dedicated tool snapshot panel separate from markdown answer text. */
 function renderToolResults(results: any[]): void {
   const list = Array.isArray(results) ? results : [];
+  toolChartPayloadByKey.clear();
+  toolChartRenderVersion += 1;
   lastToolResults = list;
   if (els.toolResultsCountPill) els.toolResultsCountPill.textContent = String(list.length);
   if (els.toolResultsStatus) {
@@ -108,92 +536,104 @@ function renderToolResults(results: any[]): void {
   if (!els.toolResults) return;
   if (!list.length) {
     els.toolResults.innerHTML = '';
+    if (activeToolChartKey) closeToolChartModal();
     return;
   }
 
-  const formatMetric = (value: unknown): string => {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return Math.abs(value) >= 1000 ? value.toLocaleString() : String(value);
-    }
-    return String(value ?? '');
+  let chartIndex = 0;
+  const renderMetaPills = (...values: Array<unknown>): string => {
+    const pills = values
+      .map((value) => String(value ?? '').trim())
+      .filter((value) => Boolean(value))
+      .map((value) => `<span class="pill">${safeText(value)}</span>`);
+    if (!pills.length) return '';
+    return `<div class="toolCardMeta">${pills.join('')}</div>`;
   };
 
   const renderPriceChartCard = (item: any): string => {
-    const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {};
-    const series = Array.isArray(payload?.series) ? payload.series : [];
-    const closeSeries = series
-      .map((point: any) => ({
-        t: String(point?.t || ''),
-        close: Number(point?.close),
-      }))
-      .filter((point: any) => Number.isFinite(point.close));
-    if (!closeSeries.length) return '';
+    const payload = asPayloadObject(item?.payload);
+    const points = normalizePriceSeries(payload.series);
+    if (!points.length) return '';
 
     const width = 360;
     const height = 130;
-    const padX = 14;
-    const padY = 12;
-    const values = closeSeries.map((point: any) => Number(point.close));
+    const padX = 12;
+    const padY = 11;
+    const values = points.map((point) => Number(point.close));
     const min = Math.min(...values);
     const max = Math.max(...values);
     const span = max - min || 1;
     const innerW = width - padX * 2;
     const innerH = height - padY * 2;
-    const points = closeSeries.map((point: any, idx: number) => {
-      const x = padX + (innerW * idx) / Math.max(closeSeries.length - 1, 1);
-      const y = padY + ((max - Number(point.close)) / span) * innerH;
+    const sparkline = points.map((point, idx) => {
+      const x = padX + (innerW * idx) / Math.max(points.length - 1, 1);
+      const y = padY + ((max - point.close) / span) * innerH;
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     });
-    const first = Number(closeSeries[0]?.close);
-    const last = Number(closeSeries[closeSeries.length - 1]?.close);
+    const first = Number(points[0]?.close);
+    const last = Number(points[points.length - 1]?.close);
     const delta = last - first;
     const deltaPct = first === 0 ? 0 : (delta / first) * 100;
+    const chartKey = `tool-chart-${toolChartRenderVersion}-${chartIndex}`;
+    chartIndex += 1;
+    toolChartPayloadByKey.set(chartKey, {
+      ticker: String(item?.ticker || '').trim().toUpperCase(),
+      title: toolCardTitle(item),
+      summary: String(item?.summary || '').trim(),
+      period: String(payload.period || 'period'),
+      interval: String(payload.interval || 'interval'),
+      points,
+    });
+
     return `
       <article class="toolCard">
         <div class="toolCardHead">
-          <span class="toolCardTitle">${safeText(String(item?.ticker || 'n/a'))} price history</span>
-          <span class="pill">${safeText(String(payload?.period || 'period'))}</span>
+          <span class="toolCardTitle">${safeText(toolCardTitle(item))}</span>
+          ${renderMetaPills(payload.period, payload.interval, item?.status)}
         </div>
-        <div class="toolCardSummary">${safeText(String(item?.summary || ''))}</div>
-        <svg class="toolChart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Price chart">
-          <rect x="0" y="0" width="${width}" height="${height}" rx="10" ry="10" fill="#f5fafc"></rect>
-          <polyline fill="none" stroke="#0f766e" stroke-width="2.2" points="${safeText(points.join(' '))}"></polyline>
-        </svg>
-        <div class="toolChartMeta">last ${formatMetric(last)} · min ${formatMetric(min)} · max ${formatMetric(max)} · ${delta >= 0 ? '+' : ''}${delta.toFixed(2)} (${deltaPct.toFixed(2)}%)</div>
+        <p class="toolCardSummary">${safeText(String(item?.summary || ''))}</p>
+        <button type="button" class="toolChartTrigger" data-chart-key="${escapeHtmlAttr(chartKey)}" aria-label="${escapeHtmlAttr(`Open interactive chart for ${toolCardTitle(item)}`)}">
+          <svg class="toolChart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Price chart">
+            <rect x="0" y="0" width="${width}" height="${height}" rx="10" ry="10" fill="#f5fafc"></rect>
+            <polyline fill="none" stroke="#0f766e" stroke-width="2.2" points="${safeText(sparkline.join(' '))}"></polyline>
+          </svg>
+        </button>
+        <div class="toolChartMeta">last ${formatMetricValue(last)} · min ${formatMetricValue(min)} · max ${formatMetricValue(max)} · ${delta >= 0 ? '+' : ''}${delta.toFixed(2)} (${deltaPct.toFixed(2)}%)</div>
+        <div class="toolChartHint">Click chart to enlarge and inspect detailed values.</div>
       </article>
     `;
   };
 
   const renderInfoCard = (item: any): string => {
-    const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {};
-    const profile = payload?.profile && typeof payload.profile === 'object' ? payload.profile : {};
-    const valuation = payload?.valuation && typeof payload.valuation === 'object' ? payload.valuation : {};
-    const market = payload?.market && typeof payload.market === 'object' ? payload.market : {};
+    const payload = asPayloadObject(item?.payload);
+    const profile = asPayloadObject(payload.profile);
+    const valuation = asPayloadObject(payload.valuation);
+    const market = asPayloadObject(payload.market);
     const rows = [
-      ['name', profile.longName],
-      ['sector', profile.sector],
-      ['industry', profile.industry],
-      ['marketCap', valuation.marketCap],
-      ['trailingPE', valuation.trailingPE],
-      ['forwardPE', valuation.forwardPE],
-      ['currentPrice', market.currentPrice],
-      ['52wHigh', market.fiftyTwoWeekHigh],
-      ['52wLow', market.fiftyTwoWeekLow],
+      ['Name', profile.longName],
+      ['Sector', profile.sector],
+      ['Industry', profile.industry],
+      ['Market cap', valuation.marketCap],
+      ['Trailing P/E', valuation.trailingPE],
+      ['Forward P/E', valuation.forwardPE],
+      ['Current price', market.currentPrice],
+      ['52w high', market.fiftyTwoWeekHigh],
+      ['52w low', market.fiftyTwoWeekLow],
     ].filter((row) => row[1] !== undefined && row[1] !== null && String(row[1]).trim() !== '');
     if (!rows.length) return '';
     return `
       <article class="toolCard">
         <div class="toolCardHead">
-          <span class="toolCardTitle">${safeText(String(item?.ticker || 'n/a'))} company profile</span>
-          <span class="pill">${safeText(String(item?.status || ''))}</span>
+          <span class="toolCardTitle">${safeText(toolCardTitle(item))}</span>
+          ${renderMetaPills(item?.status)}
         </div>
-        <div class="toolCardSummary">${safeText(String(item?.summary || ''))}</div>
+        <p class="toolCardSummary">${safeText(String(item?.summary || ''))}</p>
         <div class="toolKv">
           ${rows
             .slice(0, 10)
             .map(
               (row) =>
-                `<div class="k">${safeText(String(row[0]))}</div><div class="v">${safeText(formatMetric(row[1]))}</div>`,
+                `<div class="k">${safeText(String(row[0]))}</div><div class="v">${safeText(formatMetricValue(row[1]))}</div>`,
             )
             .join('')}
         </div>
@@ -202,16 +642,16 @@ function renderToolResults(results: any[]): void {
   };
 
   const renderNewsCard = (item: any): string => {
-    const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {};
-    const articles = Array.isArray(payload?.articles) ? payload.articles : [];
+    const payload = asPayloadObject(item?.payload);
+    const articles = Array.isArray(payload.articles) ? payload.articles : [];
     if (!articles.length) return '';
     return `
       <article class="toolCard">
         <div class="toolCardHead">
-          <span class="toolCardTitle">${safeText(String(item?.ticker || 'n/a'))} news</span>
-          <span class="pill">${safeText(String(articles.length))} items</span>
+          <span class="toolCardTitle">${safeText(toolCardTitle(item))}</span>
+          ${renderMetaPills(`${articles.length} items`, item?.status)}
         </div>
-        <div class="toolCardSummary">${safeText(String(item?.summary || ''))}</div>
+        <p class="toolCardSummary">${safeText(String(item?.summary || ''))}</p>
         <ol class="toolNewsList">
           ${articles
             .slice(0, 6)
@@ -230,19 +670,88 @@ function renderToolResults(results: any[]): void {
     `;
   };
 
-  const renderFallbackCard = (item: any): string => {
-    const tool = String(item?.tool || 'tool');
-    const payload = item?.payload;
-    const payloadText = payload ? safeText(JSON.stringify(payload).slice(0, 3000)) : '';
+  const renderEdgarMetricsCard = (item: any): string => {
+    const payload = asPayloadObject(item?.payload);
+    const metrics = asPayloadObject(payload.metrics);
+    const metricRows = Object.entries(metrics)
+      .filter((entry) => {
+        const value = entry[1];
+        return value !== null && value !== undefined && String(value).trim() !== '';
+      })
+      .slice(0, 14)
+      .map((entry) => ({ left: titleCaseLabel(entry[0]), right: formatMetricValue(entry[1]) }));
+    if (!metricRows.length) return '';
+
     return `
       <article class="toolCard">
         <div class="toolCardHead">
-          <span class="toolCardTitle">${safeText(tool)}</span>
-          <span class="pill">${safeText(String(item?.ticker || 'n/a'))}</span>
-          <span class="pill">${safeText(String(item?.status || ''))}</span>
+          <span class="toolCardTitle">${safeText(toolCardTitle(item))}</span>
+          ${renderMetaPills(payload.period, item?.status)}
         </div>
-        <div class="toolCardSummary">${safeText(String(item?.summary || ''))}</div>
-        ${payloadText ? `<div class="chunkText">${payloadText}</div>` : ''}
+        <p class="toolCardSummary">${safeText(String(item?.summary || ''))}</p>
+        ${renderDataTable({ left: 'Metric', right: 'Value' }, metricRows)}
+      </article>
+    `;
+  };
+
+  const renderEdgarStatementsCard = (item: any): string => {
+    const payload = asPayloadObject(item?.payload);
+    const statementKeys = ['income_statement', 'balance_sheet', 'cashflow_statement'];
+    const blocks = statementKeys
+      .map((key) => {
+        const statement = String(payload[key] || '').trim();
+        if (!statement) return '';
+
+        const rows = parseStatementRows(statement, 6);
+        const title = titleCaseLabel(key);
+        if (rows.length >= 3) {
+          return `
+            <section class="toolStatementBlock">
+              <div class="toolStatementTitle">${safeText(title)}</div>
+              ${renderDataTable(
+                { left: 'Line item', right: 'Value' },
+                rows.map((row) => ({ left: row.label, right: row.value })),
+              )}
+            </section>
+          `;
+        }
+
+        const lines = parseStatementLines(statement, 6);
+        if (!lines.length) return '';
+        return `
+          <section class="toolStatementBlock">
+            <div class="toolStatementTitle">${safeText(title)}</div>
+            <ul class="toolStatementLines">
+              ${lines.map((line) => `<li>${safeText(line)}</li>`).join('')}
+            </ul>
+          </section>
+        `;
+      })
+      .filter((block) => Boolean(block));
+
+    if (!blocks.length) return '';
+    return `
+      <article class="toolCard">
+        <div class="toolCardHead">
+          <span class="toolCardTitle">${safeText(toolCardTitle(item))}</span>
+          ${renderMetaPills(item?.status)}
+        </div>
+        <p class="toolCardSummary">${safeText(String(item?.summary || ''))}</p>
+        <div class="toolStatementGrid">${blocks.join('')}</div>
+      </article>
+    `;
+  };
+
+  const renderFallbackCard = (item: any): string => {
+    const payload = item?.payload ?? null;
+    return `
+      <article class="toolCard">
+        <div class="toolCardHead">
+          <span class="toolCardTitle">${safeText(toolCardTitle(item))}</span>
+          ${renderMetaPills(item?.status)}
+        </div>
+        <p class="toolCardSummary">${safeText(String(item?.summary || ''))}</p>
+        ${renderFallbackPayload(payload)}
       </article>
     `;
   };
@@ -262,9 +771,21 @@ function renderToolResults(results: any[]): void {
       cards.push(renderNewsCard(item) || renderFallbackCard(item));
       continue;
     }
+    if (tool === 'edgar_get_financial_metrics' || tool === 'edgar_get_quarterly_financial_metrics') {
+      cards.push(renderEdgarMetricsCard(item) || renderFallbackCard(item));
+      continue;
+    }
+    if (tool === 'edgar_get_financial_statements') {
+      cards.push(renderEdgarStatementsCard(item) || renderFallbackCard(item));
+      continue;
+    }
     cards.push(renderFallbackCard(item));
   }
   els.toolResults.innerHTML = cards.join('');
+
+  if (activeToolChartKey && !toolChartPayloadByKey.has(activeToolChartKey)) {
+    closeToolChartModal();
+  }
 }
 
 /** Render streamed per-ticker briefs in dedicated cards. */
@@ -300,22 +821,12 @@ function renderPerTickerBriefs(briefs: Record<string, string>): void {
 
 /** Read current generation controls into API request settings payload. */
 function currentSettings(): any {
-  const toInt = (v: unknown, fallback: number): number => {
-    const n = Number(v);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
-  };
-
   const mode = String(els.genMode?.value || '').trim().toLowerCase() || generationModes.getDefaultMode() || 'normal';
 
   return {
     mode,
     enable_refine: Boolean(els.enableRefine?.checked),
-    top_k_retrieve: toInt(els.topKRetrieve.value, 30),
-    top_k_rerank: toInt(els.topKRerank.value, 8),
-    draft_max_tokens: toInt(els.draftMaxTokens.value, 65536),
-    final_max_tokens: toInt(els.finalMaxTokens.value, 32768),
-    brief_max_tokens: toInt(els.briefMaxTokens.value, 8000),
-    answering_effort: String(els.answeringEffort?.value || 'medium').trim().toLowerCase() || 'medium',
+    answering_effort: String(els.answeringEffort?.value || 'high').trim().toLowerCase() || 'high',
   };
 }
 
@@ -330,11 +841,6 @@ function applySettings(settings: any): void {
     generationModes.updateModeHelp(selected, els.genModeHelp);
   }
 
-  if (settings.top_k_retrieve) els.topKRetrieve.value = settings.top_k_retrieve;
-  if (settings.top_k_rerank) els.topKRerank.value = settings.top_k_rerank;
-  if (settings.draft_max_tokens) els.draftMaxTokens.value = settings.draft_max_tokens;
-  if (settings.final_max_tokens) els.finalMaxTokens.value = settings.final_max_tokens;
-  if (settings.brief_max_tokens) els.briefMaxTokens.value = settings.brief_max_tokens;
   if (els.answeringEffort) {
     const effort = String(settings.answering_effort || '').trim().toLowerCase();
     if (effort === 'low' || effort === 'medium' || effort === 'high') {
@@ -1347,6 +1853,48 @@ els.copyDebugBtn.addEventListener('click', async () => {
 
 els.draftAnswer?.addEventListener('click', onCitationClick);
 els.finalAnswer?.addEventListener('click', onCitationClick);
+els.toolResults?.addEventListener('click', (event: Event) => {
+  const target = event.target as Element | null;
+  const trigger = target?.closest?.('button.toolChartTrigger') as HTMLButtonElement | null;
+  if (!trigger) return;
+  const chartKey = String(trigger.dataset.chartKey || '').trim();
+  if (!chartKey) return;
+  openToolChartModal(chartKey);
+});
+
+els.toolChartModalCloseBtn?.addEventListener('click', () => {
+  closeToolChartModal();
+});
+els.toolChartModal?.addEventListener('click', (event: Event) => {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (target.dataset.chartModalClose === '1') closeToolChartModal();
+});
+els.toolChartModalSvg?.addEventListener('mousemove', (event: MouseEvent) => {
+  const payload = activeToolChartPayload();
+  if (!payload || !payload.points.length || !els.toolChartModalSvg) return;
+
+  const rect = els.toolChartModalSvg.getBoundingClientRect();
+  if (!rect.width) return;
+  const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+  const hoverIndex = Math.round(ratio * Math.max(payload.points.length - 1, 1));
+  if (activeToolChartHoverIndex !== hoverIndex) {
+    activeToolChartHoverIndex = hoverIndex;
+    renderToolChartModal(payload, hoverIndex);
+  }
+  showToolChartTooltip(payload, hoverIndex, event);
+});
+els.toolChartModalSvg?.addEventListener('mouseleave', () => {
+  const payload = activeToolChartPayload();
+  activeToolChartHoverIndex = null;
+  hideToolChartTooltip();
+  if (payload) renderToolChartModal(payload, null);
+});
+document.addEventListener('keydown', (event: KeyboardEvent) => {
+  if (event.key !== 'Escape') return;
+  if (!els.toolChartModal || els.toolChartModal.hidden) return;
+  closeToolChartModal();
+});
 
 els.sourceSelect.addEventListener('change', async () => {
   await sourceViewer.render(els.sourceSelect.value, null);
@@ -1362,11 +1910,6 @@ els.sourceToggleModeBtn.addEventListener('click', async () => {
 els.genMode?.addEventListener('change', () => {
   const mode = String(els.genMode.value || '').trim().toLowerCase();
   generationModes.applyModePreset(mode, {
-    topKRetrieve: els.topKRetrieve,
-    topKRerank: els.topKRerank,
-    draftMaxTokens: els.draftMaxTokens,
-    finalMaxTokens: els.finalMaxTokens,
-    briefMaxTokens: els.briefMaxTokens,
     answeringEffort: els.answeringEffort,
   });
   generationModes.updateModeHelp(mode, els.genModeHelp);
@@ -1385,11 +1928,6 @@ els.enableRefine?.addEventListener('change', () => {
   writeSettings(currentSettings());
 });
 [
-  els.topKRetrieve,
-  els.topKRerank,
-  els.draftMaxTokens,
-  els.finalMaxTokens,
-  els.briefMaxTokens,
   els.answeringEffort,
 ].forEach((node) => {
   node?.addEventListener('change', () => {
@@ -1422,11 +1960,6 @@ els.ingestTicker?.addEventListener('keydown', (e: KeyboardEvent) => {
   generationModes.applyModePreset(
     mode,
     {
-      topKRetrieve: els.topKRetrieve,
-      topKRerank: els.topKRerank,
-      draftMaxTokens: els.draftMaxTokens,
-      finalMaxTokens: els.finalMaxTokens,
-      briefMaxTokens: els.briefMaxTokens,
       answeringEffort: els.answeringEffort,
     },
     { overwriteAdvanced: true },

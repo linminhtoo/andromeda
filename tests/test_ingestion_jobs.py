@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from andromeda.ingestion_jobs import (
+from andromeda.ingestion.ingestion_jobs import (
     TickerIngestionRuntimeConfig,
     build_chunk_command,
     build_download_command,

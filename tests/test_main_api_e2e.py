@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 import andromeda.main as mainmod
-from andromeda.query_runtime import QueryStatus
+from andromeda.query.runtime import QueryStatus
 
 
 def test_health_endpoint() -> None:

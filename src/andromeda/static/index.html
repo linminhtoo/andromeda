@@ -532,43 +532,60 @@
       border: 1px solid rgba(44,64,82,0.16);
       border-radius: 12px;
       background: #f7fbfe;
-      padding: 0.7rem;
+      padding: 0.8rem;
       margin-bottom: 0.85rem;
     }
     .toolResultsGrid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 0.6rem;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 0.7rem;
     }
     .toolCard {
       border: 1px solid rgba(44,64,82,0.16);
       border-radius: 12px;
       background: #ffffff;
-      padding: 0.6rem;
+      padding: 0.75rem;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
     }
     .toolCardHead {
       display: flex;
-      gap: 0.4rem;
-      align-items: center;
+      gap: 0.5rem;
+      align-items: flex-start;
+      justify-content: space-between;
       flex-wrap: wrap;
-      margin-bottom: 0.45rem;
+      min-width: 0;
     }
     .toolCardTitle {
-      font-size: 0.84rem;
-      font-family: var(--mono);
+      font-size: 0.9rem;
+      font-family: var(--ui);
       font-weight: 700;
       color: #214158;
+      line-height: 1.22rem;
+      flex: 1 1 170px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .toolCardMeta {
+      display: flex;
+      gap: 0.35rem;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      min-width: 0;
     }
     .toolCardSummary {
-      font-size: 0.82rem;
+      font-size: 0.83rem;
       color: #3f556a;
-      line-height: 1.2rem;
-      margin-bottom: 0.45rem;
+      line-height: 1.25rem;
+      margin: 0;
     }
     .toolKv {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 0.32rem 0.55rem;
+      gap: 0.36rem 0.58rem;
       font-size: 0.79rem;
     }
     .toolKv .k {
@@ -582,29 +599,227 @@
       overflow-wrap: anywhere;
     }
     .toolNewsList {
+      margin: 0.1rem 0 0 0;
+      padding-left: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.44rem;
+    }
+    .toolNewsList li {
+      font-size: 0.81rem;
+      line-height: 1.24rem;
+    }
+    .toolNewsList a {
+      color: #0a5f8a;
+    }
+    .toolDataTableWrap {
+      overflow: auto;
+      border: 1px solid rgba(44,64,82,0.14);
+      border-radius: 10px;
+      background: #f8fbfd;
+    }
+    .toolDataTable {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .toolDataTable th,
+    .toolDataTable td {
+      padding: 0.42rem 0.5rem;
+      border-bottom: 1px solid rgba(44,64,82,0.1);
+      text-align: left;
+      vertical-align: top;
+    }
+    .toolDataTable th {
+      font-size: 0.74rem;
+      color: #526779;
+      text-transform: uppercase;
+      letter-spacing: 0.25px;
+      font-weight: 700;
+      background: #eef4f8;
+    }
+    .toolDataTable tr:last-child td {
+      border-bottom: none;
+    }
+    .toolDataTable td:last-child {
+      text-align: right;
+      font-family: var(--mono);
+      color: #22374a;
+      font-variant-numeric: tabular-nums;
+    }
+    .toolStatementGrid {
+      display: grid;
+      gap: 0.5rem;
+    }
+    .toolStatementBlock {
+      border: 1px solid rgba(44,64,82,0.14);
+      border-radius: 10px;
+      background: #f8fcff;
+      padding: 0.52rem 0.58rem;
+    }
+    .toolStatementTitle {
+      font-size: 0.81rem;
+      font-weight: 700;
+      color: #28465c;
+      margin-bottom: 0.38rem;
+      text-transform: capitalize;
+    }
+    .toolStatementLines {
       margin: 0;
       padding-left: 1rem;
       display: flex;
       flex-direction: column;
-      gap: 0.38rem;
-    }
-    .toolNewsList li {
-      font-size: 0.81rem;
+      gap: 0.2rem;
+      font-size: 0.78rem;
       line-height: 1.2rem;
+      color: #40586d;
     }
-    .toolNewsList a {
-      color: #0a5f8a;
+    .toolStatementLines li {
+      overflow-wrap: anywhere;
+    }
+    .toolPayloadText {
+      font-size: 0.78rem;
+      line-height: 1.2rem;
+      margin: 0;
+      color: #365062;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
     .toolChart {
       width: 100%;
       height: 130px;
       display: block;
     }
+    .toolChartTrigger {
+      display: block;
+      border: 1px solid rgba(44,64,82,0.12);
+      border-radius: 10px;
+      background: #f6fbfd;
+      padding: 0.25rem;
+      cursor: zoom-in;
+      transition: border-color 120ms ease, background-color 120ms ease;
+      width: 100%;
+    }
+    .toolChartTrigger:hover {
+      border-color: rgba(14,116,144,0.45);
+      background: #f1f9fd;
+    }
     .toolChartMeta {
-      margin-top: 0.35rem;
       font-size: 0.78rem;
       color: #4f6477;
       font-family: var(--mono);
+      line-height: 1.2rem;
+    }
+    .toolChartHint {
+      font-size: 0.74rem;
+      color: #5a7184;
+      margin-top: -0.15rem;
+    }
+    .toolChartModal[hidden] {
+      display: none;
+    }
+    .toolChartModal {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .toolChartModalBackdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(15,23,42,0.48);
+      backdrop-filter: blur(2px);
+    }
+    .toolChartModalCard {
+      position: relative;
+      width: min(1080px, 97vw);
+      max-height: 92vh;
+      border-radius: 16px;
+      border: 1px solid rgba(44,64,82,0.2);
+      background: #ffffff;
+      box-shadow: 0 24px 58px rgba(15,23,42,0.35);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .toolChartModalHead {
+      border-bottom: 1px solid rgba(44,64,82,0.15);
+      background: linear-gradient(180deg, #f9fcfe 0%, #f2f8fc 100%);
+      padding: 0.65rem 0.8rem;
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .toolChartModalHead h3 {
+      margin: 0;
+      font-size: 0.98rem;
+      line-height: 1.25rem;
+      color: #1f3a50;
+    }
+    .toolChartModalBody {
+      padding: 0.8rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      min-height: 0;
+    }
+    .toolChartLegend {
+      font-size: 0.82rem;
+      color: #4a6478;
+      line-height: 1.22rem;
+    }
+    .toolChartModalPlotWrap {
+      position: relative;
+      border: 1px solid rgba(44,64,82,0.16);
+      border-radius: 12px;
+      background: linear-gradient(180deg, #f7fbfe 0%, #eff6fb 100%);
+      overflow: hidden;
+    }
+    .toolChartModalSvg {
+      width: 100%;
+      height: min(62vh, 470px);
+      display: block;
+      cursor: crosshair;
+    }
+    .toolChartModalTooltip {
+      position: absolute;
+      pointer-events: none;
+      min-width: 180px;
+      max-width: 280px;
+      background: rgba(12,30,44,0.94);
+      color: #ebf5ff;
+      border: 1px solid rgba(194,220,245,0.34);
+      border-radius: 10px;
+      padding: 0.44rem 0.5rem;
+      font-size: 0.76rem;
+      line-height: 1.15rem;
+      box-shadow: 0 12px 24px rgba(15,23,42,0.3);
+      z-index: 2;
+    }
+    .toolChartModalTooltip b {
+      color: #f6fdff;
+      font-weight: 700;
+    }
+    body.toolChartModalOpen {
+      overflow: hidden;
+    }
+    @media (max-width: 760px) {
+      .toolResultsGrid {
+        grid-template-columns: 1fr;
+      }
+      .toolCard {
+        padding: 0.68rem;
+      }
+      .toolChartModalBody {
+        padding: 0.65rem;
+      }
+      .toolChartModalSvg {
+        height: min(56vh, 380px);
+      }
     }
     body.resizing {
       cursor: col-resize;
@@ -705,41 +920,19 @@
                         </div>
                       </div>
                       <div style="margin-bottom: 0.75rem;">
+                        <label class="muted" for="answeringEffort">Answering effort (quality vs speed)</label>
+                        <select id="answeringEffort">
+                          <option value="low">low</option>
+                          <option value="medium">medium</option>
+                          <option value="high" selected>high</option>
+                        </select>
+                      </div>
+                      <div style="margin-bottom: 0.75rem;">
                         <label class="row" style="gap: 0.5rem; align-items: center;">
                           <input id="enableRefine" type="checkbox" style="width:auto; margin: 0;" />
                           <span class="muted">Run draft + refine (two-stage generation)</span>
                         </label>
                       </div>
-	                    <div class="kv">
-	                      <div>
-	                        <label class="muted" for="topKRetrieve">top_k_retrieve</label>
-	                        <input id="topKRetrieve" type="number" min="1" step="1" value="30" />
-	                      </div>
-	                      <div>
-	                        <label class="muted" for="topKRerank">top_k_rerank</label>
-	                        <input id="topKRerank" type="number" min="1" step="1" value="8" />
-	                      </div>
-	                      <div>
-	                        <label class="muted" for="draftMaxTokens">draft_max_tokens</label>
-	                        <input id="draftMaxTokens" type="number" min="1" step="1" value="65536" />
-	                      </div>
-	                      <div>
-	                        <label class="muted" for="finalMaxTokens">final_max_tokens</label>
-	                        <input id="finalMaxTokens" type="number" min="1" step="1" value="32768" />
-	                      </div>
-                        <div>
-                          <label class="muted" for="briefMaxTokens">brief_max_tokens</label>
-                          <input id="briefMaxTokens" type="number" min="1" step="1" value="8000" />
-                        </div>
-                        <div>
-                          <label class="muted" for="answeringEffort">answering_effort</label>
-                          <select id="answeringEffort">
-                            <option value="low">low</option>
-                            <option value="medium" selected>medium</option>
-                            <option value="high">high</option>
-                          </select>
-                        </div>
-	                    </div>
 	                  </div>
 	                </details>
 
@@ -938,6 +1131,26 @@
       </section>
     </div>
   </main>
+
+  <div id="toolChartModal" class="toolChartModal" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="toolChartModalTitle">
+    <div class="toolChartModalBackdrop" data-chart-modal-close="1"></div>
+    <div class="toolChartModalCard" role="document">
+      <div class="toolChartModalHead">
+        <h3 id="toolChartModalTitle">Interactive price chart</h3>
+        <span class="pill" id="toolChartModalPeriodPill">period</span>
+        <span class="pill" id="toolChartModalIntervalPill">interval</span>
+        <div class="spacer"></div>
+        <button class="btn" type="button" id="toolChartModalCloseBtn">Close</button>
+      </div>
+      <div class="toolChartModalBody">
+        <div class="toolChartLegend" id="toolChartModalLegend">Hover the chart to inspect values.</div>
+        <div class="toolChartModalPlotWrap" id="toolChartModalPlotWrap">
+          <svg id="toolChartModalSvg" class="toolChartModalSvg" viewBox="0 0 960 420" role="img" aria-label="Interactive price chart"></svg>
+          <div id="toolChartModalTooltip" class="toolChartModalTooltip" hidden></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/static/js/index/main.js"></script>
 </body>

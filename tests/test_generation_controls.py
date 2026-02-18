@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from andromeda.generation_controls import (
+from andromeda.llm.generation_controls import (
     AnsweringEffort,
     default_mode,
     get_preset,

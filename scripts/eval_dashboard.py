@@ -14,7 +14,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from andromeda.generation_controls import resolve_generation_settings
+from andromeda.llm.generation_controls import resolve_generation_settings
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

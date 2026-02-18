@@ -10,13 +10,55 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 ### Changed
-- Project/package rename from `finrag` to `andromeda` across Python module paths, imports, scripts, tests, and project metadata (including `pyproject.toml`, pre-commit path filters, and launch entrypoints).
 
 ### Fixed
 
-### Deprecated
+### Removed
 
 ### Dev
+
+
+
+## v1.9.0 - 18 Feb 2026
+
+### Added
+- Open-ended eval experiment harness scripts for 100-question faithfulness/helpfulness-focused runs (with `12` generation threads, `12` judge workers, and `350s` timeout settings) under `agent_logs/`.
+- Open-ended iteration summary artifacts:
+  - `agent_logs/reports/openended_iteration_metrics_20260217.csv`
+  - `agent_logs/reports/openended_iteration_summary_20260217.md`
+- Interactive price-chart modal in the main query UI (`src/andromeda/static/index.html`, `src/andromeda/static/ts/index/main.ts`) with hover inspection and candlestick rendering when OHLC data is available.
+- Canonical eval orchestration scripts:
+  - `scripts/prepare_eval_assets.sh` to rebuild chunk512 eval assets and query sets
+  - `scripts/run_full_eval_suite.sh` to run single/multi/open eval tracks in one pass with a manifest output.
+- `agent_logs/README.md` with non-breaking nested folder conventions for future artifacts.
+
+### Changed
+- Project/package rename from `finrag` to `andromeda` across Python module paths, imports, scripts, tests, and project metadata (including `pyproject.toml`, pre-commit path filters, and launch entrypoints).
+- Strengthened narrative answer guardrails in `src/andromeda/llm/qa.py` to explicitly separate filing year vs covered fiscal period.
+- Expanded narrative-intent detection and retrieval-query diversification in `src/andromeda/query/runtime.py` for open-ended prompts (growth/risk/capital-allocation/execution/demand framing).
+- Added dynamic period-scope prompt notes in `src/andromeda/query/runtime.py` based on retrieved chunk metadata (`filing_date` vs `period_end_date`) to reduce unsupported year-scope claims.
+- Updated benchmark-backed default generation profile to `normal` mode with high answering effort (`top_k_retrieve=40`, `top_k_rerank=25`, `draft_max_tokens=65536`, `final_max_tokens=32768`, rerank on, refine off).
+- Switched narrative query expansion to default-off (`FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION=0`) while keeping narrative aspect-coverage default-on.
+- Updated eval CLI/harness defaults for current local-vLLM operating point:
+  - `scripts/run_eval.py`: concurrency `12`, `thread` backend, query timeout `350s`
+  - `scripts/score_eval.py`: judge workers `12`, judge timeout `350s`
+  - `src/andromeda/eval/runner.py` and `src/andromeda/eval/scoring.py` defaults aligned accordingly.
+- Simplified frontend trade-off controls in `src/andromeda/static/index.html` and index JS/TS:
+  - removed raw per-request retrieval/token numeric knobs from UI,
+  - kept high-impact knobs only (`mode`, `answering_effort`, optional `enable_refine`).
+- Refreshed `.env.example` to benchmark-backed defaults (`chunk 512/64`, `eval_revamp_combined_512_20260217` profile path/schema, narrative retrieval toggles).
+- Refined the "Tool snapshot" cards to avoid header overflow/cramped rendering and replaced internal code-style tool names with polished user-facing titles.
+- Replaced EDGAR tool raw JSON rendering in the UI with structured, human-readable metric/statement tables so financial outputs are understandable to non-technical users.
+- Reorganized backend module layout for clearer grouping:
+  - `query_runtime.py` -> `query/runtime.py`
+  - `query_streaming.py` -> `query/streaming.py`
+  - `query_conversation.py` -> `query/conversation.py`
+  - `runtime_builders.py` -> `runtime/builders.py`
+  - `history_store.py` -> `history/store.py`
+  with import updates across app code and tests.
+
+### Dev
+- Added github `ci.yaml`
 
 
 ## v1.8.0 - 17 Feb 2026
@@ -31,7 +73,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `brief_max_tokens` (per-ticker brief budget)
   - `answering_effort` (`low`/`medium`/`high`)
   exposed in API request models, runtime settings, and frontend advanced controls.
-- New QA prompt builders in `src/andromeda/qa.py`:
+- New QA prompt builders in `src/andromeda/llm/qa.py`:
   - `build_ticker_brief_prompt(...)`
   - `build_multi_ticker_synthesis_prompt(...)`
   - `build_multi_ticker_refine_prompt(...)`.
@@ -100,8 +142,8 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 - New modular query-serving support files:
   - `src/andromeda/query_streaming.py` (stream orchestration + cancellation registry)
   - `src/andromeda/history_store.py` (history persistence/query APIs)
-  - `src/andromeda/source_access.py` (source file resolution and inline text loading)
-  - `src/andromeda/ingested_companies.py` (doc-index parsing + company-name caching)
+  - `src/andromeda/review/source_access.py` (source file resolution and inline text loading)
+  - `src/andromeda/ingestion/ingested_companies.py` (doc-index parsing + company-name caching)
 - Runtime service builder module:
   - `src/andromeda/runtime_builders.py` for env/config parsing, LLM/retriever/reranker builders, and ingestion runtime config assembly.
 - Finance tool adapter module:
@@ -210,7 +252,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Ticker-only on-the-fly ingestion background jobs in the API:
   - `POST /ingest` now accepts JSON payload with one or more tickers (`{ticker, per_company}` or `{tickers, per_company}`)
   - `GET /ingest/{job_id}` returns lifecycle status for polling
-  - new backend orchestration module `src/andromeda/ingestion_jobs.py` runs:
+  - new backend orchestration module `src/andromeda/ingestion/ingestion_jobs.py` runs:
     `download -> process_html_to_markdown -> chunk -> build_index`
 - Durable ingest-profile storage on disk (`data/ingest_profiles/*.json`) with step-level settings capture for:
   - `scripts/download.py`
@@ -274,7 +316,7 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## v1.4.0 - 13 Feb 2026
 ### Added
-- PostgreSQL-native data layer (`src/andromeda/db.py`) with minimal corpus schema (`documents`, `chunks`) and pgvector/FTS indexes.
+- PostgreSQL-native data layer (`src/andromeda/retrieval/db.py`) with minimal corpus schema (`documents`, `chunks`) and pgvector/FTS indexes.
 - PostgreSQL chunk inspection script (`scripts/inspect_collection.py`) with ticker/date filters.
 - PostgreSQL retriever tests (`tests/test_retriever_postgres.py`).
 - Indexing CLI flags for ANN tuning and reset flows: `--ann-hnsw-m`, `--ann-hnsw-ef-construction`, `--recreate-ann-index`, and `--reset-corpus` (with legacy `--truncate` alias).

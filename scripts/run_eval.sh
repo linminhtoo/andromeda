@@ -30,7 +30,10 @@ python3 -m scripts.run_eval \
   --eval-queries ./eval/eval_queries_v2.jsonl \
   --out-dir ./eval/results_v2/${now} \
   --run-name postgres_baseline_v1 \
-  --mode thinking \
-  --concurrency 8 \
+  --mode normal \
+  --concurrency 12 \
+  --parallel-backend thread \
+  --query-timeout-s 350 \
+  --query-max-retries 1 \
   --gpu-ids 0 1 \
   2>&1 | tee logs/run_eval_${now}.log

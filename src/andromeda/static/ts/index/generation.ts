@@ -1,9 +1,4 @@
 export type GenerationInputs = {
-  topKRetrieve: HTMLInputElement;
-  topKRerank: HTMLInputElement;
-  draftMaxTokens: HTMLInputElement;
-  finalMaxTokens: HTMLInputElement;
-  briefMaxTokens: HTMLInputElement;
   answeringEffort: HTMLSelectElement;
 };
 
@@ -52,9 +47,9 @@ export class GenerationModeManager {
           {
             key: 'quick',
             label: 'Quick',
-            description: 'Fast + concise. Skips reranking and verification.',
-            top_k_retrieve: 12,
-            top_k_rerank: 6,
+            description: 'Fast + concise. Uses shallower retrieval and low synthesis effort.',
+            top_k_retrieve: 20,
+            top_k_rerank: 10,
             draft_max_tokens: 16384,
             final_max_tokens: 16384,
             brief_max_tokens: 6000,
@@ -65,22 +60,22 @@ export class GenerationModeManager {
           {
             key: 'normal',
             label: 'Normal',
-            description: 'Balanced quality/speed. Uses reranking + verification.',
-            top_k_retrieve: 30,
-            top_k_rerank: 8,
+            description: 'Balanced quality/speed. Uses reranking with high synthesis effort.',
+            top_k_retrieve: 40,
+            top_k_rerank: 25,
             draft_max_tokens: 65536,
             final_max_tokens: 32768,
             brief_max_tokens: 8000,
             enable_rerank: true,
             enable_refine: false,
-            answering_effort: 'medium',
+            answering_effort: 'high',
           },
           {
             key: 'thinking',
             label: 'Thinking',
             description: 'Higher recall + deeper report. Retrieves/reranks more.',
-            top_k_retrieve: 40,
-            top_k_rerank: 12,
+            top_k_retrieve: 60,
+            top_k_rerank: 35,
             draft_max_tokens: 65536,
             final_max_tokens: 45000,
             brief_max_tokens: 12000,
@@ -122,11 +117,6 @@ export class GenerationModeManager {
     const preset = this.presetByKey.get(String(mode || '').toLowerCase());
     if (!preset) return;
     if (overwriteAdvanced) {
-      if (preset.top_k_retrieve) inputs.topKRetrieve.value = preset.top_k_retrieve;
-      if (preset.top_k_rerank) inputs.topKRerank.value = preset.top_k_rerank;
-      if (preset.draft_max_tokens) inputs.draftMaxTokens.value = preset.draft_max_tokens;
-      if (preset.final_max_tokens) inputs.finalMaxTokens.value = preset.final_max_tokens;
-      if (preset.brief_max_tokens) inputs.briefMaxTokens.value = preset.brief_max_tokens;
       const effort = String(preset.answering_effort || '').trim().toLowerCase();
       if (effort === 'low' || effort === 'medium' || effort === 'high') {
         inputs.answeringEffort.value = effort;

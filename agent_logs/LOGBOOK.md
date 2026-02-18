@@ -1934,3 +1934,759 @@
 - Tests:
   - `source .venv/bin/activate && pytest -vvv tests/`
   - Result: `116 passed, 1 warning`.
+
+## 2026-02-17 - Chunk-size tradeoff sweep (single-ticker eval50) + frontier mapping docs
+
+### Commits
+- `50ecdaf332d3db4514daa6cdb72b43558f0e4b3f` - Add chunk-size eval sweep harness and analysis report
+- `4c1633b98c20f50a588f0ed4ca4db6c0905d95f5` - Document prioritized eval frontier tradeoff studies
+
+### Scope
+- Ran a controlled chunk-size sweep for `chunk_size in {256, 512, 1024, 2048}` with deploy-matching generation settings.
+- Built per-size postgres schemas and scored all runs with the same judge settings.
+- Added reusable scripts plus report artifacts.
+- Added a separate prioritized frontier-study plan (no execution in that phase).
+
+### Commands/scripts used
+- Sweep runner: `agent_logs/20260217_014500_run_chunk_size_tradeoff_eval.sh`
+- Metrics collector: `agent_logs/20260217_014500_collect_chunk_size_metrics.py`
+- Report: `agent_logs/chunk_size_tradeoff_17Feb2026.md`
+- Manifest: `eval/results_revamp/chunk_size_study/run_manifest.csv`
+
+### Key run settings
+- Eval set: `eval/eval_queries_revamp_single_balanced_validated_tol05_20260216.jsonl` (n=50)
+- Generation concurrency: 12 threads
+- Query timeout: 600s (corrected from initial 240s for 2048 stability)
+- Judge workers: 8
+- Judge context chars: 65000 (rescored all 4 runs for consistency)
+  * NOTE: 65k judge context is suboptimal, hence the higher faithfulness failure rate seen here (1024 should be 27%)
+
+### Results summary
+- `256`: qps `0.2004`, p95 `92565 ms`, factual fail `0.0000`, open faithfulness fail `0.4667`
+- `512`: qps `0.1837`, p95 `115069 ms`, factual fail `0.0000`, open faithfulness fail `0.3333`
+- `1024`: qps `0.1684`, p95 `121490 ms`, factual fail `0.0500`, open faithfulness fail `0.5333`
+- `2048`: qps `0.1587`, p95 `132783 ms`, factual fail `0.0000`, open faithfulness fail `0.4667`
+
+### Interpretation and action
+- `512` is the best quality/latency compromise in this sweep (best open-ended faithfulness fail with moderate latency cost).
+- `1024` is dominated by `512` on both latency and faithfulness for this dataset.
+- `2048` increases tail latency without corresponding quality gain.
+- Next eval optimization iterations should use `chunk_size=512` as primary and keep `256` as speed baseline.
+
+### Notes on anomalies
+- Initial `2048` run with `query-timeout-s=240` produced one timeout and a stuck worker teardown path; it was discarded and rerun at `600s`.
+- A judge run at `80000` context chars also exhibited a tail hang on 2048; rescoring all runs at `65000` fixed this and kept settings consistent.
+
+## 2026-02-17 - Iteration checkpoint (N=1) for chunk-512 eval extension
+
+### Commit (code/scripts for this iteration)
+- `e7551f6` - Add chunk512 eval extension harness and retry-aware eval runtime
+
+### Scope completed in this checkpoint
+- Locked extension eval runs to `chunk_size=512` profile/schema:
+  - `FINRAG_INGEST_PROFILE=eval_revamp_combined_512_20260217`
+  - `POSTGRES_SCHEMA=eval_revamp_combined_512_20260217`
+- Added reusable extension scripts for profile build/query generation/subseting and eval runs:
+  - `agent_logs/20260217_041800_build_combined_eval_profile.sh`
+  - `agent_logs/20260217_042300_generate_eval_set_combined_validated_tol05.sh`
+  - `agent_logs/20260217_042350_build_eval100_subsets_combined_tol05.sh`
+  - `agent_logs/20260217_042800_build_eval100_from_merged_validated_sets.sh`
+  - `agent_logs/20260217_042950_build_combined_profile_chunk512.sh`
+  - `agent_logs/20260217_043020_generate_eval_set_combined512_validated_tol05.sh`
+  - `agent_logs/20260217_043130_build_eval100_subsets_combined512_tol05.sh`
+  - `agent_logs/20260217_044500_eval_single_extension_chunk512_v1.sh`
+  - `agent_logs/20260217_045500_eval_single_extension_chunk512_v2_prompttighten.sh`
+- Extended eval harness controls:
+  - generation retry knob in `scripts/run_eval.py` (`--query-max-retries`, default `1`)
+  - judge timeout/retry controls in `scripts/score_eval.py` (`--judge-timeout-s`, `--judge-max-retries`)
+- Added stronger evidence-discipline prompt guidance (no-refine path):
+  - `src/andromeda/qa.py`
+  - `src/andromeda/query_runtime.py`
+- Added eval review telemetry for tool usage from trace + tool results in `review.csv` (`scripts/score_eval.py`).
+
+### Iteration runs and metrics
+
+1) **v1 baseline on chunk-512 (no refine, tools enabled, 12 workers, eval100)**
+- Run: `eval/results_revamp/single/eval_run.single_ext_chunk512_v1_normal_tools12_norefine_eval100.20260217_043752`
+- Generation: `n_ok=100/100`, `n_err=0`, `wall_total_ms=503791.20`
+- Score summary:
+  - factual correctness fail: `0.0571`
+  - open-ended faithfulness fail: `0.2667`
+  - refusal fail: `0.0`
+  - distractor focus fail: `0.0667`
+
+2) **v2 prompt-tightened attempt (before generation retry fix was applied in runner path)**
+- Run: `eval/results_revamp/single/eval_run.single_ext_chunk512_v2_prompttighten_tools12_norefine_eval100.20260217_045414`
+- Generation: `n_ok=99/100`, `n_err=1` (one timeout)
+- Action: implemented generation timeout retry (`query_max_retries=1`) and reran.
+
+3) **v2 prompt-tightened rerun (with generation retry, recovered timeout)**
+- Run: `eval/results_revamp/single/eval_run.single_ext_chunk512_v2_prompttighten_tools12_norefine_eval100.20260217_050424`
+- Generation: `n_ok=100/100`, `n_err=0`, `wall_total_ms=443290.16`
+- Retry evidence: `query_id=2dcc67c3-e597-485a-81e4-fbb8226880c0` used `query_attempts=2` and succeeded.
+- Rescore summary (latest):
+  - factual correctness fail: `0.0571`
+  - factual helpfulness fail: `0.0857`
+  - open-ended faithfulness fail: `0.3333`
+  - refusal fail: `0.0`
+  - distractor focus fail: `0.0667`
+
+### Tool-usage findings (data-driven)
+- For the latest v2 rerun (`20260217_050424`), factual rows show:
+  - `35/35` with `used_edgar_financials=true`
+  - `0/35` with `used_yfinance=true`
+- This confirms factual numeric path is primarily using Edgar tools in this eval setup.
+
+### Surprising findings
+- Judge results were not perfectly stable across repeated scoring passes on the same generations (observed drift in open-ended faithfulness/factual helpfulness). This needs explicit handling in the judge reliability plan (for example, fixed rerun protocol or multi-judge aggregation).
+- Prompt tightening did not reduce open-ended faithfulness in the latest rerun and appears to hurt factual/distractor helpfulness in this sample.
+
+### Actionable next step after this checkpoint
+- Keep chunk-512 + generation retry as baseline runtime settings.
+- Revert/soften the v2 prompt-tightening changes and prioritize judge reliability + targeted factual ambiguity handling next.
+
+## 2026-02-17 - Iteration pause due Postgres outage (per instruction)
+
+### Detection
+- While resuming eval iterations, a direct DB connectivity check failed:
+  - DSN host: `127.0.0.1`
+  - port: `6543`
+  - error: `psycopg.OperationalError: connection refused`
+
+### Action taken
+- Stopped all eval iteration work immediately.
+- Did not launch new generation/index/eval jobs after failure detection.
+
+### Resume condition
+- Resume only after Postgres accepts connections again on configured DSN.
+
+## 2026-02-17 - Judge alignment audit + prompt iterations (manual-labeled dev/test)
+
+### Baseline audit harness + labels
+- Commit: `99b3552`
+- Added judge reliability tooling and manual-audit dataset:
+  - `scripts/judge_reliability.py` (decision-level audit builder + dev/test metrics + bootstrap CIs)
+  - manual review prep scripts and curated open-ended scoring utility under `agent_logs/`
+  - baseline decision audit: `agent_logs/judge_audit_open71_plus_eval100_20260217.csv` (`n=167` decisions)
+  - baseline alignment report: `agent_logs/judge_reliability_baseline_20260217.json`
+- Manual labeling scope:
+  - target judges with non-zero fail rates: `faithfulness_v1`, `factual_correctness_v1`, factual `helpfulness_v1`, `focus_v1`
+  - source runs: single-eval100 + open-ended 71-sample curated subset
+  - labels stored in `human_label`/`human_notes` columns; manual overrides captured for known judge mistakes.
+- Baseline alignment (held-out test):
+  - `faithfulness_v1`: precision_fail `0.6667`, recall_fail `1.0000`, f1_fail `0.8000`, accuracy `0.9524`
+  - `factual_correctness_v1`: no fail-positives in test slice (`accuracy=1.0`, fail metrics degenerate)
+  - `focus_v1`: no fail-positives in test slice (`accuracy=1.0`, fail metrics degenerate)
+  - factual `helpfulness_v1`: no fail-positives in test slice (`accuracy=1.0`, fail metrics degenerate)
+
+### Iteration 1 (materiality-lenient faithfulness prompt)
+- Commit: `a6c3a66`
+- Artifacts:
+  - run script: `agent_logs/20260217_203100_judge_iter1_materiality_rescore.sh`
+  - audit snapshot: `agent_logs/judge_audit_open71_plus_eval100_iter1_materiality_20260217.csv`
+  - alignment report: `agent_logs/judge_reliability_iter1_materiality_20260217.json`
+- Result:
+  - reduced raw open-ended fail rates in rescoring summaries
+  - but **alignment regressed** on labeled test set for `faithfulness_v1`:
+    - precision_fail `0.6667 -> 0.5000`
+    - recall_fail `1.0000 -> 0.5000`
+    - f1_fail `0.8000 -> 0.5000`
+    - accuracy `0.9524 -> 0.9048`
+- Interpretation:
+  - prompt became too permissive; false negatives increased materially.
+
+### Iteration 2 (re-balanced materiality prompt)
+- Commit: `d33a603`
+- Artifacts:
+  - run script: `agent_logs/20260217_204100_judge_iter2_materiality_balanced_rescore.sh`
+  - audit snapshot: `agent_logs/judge_audit_open71_plus_eval100_iter2_materiality_balanced_20260217.csv`
+  - alignment report: `agent_logs/judge_reliability_iter2_materiality_balanced_20260217.json`
+- Result:
+  - did not recover alignment; remained worse than baseline on `faithfulness_v1` test:
+    - precision_fail `0.3333`
+    - recall_fail `0.5000`
+    - f1_fail `0.4000`
+    - accuracy `0.8571`
+- Interpretation:
+  - this prompt still under-calls fails relative to expert labels.
+
+### Action taken after iterations
+- Reverted `faithfulness_v1` prompt edits (kept original baseline prompt behavior).
+- Decision: keep baseline judge prompt and keep new reliability harness/manual audit workflow for future judge work.
+- Next judge-work direction:
+  - improve reliability via judge aggregation/consensus (harness-level) rather than prompt softening,
+  - keep fixed labeled split and track deltas only against this frozen benchmark.
+
+## 2026-02-17 - Open-ended faithfulness loop (diverse 100-question set, iterations 1-4)
+
+### Commits in this loop
+- `44d791c` - open-ended eval harness scripts, plan doc, and iteration summary artifacts.
+- `cf92d90` - runtime/prompt guardrails for narrative year-scope and broader narrative-intent retrieval coverage.
+
+### Scope and setup
+- Objective: reduce open-ended `faithfulness_v1` failure while keeping `helpfulness_v1` stable, using open-ended-only evals.
+- Dataset build script: `agent_logs/20260217_221500_generate_openended100_diverse_v1.sh`.
+- Eval scripts:
+  - `agent_logs/20260217_221700_eval_openended100_iter1_baseline.sh`
+  - `agent_logs/20260217_221900_eval_openended100_iter2_periodscope.sh`
+  - `agent_logs/20260217_222000_eval_openended100_iter3_narrative_coverage.sh`
+  - `agent_logs/20260217_222100_eval_openended100_iter4_narrative_temp0.sh`
+- Shared eval controls across this loop:
+  - generation: `concurrency=12`, `parallel-backend=thread`, `query-timeout-s=350`, `query-max-retries=1`
+  - scoring: `judge-workers=12`, `judge-context-chars=80000`, `judge-timeout-s=350`, `judge-max-retries=1`
+  - profile/schema: `eval_revamp_combined_512_20260217`
+
+### Dataset diversity snapshot (new 100 open-ended set)
+- File: `eval/eval_queries_openended100_diverse_20260217_v1.jsonl`
+- Count: `100` open-ended questions
+- Coverage:
+  - unique tickers: `20`
+  - template families: `10`
+  - family distribution captured in generation script output and in tags (`family_*`).
+
+### Iteration table
+- Iteration summary artifact: `agent_logs/openended_iteration_summary_20260217.md`
+- CSV: `agent_logs/openended_iteration_metrics_20260217.csv`
+
+| Iteration | Strategy | Run | n_ok | Faithfulness fail | Helpfulness fail |
+|---|---|---|---:|---:|---:|
+| iter1 | Baseline on diverse open-ended set | `eval/results_revamp/open/eval_run.open_diverse_iter1_baseline_normal_tools12_norefine_qt350_jt350.20260217_220205` | 100 | 0.22 | 0.00 |
+| iter2 | Period-scope guardrail prompt additions | `eval/results_revamp/open/eval_run.open_diverse_iter2_periodscope_normal_tools12_norefine_qt350_jt350.20260217_222053` | 100 | 0.26 | 0.00 |
+| iter3 | Expanded narrative-intent detection + retrieval diversification | `eval/results_revamp/open/eval_run.open_diverse_iter3_narrativecoverage_normal_tools12_norefine_qt350_jt350.20260217_223936` | 100 | 0.18 | 0.00 |
+| iter4 | Narrative `draft_temperature=0` ablation | `eval/results_revamp/open/eval_run.open_diverse_iter4_narrativetemp0_normal_tools12_norefine_qt350_jt350.20260217_225755` | 99 | 0.232323 | 0.00 |
+
+### Iteration-by-iteration notes (N=1 style)
+1) Iteration 1 (`iter1`, baseline)
+- What changed: no runtime changes; only diverse open-ended dataset and fixed eval settings.
+- Main issue observed:
+  - dominant failure mode was unsupported extrapolation/hallucination;
+  - a major subtype was filing-year vs covered-period confusion (questions asking "in 2025/2026" answered as if full-period evidence existed when context mostly reflected other covered periods).
+- Strategy options considered after analysis:
+  - prompt-level year-scope guardrails,
+  - broader narrative-intent routing + retrieval diversification,
+  - lower draft temperature for narrative answers.
+- Chosen next strategy: prompt-level period-scope guardrails first.
+
+2) Iteration 2 (`iter2`, period-scope guardrails)
+- What changed:
+  - `src/andromeda/qa.py`: stronger evidence discipline rules for filing year vs covered period handling.
+  - `src/andromeda/query_runtime.py`: added dynamic `period_scope_prompt_extra(...)` from retrieved metadata and stricter year-scope notes.
+- Result: faithfulness regressed (`0.22 -> 0.26`), helpfulness stayed `0.00`.
+- Surprising finding:
+  - this fixed a subset of period issues but introduced broader regressions elsewhere.
+- Chosen next strategy: improve narrative-intent detection/retrieval coverage (generalizable, non-template-specific) rather than further tightening this prompt branch.
+
+3) Iteration 3 (`iter3`, narrative-intent + retrieval diversification)
+- What changed:
+  - expanded `_question_mentions_filing_narrative(...)` coverage for open-ended families (growth opportunities, dependencies, management commentary, capital allocation, margin/cash-flow framing, etc).
+  - added focused retrieval query augmentations for:
+    - risk/uncertainty,
+    - capital allocation/margin/cash flow,
+    - execution dependencies/demand commentary.
+- Result: best in this series (`faithfulness 0.18`, `helpfulness 0.00`).
+- Surprising finding:
+  - larger, better-targeted retrieval query diversification improved both quality and latency profile vs iter2.
+- Action taken: treat iter3 runtime behavior as current best candidate.
+
+4) Iteration 4 (`iter4`, narrative temp=0 ablation)
+- What changed:
+  - forced narrative-answer draft temperature to `0.0` (ablation).
+- Generation anomaly:
+  - two timeout retries were triggered;
+  - one query exhausted retries and failed (`n_ok=99/100`), query id `3f876e95-8c43-44b2-91e2-bc44d806e0d6`.
+- Result: degraded vs iter3 (`faithfulness 0.232323`, `helpfulness 0.00`).
+- Decision: do not keep this ablation as default behavior.
+
+### Reliability/harness observations
+- In iter4, after a timed-out generation failure, the wrapper script required interruption to progress to scoring; run artifacts were still valid and scoring completed after manual continuation.
+- For this loop, continue treating `iter3` as best run for quality among evaluated variants.
+
+### Actionable next steps
+- Keep iter3-style narrative routing/retrieval behavior as baseline for next open-ended improvements.
+- Next potential improvement area (not implemented in this loop): add explicit answer post-check for year-scope claims (claim-level period validator) to reduce remaining period mismatch failures in high-risk families (`growth_risk_balance`, `execution_dependencies`, `risk_materiality`).
+
+## 2026-02-17 - Iter3 faithfulness fail-case manual audit (review.csv human labels)
+
+### Scope
+- Audited every `faithfulness_v1` fail from the best Iter3 run:
+  - `eval/results_revamp/open/eval_run.open_diverse_iter3_narrativecoverage_normal_tools12_norefine_qt350_jt350.20260217_223936`
+- For each failed case, manually reviewed:
+  - question,
+  - final answer,
+  - judge explanation,
+  - cited chunk evidence in run artifacts.
+- Wrote manual annotations into run-local `review.csv` using:
+  - `human_label` (`1` = genuine fail, `0` = judge error)
+  - `human_notes` (short rationale).
+
+### Artifacts updated
+- `eval/results_revamp/open/eval_run.open_diverse_iter3_narrativecoverage_normal_tools12_norefine_qt350_jt350.20260217_223936/review.csv`
+- Supporting audit pack used during review:
+  - `agent_logs/iter3_fail_cases_20260217.md`
+
+### Label results on fail set
+- Judge-predicted fails audited: `18/18`
+- Manual labels:
+  - `judge error (human_label=0)`: `16`
+  - `genuine model fail (human_label=1)`: `2`
+- Estimated fail precision on this audited fail bucket: `2 / 18 = 11.1%`
+  - Note: this is fail-bucket precision only (not full confusion metrics, since only fail rows were manually labeled in this pass).
+
+### Genuine error cases (judge was right)
+- `022c16b7-48dc-45ff-83eb-6be81d6f07cd` (ATI risk materiality)
+  - Answer injected unsupported detail: claimed a new CBA was reached in April 2025; not present in cited context.
+- `9582bacb-591f-4ba2-96f8-f0d090f39910` (APH strategy positioning)
+  - Answer misattributed organic growth percentages to segments (39/15 claim does not match cited segment rows).
+
+### Judge-error cases found (judge was wrong)
+- Temporal-validity false alarms (judge treated provided 2026 filings as non-existent):
+  - `aeb38e88-27dc-40a9-a039-a43e865516f3`
+  - `95554e27-8d56-43e5-ac3c-878e01a9d9e1`
+- Filing-year vs period-end metadata confusion (judge rejected grounded 2025-filed evidence):
+  - `b7d1655d-5194-4db2-92db-670161b28678`
+  - `1ef52375-c59b-471c-a6ce-6681e97b182a`
+  - `99c04bbf-213f-4fb0-b849-7d7b0fa335b6`
+- Missed evidence in cited tables/chunks (judge claimed unsupported values that were present):
+  - `2b462d5b-1ccc-47bf-a8ea-2177f77f16b7`
+  - `4393a735-4c92-469c-9ac0-ac76e7353109`
+  - `d7f3e8cc-a87e-4ed8-bd67-54f5990a544e`
+  - `ad329082-4576-4ba4-8b01-a31d3be6e7cb`
+- Over-strict handling of inference-style prompts where synthesis is expected:
+  - `4c39d465-a8f1-49e4-bc5f-e42717b5f210`
+  - `5a8bf84a-c1f2-4499-af99-6317e2f6763d`
+  - `9cf874e2-1fe7-4c7f-a89e-6fcbc087c9ef`
+  - `c1cd294c-e1a5-4b90-ab5f-5fa93a52f9ea`
+  - `1a21f637-a044-45f5-9c49-0fff90d37a01`
+  - `0bb3d61a-4681-4697-a298-cea294bffffe`
+  - `0ece38a9-c0f8-4238-9521-5013b66012d3`
+
+### Practical takeaway
+- The current judge is substantially over-calling fail on this Iter3 open-ended set.
+- For next judge iteration, priority should be reducing false positive fail calls in these classes:
+  - date/period semantics,
+  - evidence lookup robustness for tables,
+  - calibration for synthesis-heavy prompts where grounded inference is acceptable.
+
+## 2026-02-18 - Tool snapshot UI polish (EDGAR readability + interactive chart modal)
+
+### Previous state
+- Tool snapshot cards could look cramped under dense tool output, and long code-style tool names (notably EDGAR tools) could visually overflow card headers.
+- EDGAR outputs were shown as raw JSON in the answer pane, which was difficult for non-technical users to interpret quickly.
+- Price history was only shown as a small inline sparkline with no expanded inspection mode.
+
+### What changed
+- Updated tool snapshot card styling in `src/andromeda/static/index.html` to improve spacing hierarchy and prevent header overflow:
+  - title wrapping/overflow handling,
+  - better header/meta pill layout,
+  - improved responsive card behavior.
+- Added polished user-facing tool labels in `src/andromeda/static/ts/index/main.ts` (e.g., SEC annual/quarterly metrics, SEC financial statements) instead of raw internal function IDs.
+- Reworked EDGAR rendering in `src/andromeda/static/ts/index/main.ts`:
+  - `edgar_get_financial_metrics` / `edgar_get_quarterly_financial_metrics` now render as metric tables,
+  - `edgar_get_financial_statements` now renders structured statement blocks with parsed line items (and readable line fallback when parsing is sparse),
+  - removed raw JSON-first presentation for EDGAR cards.
+- Added interactive price chart modal UI:
+  - modal markup/styles in `src/andromeda/static/index.html`,
+  - DOM wiring in `src/andromeda/static/ts/index/dom.ts`,
+  - click-to-expand chart behavior in `src/andromeda/static/ts/index/main.ts`,
+  - hover tooltip with date/price/volume inspection,
+  - candlestick rendering in modal when OHLC fields are present; line view fallback otherwise.
+- Rebuilt generated frontend JS with `npm run -s build:ts`.
+
+### Why
+- Make tool outputs presentable and immediately understandable for investment-oriented users, not just developers.
+- Reduce cognitive load in the answer pane by replacing raw payload dumps with structured financial views.
+- Improve chart usability by allowing expanded, interactive data inspection directly inside the app.
+
+### Surprising findings
+- `pre-commit` still cannot write to default cache path in this environment; must use `PRE_COMMIT_HOME=/tmp/pre-commit-cache`.
+- The first `pre-commit run --all` pass auto-fixed trailing whitespace in `agent_logs/iter3_fail_cases_20260217.md`; second pass was clean.
+
+### Validation experiments and results
+- `npm run -s build:ts` -> pass.
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> pass.
+- `source .venv/bin/activate && pytest -vvv tests/` -> pass (`116 passed, 2 warnings`).
+
+## 2026-02-18 - Open200 judge audit pass (faithfulness) + Judge Iteration 1
+
+### Audit pass summary (requested cadence: after each complete pass)
+- Scope:
+  - Completed manual audit on all `43/43` open200 `faithfulness_v1` fail calls from:
+    - `eval/results_revamp/open/eval_run.open_diverse200_iter0_baseline_normal_tools12_norefine_qt350_jt350.20260218_002122`
+  - Wrote labels (`human_label`, `human_notes`) into:
+    - `agent_logs/judge_audit_faithfulness_open71_single100_open200_20260218.csv`
+  - Labeling script artifact:
+    - `agent_logs/20260218_020500_label_open200_faithfulness_fails_manual.py`
+- Manual outcome:
+  - Judge errors: `39`
+  - Genuine model failures: `4`
+  - Genuine fail IDs (material errors):
+    - `3f21a340-59f4-4098-a0b8-c9b96c084390` (dividend total miscomputed)
+    - `b2a9a8c5-c747-4241-90d2-9d057a130e4f` (margin direction claim contradicts cited numbers)
+    - `cd87db11-396f-433a-a829-38ad0b2a0249` (segment-share contradiction + unsupported growth ranges)
+    - `d6125077-0b78-4959-be5f-0064349b7e34` (capex numeric mismatch)
+- Baseline reliability (before prompt iteration):
+  - Report:
+    - `agent_logs/judge_reliability_open71_single100_open200_manual_20260218.json`
+  - Labeled set: `n=125` (`dev=93`, `test=32`)
+  - Test metrics:
+    - `precision_fail=0.1875`
+    - `recall_fail=1.0`
+    - `f1_fail=0.3158`
+    - `accuracy=0.5938`
+  - Observation:
+    - Dominant failure mode was false-positive fail calls (over-strict interpretation of temporal framing/inference).
+
+### Judge Iteration 1 (materiality-aware faithfulness prompt)
+- Prompt change:
+  - Updated `faithfulness_v1` rubric in:
+    - `src/andromeda/eval/judges.py`
+  - Key adjustments:
+    - evaluate material faithfulness (not peripheral issues),
+    - allow grounded synthesis/derived calculations,
+    - avoid outside-world temporal assumptions,
+    - fail only on material unsupported/contradicted claims.
+- Rescore run (fixed generations, judge-only iteration):
+  - Script:
+    - `agent_logs/20260218_021100_judge_iter3_open200_materiality_rescore.sh`
+  - Output:
+    - `eval/results_revamp/judge_tuning/eval_run.open200_judge_iter3_materiality.20260218_010749`
+  - Open200 fail-rate change:
+    - `faithfulness_v1: 0.215 -> 0.08`
+- Harness correction for apples-to-apples reliability:
+  - Found that naive rebuild changed labeled population (`125 -> 144`) because run extraction changed single-run decision coverage.
+  - Fixed by reusing exact baseline labeled decision IDs/splits and swapping only open200 predictions via:
+    - `agent_logs/20260218_022000_merge_iter1_predictions_into_baseline_audit.py`
+  - Apples-to-apples audit file:
+    - `agent_logs/judge_audit_faithfulness_open71_single100_open200_iter1_materiality_apples_20260218.csv`
+  - Iter1 reliability report:
+    - `agent_logs/judge_reliability_open71_single100_open200_iter1_materiality_apples_20260218.json`
+- Apples-to-apples metric delta vs baseline (`n=125` fixed):
+  - Dev:
+    - `precision_fail: 0.2105 -> 0.3889`
+    - `recall_fail: 1.0000 -> 0.8750`
+    - `f1_fail: 0.3478 -> 0.5385`
+    - `accuracy: 0.6774 -> 0.8710`
+    - `cohen_kappa: 0.2398 -> 0.4761`
+  - Test:
+    - `precision_fail: 0.1875 -> 1.0000`
+    - `recall_fail: 1.0000 -> 1.0000`
+    - `f1_fail: 0.3158 -> 1.0000`
+    - `accuracy: 0.5938 -> 1.0000`
+- Caution:
+  - Test sample remains small; despite large gains, this should be treated as promising but provisional.
+  - Next reliability step should label additional pass-predicted rows to measure false-negative drift under the softer rubric.
+
+- Commit:
+  - `79a0ac5`
+
+## 2026-02-18 - Judge Iteration 2 (numeric-consistency addendum) and rollback decision
+
+### What changed
+- Added one extra line to `faithfulness_v1` prompt in `src/andromeda/eval/judges.py`:
+  - explicit fail instruction when arithmetic/totals/direction-of-change conflicts with cited numbers.
+- Rescored same fixed open200 generations with identical runtime settings:
+  - script: `agent_logs/20260218_023000_judge_iter4_materiality_numeric_consistency_rescore.sh`
+  - run: `eval/results_revamp/judge_tuning/eval_run.open200_judge_iter4_materiality_numeric_consistency.20260218_012738`
+  - open200 fail rates:
+    - `faithfulness_v1: 0.095`
+    - `helpfulness_v1: 0.01`
+- Built apples-to-apples alignment file (same labeled IDs/split as baseline):
+  - merge script: `agent_logs/20260218_024000_merge_iter2_predictions_into_baseline_audit.py`
+  - audit: `agent_logs/judge_audit_faithfulness_open71_single100_open200_iter2_materiality_numeric_apples_20260218.csv`
+  - report: `agent_logs/judge_reliability_open71_single100_open200_iter2_materiality_numeric_apples_20260218.json`
+
+### Observations
+- Compared to Iteration 1, Iteration 2 regressed:
+  - Dev:
+    - `precision_fail: 0.3889 -> 0.3684`
+    - `f1_fail: 0.5385 -> 0.5185`
+    - `accuracy: 0.8710 -> 0.8602`
+    - `cohen_kappa: 0.4761 -> 0.4522`
+  - Test:
+    - `precision_fail: 1.0000 -> 0.6000`
+    - `f1_fail: 1.0000 -> 0.7500`
+    - `accuracy: 1.0000 -> 0.9375`
+- Net takeaway:
+  - numeric-consistency addendum recovered no new true positives on held-out labeled test but introduced extra false positives.
+
+### Action taken
+- Reverted the extra numeric-consistency sentence, returning to the Iteration-1 materiality prompt as current best.
+- Current best judge prompt state remains the Iteration-1 materiality calibration.
+
+- Commit:
+  - `065abdd`
+
+## 2026-02-18 - Process guardrail for audit-pass logging cadence
+
+### Guardrail
+- For every complete manual audit pass, add a dedicated `Audit pass summary` block to `agent_logs/LOGBOOK.md` immediately before launching the next judge-prompt iteration.
+- Minimum fields to log each pass:
+  - run ID/path audited,
+  - audited fail count,
+  - judge-error vs genuine-fail counts,
+  - top recurring failure buckets,
+  - concrete next-step decision.
+
+### Retroactive confirmation
+- The open200 audit summary preceding Judge Iteration 1 is recorded in:
+  - `agent_logs/LOGBOOK.md` under `## 2026-02-18 - Open200 judge audit pass (faithfulness) + Judge Iteration 1`
+  - subsection `### Audit pass summary (requested cadence: after each complete pass)`.
+
+## 2026-02-18 - Eval documentation refresh + structure cleanup baseline
+
+### What changed
+- Rewrote `README_EVAL.md` as the canonical runbook for current best eval settings:
+  - production-matched generation hyperparameters (`normal` preset, tools enabled, no refine),
+  - judge settings (`judge_context_chars=80000`, timeout/retry/workers),
+  - current metric snapshots across single/multi/open tracks,
+  - one-pass full-suite execution instructions.
+- Added reproducible orchestration scripts:
+  - `scripts/prepare_eval_assets.sh`
+  - `scripts/run_full_eval_suite.sh`
+  (includes manifest output with run paths + score summaries).
+- Reorganized backend module layout for cleaner `src/` grouping:
+  - query runtime modules moved under `src/andromeda/query/`
+  - runtime builders moved under `src/andromeda/runtime/`
+  - history persistence moved under `src/andromeda/history/`
+  - imports updated across app/tests.
+- Added `agent_logs/README.md` and nested folders (`plans/`, `scripts/`, `audits/`, `reports/`, `artifacts/`, `references/`) for future artifacts.
+
+### Important compatibility decision
+- Did **not** move historical top-level `agent_logs/*` artifacts already referenced in this logbook.
+- Reason: preserve all existing path references for reproducibility and handoff continuity.
+
+### Observations
+- Historical eval scripts and docs had diverged from current best operational settings; this made exact replay harder for new contributors.
+- A single run-group manifest materially improves reproducibility/debuggability when multiple eval tracks are launched together.
+
+### Next actionable step
+- Use `PREPARE_ASSETS=1 bash scripts/run_full_eval_suite.sh` for the next baseline sweep, then append run-group manifest path and metric deltas here.
+
+### Validation
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> pass.
+- `source .venv/bin/activate && pytest -vvv tests/` -> pass (`116 passed, 2 warnings`).
+
+## 2026-02-18 - Chunk-size ablation rerun (80k judge) + latency/accuracy frontier completion
+
+### Context
+- Previous chunk-size study used a lower judge context and needed replay under current best settings.
+- Frontier run completed generation/scoring but collector failed due malformed manifest CSV rows when settings contained commas.
+
+### What changed
+- Re-ran chunk-size ablation with deploy-matched settings and expanded suite context:
+  - script: `agent_logs/scripts/eval/20260218_060200_rerun_chunk_size_ablation_expanded80k.sh`
+  - settings: tools enabled, no refine, `judge_context_chars=80000`, generation/judge timeout `350s`, retries `1`, workers `12`.
+  - outputs:
+    - `eval/results_revamp/chunk_size_study_v2_expanded80k/chunk_size_metrics_expanded80k.md`
+    - `eval/results_revamp/chunk_size_study_v2_expanded80k/chunk_size_tradeoff_expanded80k.png`
+- Hardened frontier harness to avoid CSV corruption and recover existing malformed manifests:
+  - `agent_logs/scripts/eval/20260218_060600_run_latency_accuracy_frontier.sh` now writes manifest rows with Python `csv.writer`.
+  - `agent_logs/scripts/eval/20260218_060700_collect_latency_accuracy_frontier.py` now parses both quoted rows and older malformed rows.
+- Generated frontier artifacts successfully from completed runs:
+  - `eval/results_revamp/latency_accuracy_frontier_20260218/latency_accuracy_frontier_metrics.md`
+  - `eval/results_revamp/latency_accuracy_frontier_20260218/latency_accuracy_frontier.png`
+
+### Results
+- Chunk-size rerun (single100 + multi60, judge 80k):
+  - `256`: qps `0.1321`, p95 `180216.6ms`, factual fail `0.0857`, open faith fail `0.0000`, comparison fail `0.0333`
+  - `512`: qps `0.1385`, p95 `162625.8ms`, factual fail `0.0571`, open faith fail `0.0667`, comparison fail `0.0167`
+  - `1024`: qps `0.1376`, p95 `158374.3ms`, factual fail `0.1143`, open faith fail `0.1000`, comparison fail `0.0333`
+  - `2048`: qps `0.1360`, p95 `152962.3ms`, factual fail `0.0857`, open faith fail `0.2000`, comparison fail `0.0167`
+- Latency/accuracy frontier (7 settings):
+  - Best factual correctness fail: `effort_high` and `temperature_0` at `0.0286`.
+  - Best open faithfulness fail: `effort_low` at `0.0000` on this suite.
+  - Worst factual fail among tested knobs: `retrieve_high_60_35` at `0.1714` with lower throughput.
+
+### Observations
+- Increasing retrieval depth to `60/35` did not help this benchmark; quality and throughput both worsened.
+- Lower retrieval depth (`30/18`) improved throughput and factual fail vs baseline but regressed open-ended faithfulness relative to `effort_high`.
+- Tight token budget (`32k/16k`) reduced throughput significantly (`0.1077 qps`) without headline quality wins.
+
+### Actionable next steps
+- Keep chunk size `512` as default for deploy-matched evals.
+- Use `effort_high` as quality-oriented operating point and `effort_low` as speed-oriented point; avoid raising retrieval depth above normal by default.
+- Add additional frontier axes next: rerank off/on and max-chunks budget sweep.
+
+- Commit:
+  - `8a0f67a`
+
+## 2026-02-18 - Judge variance quantification + retrieval strategy frontier extension (in-progress)
+
+### Scope
+- Continued autonomous benchmark loop on deploy-matched eval settings (`normal`, tools enabled, no refine, judge context 80k, timeout 350s, retries 1, workers 12).
+- Added new runtime knobs and benchmark harness for retrieval-strategy tradeoff mapping.
+
+### Code changes
+- Commit: `cf5aad4`
+- Updated:
+  - `src/andromeda/query/runtime.py`
+    - Added environment toggles:
+      - `FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION` (default on)
+      - `FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE` (default on)
+    - Wired toggles into retrieval/rerank path for narrative queries.
+  - `tests/test_query_runtime_tools_first.py`
+    - Added coverage tests for narrative query expansion/aspect-coverage toggles.
+- New benchmark scripts:
+  - `agent_logs/scripts/eval/20260218_114300_extend_latency_accuracy_frontier_mmr_adaptive.sh`
+  - `agent_logs/scripts/eval/20260218_115700_extend_latency_accuracy_frontier_narrative_flags.sh`
+
+### Completed experiments
+1. Judge stability rescore (6 independent judge passes, fixed generations)
+- Script: `agent_logs/scripts/eval/20260218_113300_judge_stability_rescore_single100_baseline.sh`
+- Output:
+  - `eval/results_revamp/judge_stability_single100_baseline_20260218/judge_stability_replicate_metrics.md`
+- Key variance bands:
+  - `factual_fail`: mean `0.0619`, std `0.0106`, range `[0.0571, 0.0857]`
+  - `open_faith_fail`: mean `0.1000`, std `0.0272`, range `[0.0667, 0.1333]`
+- Observation:
+  - Judge noise is large enough that sub-3.3pp open-faithfulness deltas are likely inconclusive on this set.
+
+2. Frontier extension: retrieval strategy axis (partial completion)
+- Script running: `agent_logs/scripts/eval/20260218_114300_extend_latency_accuracy_frontier_mmr_adaptive.sh`
+- Completed rows so far:
+  - `strategy_baseline_flags_explicit` (`mmr=0, adaptive=1`)
+    - `qps=0.1396`, `p95=154830.0ms`, factual fail `0.1429`, open faith fail `0.0000`, comparison fail `0.0167`
+  - `strategy_mmr_on` (`mmr=1, adaptive=1`)
+    - `qps=0.1072`, `p95=158371.7ms`, factual fail `0.0000`, open faith fail `0.0333`, comparison fail `0.0167`
+- Updated aggregate artifacts:
+  - `eval/results_revamp/latency_accuracy_frontier_20260218/latency_accuracy_frontier_metrics.md`
+  - `eval/results_revamp/latency_accuracy_frontier_20260218/latency_accuracy_frontier.png`
+
+### In-flight status at log time
+- Current active condition: `strategy_adaptive_off` (single run in progress).
+- One prior long-tail decode event was handled by configured timeout+retry (no manual interruption required).
+
+### Next actions
+- Finish remaining frontier conditions in the same script:
+  - `strategy_adaptive_off`
+  - `strategy_mmr_on_adaptive_off`
+- Re-collect frontier metrics and compare effect sizes against the measured judge variance band before drawing conclusions.
+
+## 2026-02-18 - Retrieval strategy frontier: adaptive-off condition completed
+
+### Completed condition
+- `strategy_adaptive_off` (`mmr=0, adaptive=0`) completed for single100 + multi60.
+- Script: `agent_logs/scripts/eval/20260218_114300_extend_latency_accuracy_frontier_mmr_adaptive.sh`
+
+### Metrics snapshot (collector)
+- `qps=0.1213`
+- `p95=178635.1ms`
+- `factual_fail=0.0286`
+- `open_faith_fail=0.1000`
+- `comparison_fail=0.0333`
+
+### Comparison to completed retrieval-strategy rows
+- vs `strategy_baseline_flags_explicit` (`mmr=0, adaptive=1`): lower factual fail (`0.1429 -> 0.0286`) but worse open faithfulness (`0.0000 -> 0.1000`) and worse comparison (`0.0167 -> 0.0333`), with slower throughput (`0.1396 -> 0.1213`).
+- vs `strategy_mmr_on` (`mmr=1, adaptive=1`): slower and weaker on open-faithfulness/comparison.
+
+### In-flight
+- Final retrieval-strategy condition now running: `strategy_mmr_on_adaptive_off`.
+
+## 2026-02-18 - Benchmark wrap-up documentation
+
+### What was added
+- New top-level benchmark report:
+  - `BENCHMARK.md`
+- New figure-generation script:
+  - `agent_logs/scripts/eval/20260218_154300_build_benchmark_report_figures.py`
+- New benchmark report figures:
+  - `eval/results_revamp/benchmark_report_20260218/frontier_open_faithfulness_scatter.png`
+  - `eval/results_revamp/benchmark_report_20260218/retrieval_strategy_tradeoffs.png`
+  - `eval/results_revamp/benchmark_report_20260218/narrative_guardrails_tradeoffs.png`
+  - `eval/results_revamp/benchmark_report_20260218/judge_variance_replicates.png`
+
+### Documentation focus
+- Consolidated all recent benchmark outcomes into one report:
+  - latency-accuracy frontier summary,
+  - retrieval strategy ablation (MMR/adaptive toggles),
+  - narrative guardrail ablation,
+  - chunk-size ablation (80k judge context),
+  - judge variance and interpretation guidance.
+- Embedded all key plots directly in markdown for interview/demo readiness.
+
+### Note
+- At wrap-up time there were no active eval benchmark processes; latest frontier rows and figures were already materialized and incorporated.
+
+## 2026-02-18 - Benchmark report readability pass
+
+### Motivation
+- User feedback: Topline frontier narrative was hard to parse, experiment names were under-explained, and some charts were hard to read (x-axis label crowding, ambiguous bars).
+
+### Changes made
+- Rewrote `BENCHMARK.md` to include:
+  - explicit experiment catalog (exact runs + rationale),
+  - full results summary table across all frontier experiments,
+  - clarified definitions for ambiguous IDs (especially `strategy_baseline_flags_explicit`).
+- Rebuilt benchmark figure pipeline:
+  - script updated: `agent_logs/scripts/eval/20260218_154300_build_benchmark_report_figures.py`
+  - outputs moved to tracked report path:
+    - `agent_logs/reports/benchmark_figures_20260218/frontier_open_faithfulness_scatter.png`
+    - `agent_logs/reports/benchmark_figures_20260218/frontier_throughput_ranked.png`
+    - `agent_logs/reports/benchmark_figures_20260218/retrieval_strategy_tradeoffs.png`
+    - `agent_logs/reports/benchmark_figures_20260218/narrative_guardrails_tradeoffs.png`
+    - `agent_logs/reports/benchmark_figures_20260218/chunk_size_tradeoffs.png`
+    - `agent_logs/reports/benchmark_figures_20260218/judge_variance_replicates.png`
+
+### Specific chart fixes
+- Throughput chart switched to ranked horizontal bars to avoid unreadable x-axis labels.
+- Retrieval-strategy failure chart now includes grouped bars for `factual_fail`, `open_faith_fail`, and `comparison_fail` with value labels and explicit edges.
+- Frontier scatter reduced annotation clutter and only labels key anchor points.
+
+### Result
+- Benchmark story is now auditable in one pass: what was run, why, and what happened.
+
+## 2026-02-18 - Golden default profile rollout + UI control simplification
+
+### Context
+- Follow-up request after frontier analysis: codify a benchmark-backed default profile, disable query expansion by default, and simplify user-facing latency/quality knobs.
+
+### What changed
+- `BENCHMARK.md`:
+  - Added final "Golden Defaults (Recommended Moving Forward)" section summarizing retrieval, runtime, and eval harness defaults.
+- Backend defaults:
+  - `src/andromeda/query/runtime.py`
+    - `FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION` default changed from on -> off.
+  - `src/andromeda/llm/generation_controls.py`
+    - `normal` preset answering effort changed from `medium` -> `high`.
+- Eval CLI/harness defaults:
+  - `scripts/run_eval.py`
+    - `--concurrency` default `12`
+    - `--parallel-backend` default `thread`
+    - `--query-timeout-s` default `350`
+  - `src/andromeda/eval/runner.py`
+    - `RunConfig.concurrency` default `12`
+    - `RunConfig.parallel_backend` default `thread`
+    - `RunConfig.query_timeout_s` default `350.0`
+  - `scripts/score_eval.py`
+    - `--judge-workers` default `12`
+    - `--judge-timeout-s` default `350`
+  - `src/andromeda/eval/scoring.py`
+    - `score_one(... judge_timeout_s=350.0)` default aligned.
+  - `scripts/run_eval.sh`
+    - wrapper updated to `normal`, `12` workers, thread backend, `350s` timeout.
+- Frontend control surface:
+  - `src/andromeda/static/index.html`
+    - removed raw retrieval/token numeric controls from Advanced options.
+    - kept: `Mode`, `Answering effort`, optional `Run draft + refine`.
+  - `src/andromeda/static/ts/index/main.ts` + `src/andromeda/static/js/index/main.js`
+    - request settings payload now sends only high-impact controls (`mode`, `answering_effort`, `enable_refine`).
+    - mode preset application now updates answering effort only.
+  - `src/andromeda/static/ts/index/generation.ts` + `src/andromeda/static/js/index/generation.js`
+    - fallback preset values aligned to backend (`quick=20/10`, `normal=40/25`, `thinking=60/35`) and normal-effort high.
+  - `src/andromeda/static/ts/index/dom.ts` + `src/andromeda/static/js/index/dom.js`
+    - removed stale top-k/token element bindings.
+- Config/docs:
+  - `.env.example` refreshed to chunk512/profile defaults and explicit narrative toggle recommendations.
+  - `README_EVAL.md` updated with default-off query expansion and default-on aspect coverage.
+  - `CHANGELOG.md` updated under `Unreleased`.
+
+### Rationale
+- Frontier/chunk studies indicate `chunk=512` + `normal` mode is the best practical operating point.
+- `answering_effort=high` improves quality with modest throughput impact relative to medium.
+- Query expansion can drift user intent; keeping it default-off is safer for product behavior.
+- UI simplification reduces knob overfitting and keeps user control on the settings that consistently moved latency/quality.
+
+### Validation
+- Pending final repo checks at wrap-up:
+  - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - `source .venv/bin/activate && pytest -vvv tests/`

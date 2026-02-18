@@ -8,8 +8,15 @@ import numpy as np
 import pytest
 
 from andromeda.dataclasses import DocChunk
-from andromeda.db import ChunkRecord, DocumentRecord, HybridSearchRow, IngestedCompanyRow, PostgresDB, RetrievalFilters
-from andromeda.retriever import PostgresHybridRetriever
+from andromeda.retrieval.db import (
+    ChunkRecord,
+    DocumentRecord,
+    HybridSearchRow,
+    IngestedCompanyRow,
+    PostgresDB,
+    RetrievalFilters,
+)
+from andromeda.retrieval.retriever import PostgresHybridRetriever
 from tests.fakes import RecordingLLM
 
 

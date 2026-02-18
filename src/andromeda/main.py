@@ -9,19 +9,19 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from andromeda.generation_controls import (
+from andromeda.llm.generation_controls import (
     GenerationSettings,
     default_mode,
     list_generation_presets,
     resolve_generation_settings,
 )
-from andromeda.ingested_companies import IngestedCompaniesService
-from andromeda.ingestion_jobs import TickerIngestionJobManager, normalize_ticker
-from andromeda.history_store import QueryHistoryStore
-from andromeda.query_conversation import ConversationStore
-from andromeda.query_runtime import QueryRequest, QueryResponse, QueryStreamRequest, RAGService, ToolTraceEvent
-from andromeda.query_streaming import StreamCancelRegistry, run_query_stream
-from andromeda.runtime_builders import (
+from andromeda.ingestion.ingested_companies import IngestedCompaniesService
+from andromeda.ingestion.ingestion_jobs import TickerIngestionJobManager, normalize_ticker
+from andromeda.history.store import QueryHistoryStore
+from andromeda.query.conversation import ConversationStore
+from andromeda.query.runtime import QueryRequest, QueryResponse, QueryStreamRequest, RAGService, ToolTraceEvent
+from andromeda.query.streaming import StreamCancelRegistry, run_query_stream
+from andromeda.runtime.builders import (
     build_reranker,
     build_retriever,
     build_ticker_ingestion_config,
@@ -29,7 +29,7 @@ from andromeda.runtime_builders import (
     llm_for_chat,
     setup_logging,
 )
-from andromeda.source_access import read_text_file, resolve_local_source, source_response
+from andromeda.review.source_access import read_text_file, resolve_local_source, source_response
 
 
 # -------------------------------------------------------------------
@@ -130,7 +130,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # Eval review UI (labels + retrieval inspection).
 try:
-    from andromeda.review_ui import router as review_router
+    from andromeda.review.review_ui import router as review_router
 
     app.include_router(review_router)
 except Exception as exc:  # noqa: BLE001

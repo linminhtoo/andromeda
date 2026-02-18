@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from andromeda.eval.io import load_jsonl
 from andromeda.eval.runner import RunConfig, run_generation, save_json
 from andromeda.eval.schema import EvalQuery
+from andromeda.llm.generation_controls import AnsweringEffort
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -38,11 +39,11 @@ def main() -> None:
     ap.add_argument("--out-dir", required=True, help="Directory to write run artifacts.")
     ap.add_argument("--run-name", default=None, help="Optional run name prefix (e.g. 'baseline').")
     ap.add_argument("--mode", default="normal", help="Generation preset (quick|normal|thinking).")
-    ap.add_argument("--concurrency", type=int, default=8, help="Max parallel questions to run (set 1 to disable).")
+    ap.add_argument("--concurrency", type=int, default=12, help="Max parallel questions to run (set 1 to disable).")
     ap.add_argument(
         "--parallel-backend",
         choices=["process", "thread"],
-        default="process",
+        default="thread",
         help="Parallel execution backend when concurrency > 1.",
     )
     ap.add_argument(
@@ -63,17 +64,30 @@ def main() -> None:
     ap.add_argument("--top-k-rerank", type=int, default=None)
     ap.add_argument("--draft-max-tokens", type=int, default=None)
     ap.add_argument("--final-max-tokens", type=int, default=None)
+    ap.add_argument("--brief-max-tokens", type=int, default=None)
     ap.add_argument("--enable-rerank", type=int, default=None, help="1/0 override (defaults to preset).")
     ap.add_argument("--enable-refine", type=int, default=None, help="1/0 override (defaults to preset).")
     ap.add_argument("--draft-temperature", type=float, default=None)
+    ap.add_argument(
+        "--answering-effort",
+        choices=[eff.value for eff in AnsweringEffort],
+        default=None,
+        help="Override answering effort (low|medium|high).",
+    )
 
     # Output controls.
     ap.add_argument("--max-chunks", type=int, default=50)
     ap.add_argument(
         "--query-timeout-s",
         type=float,
-        default=120.0,
+        default=350.0,
         help="Optional per-query timeout in seconds for generation (set <=0 to disable).",
+    )
+    ap.add_argument(
+        "--query-max-retries",
+        type=int,
+        default=1,
+        help="Retry count after the first timed-out/transient generation failure.",
     )
 
     # Filters.
@@ -141,13 +155,16 @@ def main() -> None:
         top_k_rerank=args.top_k_rerank,
         draft_max_tokens=args.draft_max_tokens,
         final_max_tokens=args.final_max_tokens,
+        brief_max_tokens=args.brief_max_tokens,
         enable_rerank=(bool(args.enable_rerank) if args.enable_rerank is not None else None),
         enable_refine=(bool(args.enable_refine) if args.enable_refine is not None else None),
+        answering_effort=(AnsweringEffort(args.answering_effort) if args.answering_effort is not None else None),
         draft_temperature=args.draft_temperature,
         concurrency=args.concurrency,
         parallel_backend=args.parallel_backend,
         max_chunks=args.max_chunks,
         query_timeout_s=(float(args.query_timeout_s) if args.query_timeout_s is not None else None),
+        query_max_retries=max(0, int(args.query_max_retries)),
     )
 
     gpu_ids = [str(gpu) for gpu in args.gpu_ids] if args.gpu_ids else None

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-import andromeda.llm_clients as lc
+import andromeda.llm.clients as lc
 
 
 class _ToyModel(BaseModel):

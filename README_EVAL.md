@@ -1,287 +1,159 @@
 # README_EVAL
 
-This document explains how to reproduce the best single-ticker eval result from this project:
+This is the canonical runbook for reproducing and extending the current eval pipeline.
 
-- Target run: `single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2`
-- Target score file:
-  - `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430/score_summary.json`
-- Target headline metrics:
-  - `factual_correctness_v1` fail rate: `0.05`
-  - `open_ended faithfulness_v1` fail rate: `0.2666666667`
+It reflects the latest preferred setup from `agent_logs/LOGBOOK.md` and the latest best-known runs on this branch.
 
-The reproduction path has 3 phases:
+## 1) Current Best-Practice Eval Configuration
 
-1. Build/index data profile
-2. Generate/validate/filter eval queries
-3. Run `v13` generation and score with `judgev2`
+### Retrieval/index settings (generation side)
+- ingest profile / schema: `eval_revamp_combined_512_20260217`
+- chunking: `max_tokens=512`, `overlap_tokens=64`
+- retrieval context mode: `context=none` (no per-chunk LLM contextualization at index time)
+- dense model: `BAAI/bge-m3`
+- sparse method: `bm25`
 
----
+Rationale: in the controlled sweep (`agent_logs/reports/chunk_size_tradeoff_17Feb2026.md`), `512` dominated `1024` on both latency and faithfulness in the tested setting.
 
-## 0) Prerequisites
+### Answering hyperparameters (generation side)
+- generation preset: `normal` (`src/andromeda/llm/generation_controls.py`)
+- resolved values used in evaluated generations:
+  - `top_k_retrieve=40`
+  - `top_k_rerank=25`
+  - `draft_max_tokens=65536`
+  - `final_max_tokens=32768`
+  - `enable_rerank=true`
+  - `enable_refine=false`
+- `answering_effort=high`
+- `draft_temperature=0.1`
+- retrieval toggles:
+  - `FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION=0`
+  - `FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE=1`
+  - `FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET=1`
+  - `FINRAG_ENABLE_MMR_DIVERSITY=0`
+- tools: enabled by default (no `--disable-finance-tools`)
+- workers/backend: `concurrency=12`, `parallel_backend=thread`
+- generation timeout/retry (recommended): `query_timeout_s=350`, `query_max_retries=1`
 
-From repo root:
+### Judge/scoring hyperparameters
+- `judge_workers=12`
+- `judge_context_chars=80000`
+- `judge_timeout_s=350`
+- `judge_max_retries=1`
+- active faithfulness rubric: materiality-calibrated `faithfulness_v1` in `src/andromeda/eval/judges.py`
 
+## 2) Current Metrics Snapshot
+
+### Full single-ticker suite (100 queries, all non-comparison kinds)
+Run:
+- `eval/results_revamp/single/eval_run.single_ext_chunk512_v1_normal_tools12_norefine_eval100.20260217_043752/score_summary.json`
+
+Metrics:
+- factual:
+  - `numeric_accuracy=0.60`
+  - `factual_correctness_v1` fail rate: `0.0571`
+  - factual `helpfulness_v1` fail rate: `0.0286`
+- open-ended:
+  - `faithfulness_v1` fail rate: `0.2667`
+  - open-ended `helpfulness_v1` fail rate: `0.0`
+- refusal:
+  - `refusal_v1` fail rate: `0.0`
+- distractor:
+  - `focus_v1` fail rate: `0.0667`
+  - distractor `helpfulness_v1` fail rate: `0.0`
+
+### Multi-ticker comparison snapshot
+Run:
+- `eval/results_revamp/multi/eval_run.multi_holistic_normal_v2_tools8_norefine_calibrated.20260216_234717/score_summary.json`
+
+Metrics:
+- comparison `comparison_v1` fail rate: `0.0417`
+- comparison `helpfulness_v1` fail rate: `0.0`
+
+### Open-ended stress + judge-tuning snapshot
+Generation baseline run (200 diverse open-ended):
+- `eval/results_revamp/open/eval_run.open_diverse200_iter0_baseline_normal_tools12_norefine_qt350_jt350.20260218_002122/score_summary.json`
+  - faithfulness fail: `0.215`
+  - helpfulness fail: `0.01`
+
+Judge-iteration run (fixed generations, materiality-calibrated prompt):
+- `eval/results_revamp/judge_tuning/eval_run.open200_judge_iter3_materiality.20260218_010749/score_summary.json`
+  - faithfulness fail: `0.08`
+  - helpfulness fail: `0.015`
+
+Interpretation: the large faithfulness delta in judge-only rescoring indicates prior over-strict false positives; judge reliability should be interpreted with manual-audit calibration, not raw fail-rate alone.
+
+## 3) One-Pass Full Eval Suite
+
+### Quick path (assets already prepared)
 ```bash
 source .venv/bin/activate
-set -a; . ./.env; set +a
+bash scripts/run_full_eval_suite.sh
 ```
 
-Assumed services up:
-
-- Postgres
-- vLLM chat endpoint (`OPENAI_CHAT_BASE_URL`)
-- embedding endpoint (`OPENAI_EMBED_BASE_URL`)
-
-Recommended env for sandboxed Edgar cache:
-
+### Full rebuild + run (single command path)
 ```bash
-export HOME=/tmp
+source .venv/bin/activate
+PREPARE_ASSETS=1 bash scripts/run_full_eval_suite.sh
 ```
 
----
-
-## 1) Build/index the eval profile
-
-If you already have profile `eval_revamp_20260216` built and indexed, you can skip to Section 2.
-
-### 1A. Full rebuild (download -> markdown -> chunk -> index)
-
-Script used:
-
-- `agent_logs/20260216_153446_rebuild_eval_profile.sh`
-
-Run:
-
-```bash
-bash agent_logs/20260216_153446_rebuild_eval_profile.sh
-```
-
-Notable settings in this rebuild:
-
-- tickers: `AMD NVDA INTC MU GOOGL AAPL MSFT AMZN META TSLA`
-- `--year-cutoff 2025`
-- chunking: `markdown_table_preserving`, `max_tokens=1024`, `overlap=128`
-- index build uses:
-  - `--postgres-schema eval_revamp_20260216`
-  - `--context none`
-  - `--sparse-search-method bm25`
-
-### 1B. Index-only rebuild (if corpus files already exist)
-
-Script used:
-
-- `agent_logs/20260216_153752_rebuild_eval_index_only.sh`
-
-Run:
-
-```bash
-bash agent_logs/20260216_153752_rebuild_eval_index_only.sh
-```
-
----
-
-## 2) Generate and filter eval queries (including tolerance filtering)
-
-This is the part you asked about: yes, factual queries were filtered/annotated using Edgar validation and tolerance.
-
-### 2A. Initial raw query generation (pre-validation)
-
-Script:
-
-- `agent_logs/20260216_153955_generate_eval_set_revamp.sh`
-
-Output:
-
-- `eval/eval_queries_revamp_20260216.jsonl`
-
-### 2B. Edgar tolerance sweep (diagnostic)
-
-Script:
-
-- `agent_logs/20260216_164925_edgar_validation_tolerance_sweep.sh`
-
-Purpose:
-
-- measure how many factual candidates become `matched` as `--edgar-rel-tol` increases.
-
-Observed sweep points included: `0.15, 0.20, 0.25, 0.30, 0.40, 0.50`.
-
-### 2C. Build validated eval set at tolerance `0.5`
-
-Script:
-
-- `agent_logs/20260216_165030_generate_eval_set_validated_tol05_v3.sh`
-
-Run:
-
-```bash
-bash agent_logs/20260216_165030_generate_eval_set_validated_tol05_v3.sh
-```
-
-This produces:
-
-- `eval/eval_queries_revamp_validated_tol05_20260216.jsonl`
-
-Expected distribution:
-
-- total: `359`
-- kind counts:
-  - factual: `211`
-  - open_ended: `60`
-  - refusal: `24`
-  - distractor: `24`
-  - comparison: `40`
-- factual Edgar validation statuses:
-  - `matched: 24`
-  - `mismatched: 52`
-  - `skipped_unsupported_metric: 135`
-
-### 2D. Build balanced single-ticker subset used by v13
-
-Script:
-
-- `agent_logs/20260216_165235_build_eval_subsets_from_validated_tol05_v1.sh`
-
-Run:
-
-```bash
-bash agent_logs/20260216_165235_build_eval_subsets_from_validated_tol05_v1.sh
-```
-
-This creates:
-
-- `eval/eval_queries_revamp_single_balanced_validated_tol05_20260216.jsonl`
-- `eval/eval_queries_revamp_multi_comparison_validated_tol05_20260216.jsonl`
-
-Single subset composition (used for v13):
-
-- `factual=20`, `open_ended=15`, `refusal=8`, `distractor=7`
-- factual rows are matched-only in this subset (`20/20 matched`).
-
----
-
-## 3) Run v13 generation and baseline scoring
-
-Script:
-
-- `agent_logs/20260216_224650_eval_single_holistic_normal_v13_tools8_norefine_deploymatch.sh`
-
-Run:
-
-```bash
-bash agent_logs/20260216_224650_eval_single_holistic_normal_v13_tools8_norefine_deploymatch.sh
-```
-
-This uses:
-
-- eval queries: `eval/eval_queries_revamp_single_balanced_validated_tol05_20260216.jsonl`
-- mode: `normal`
-- refine: off
-- workers: `concurrency=8`, `parallel-backend=thread`
-- timeout: `240s`
-- finance tools: enabled (no `--disable-finance-tools`)
-- judge scoring context chars: `65000`
-
-Reference generated run:
-
-- `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch.20260216_224314`
-
-Reference score summary for this base v13 run:
-
-- `factual_correctness_v1` fail: `0.25`
-- `open_ended faithfulness_v1` fail: `0.5333333333`
-
----
-
-## 4) Re-score v13 with harness + factual judge v2
-
-Script:
-
-- `agent_logs/20260216_232620_rescore_v13_harness_plus_factual_prompt_v2.sh`
-
-Run:
-
-```bash
-bash agent_logs/20260216_232620_rescore_v13_harness_plus_factual_prompt_v2.sh
-```
-
-This copies v13 generations and re-scores with:
-
-- `judge-workers=6`
-- `judge-context-chars=80000`
-- factual judge v2 wording (evidence/context wins if `Expected` conflicts)
-
-Historical reference run:
-
-- `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430`
-
-Target summary:
-
-```json
-{
-  "factual_judge_fail_rates": {"factual_correctness_v1": 0.05, "helpfulness_v1": 0.0},
-  "open_ended_judge_fail_rates": {"faithfulness_v1": 0.26666666666666666, "helpfulness_v1": 0.0}
-}
-```
-
----
-
-## 5) Exact historical reproduction note (important)
-
-Current code includes later judge-context compaction behavior. A direct rerun of Section 4 may drift slightly.
-
-To exactly reproduce the historical `20260216_231430` summary, use the back-compat reproduction harness:
-
-- `agent_logs/20260217_002500_reproduce_v13_judgev2_notrunc.sh`
-
-Run:
-
-```bash
-bash agent_logs/20260217_002500_reproduce_v13_judgev2_notrunc.sh
-```
-
-What this does:
-
-- reuses the exact v13 generations
-- scores with `judge-context-chars=80000`
-- forces no per-chunk context truncation in judge context assembly (back-compat behavior)
-
-Verified exact-match run:
-
-- `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2_repro_notrunc.20260217_002146/score_summary.json`
-
-This file is JSON-equal to:
-
-- `eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430/score_summary.json`
-
----
-
-## 6) Quick verification commands
-
-Check target summary:
-
-```bash
-jq '.' eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430/score_summary.json
-```
-
-Check exact-match repro summary:
-
-```bash
-jq '.' eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2_repro_notrunc.20260217_002146/score_summary.json
-```
-
-Compare equality directly:
-
-```bash
-python3 - <<'PY'
-import json
-from pathlib import Path
-p1=Path('eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2.20260216_231430/score_summary.json')
-p2=Path('eval/results_revamp/single/eval_run.single_holistic_normal_v13_tools8_norefine_deploymatch_rescore_harness_judgev2_repro_notrunc.20260217_002146/score_summary.json')
-print(json.loads(p1.read_text()) == json.loads(p2.read_text()))
-PY
-```
-
-Expected output:
-
-- `True`
+What this executes:
+- optional data/query prep via `scripts/prepare_eval_assets.sh`
+- single suite generation + scoring
+- multi comparison suite generation + scoring
+- open-ended 200 stress generation + scoring
+- writes a consolidated manifest:
+  - `eval/results_revamp/full_suite/<run_group>.manifest.json`
+
+## 4) Query Generation Lineage (Including Tolerance Filtering)
+
+The current eval assets are generated with these scripts:
+- profile/index build: `agent_logs/scripts/eval/20260217_042950_build_combined_profile_chunk512.sh`
+- validated query generation: `agent_logs/scripts/eval/20260217_043020_generate_eval_set_combined512_validated_tol05.sh`
+- subset builder: `agent_logs/scripts/eval/20260217_043130_build_eval100_subsets_combined512_tol05.sh`
+- open-ended 200 pool: `agent_logs/scripts/eval/20260217_235950_generate_openended200_diverse_v1.sh`
+
+Key factual-label settings:
+- `--validate-factual-with-edgar`
+- `--edgar-rel-tol 0.5`
+- `--factual-candidate-multiplier 8`
+
+Current subset compositions:
+- single suite (`eval/eval_queries_combined512_single_balanced100_validated_tol05_20260217.jsonl`)
+  - factual `35`, open_ended `30`, refusal `20`, distractor `15`
+- multi suite (`eval/eval_queries_combined512_multi_comparison60_validated_tol05_20260217.jsonl`)
+  - comparison `60`
+- open stress (`eval/eval_queries_openended200_diverse_20260217_v1.jsonl`)
+  - open_ended `200`
+
+## 5) How To Read Metrics
+
+- All judge metrics are fail rates (`0` is best).
+- `factual_numeric_accuracy` is stricter numeric matching and should be read together with `factual_correctness_v1`.
+- Open-ended `faithfulness_v1` is currently the hardest metric; treat it jointly with manual audit precision.
+- Helpfulness is tracked independently (`helpfulness_v1`) across factual/open-ended/distractor/comparison and should not regress while optimizing faithfulness.
+
+## 6) Cohesive Improvement Story (Hiring-Manager Version)
+
+The eval pipeline was upgraded in four major steps:
+
+1. Metric coverage and ground truth quality
+- Added `helpfulness_v1` across eval kinds.
+- Added Edgar-backed factual validation and tolerance-aware label generation.
+- Standardized per-kind fail-rate reporting in `score_summary.json`.
+
+2. Runtime realism and throughput
+- Switched to tools-enabled holistic evaluation (not RAG-only ablations) for production match.
+- Moved to thread-based parallelism for local vLLM constraints, with 12-worker generation/judging.
+- Added timeout + retry controls for both generation and judging to handle local decode stalls.
+
+3. Retrieval/generation quality frontier
+- Ran chunk-size tradeoff study (256/512/1024/2048) and selected `512` as the best latency/faithfulness compromise.
+- Iterated open-ended answering/routing prompts with fixed infrastructure, improving faithfulness from early high-failure regimes to the best open100 iteration (`0.18` fail).
+
+4. Judge reliability discipline
+- Added decision-level audit harness (`scripts/judge_reliability.py`) with manual labels and dev/test evaluation.
+- Performed fail-case audits to separate judge errors from genuine model errors.
+- Calibrated faithfulness rubric toward material errors to reduce false-positive fail calls while preserving key-error sensitivity.
+
+Net result: the project now has a reproducible, end-to-end eval system with explicit data lineage, production-matched answering settings, and auditable judge calibration, instead of single-run ad hoc scoring.

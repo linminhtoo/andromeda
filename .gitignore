@@ -1,15 +1,16 @@
-data_before_refactor/
-data/**/*.html
-data/**/*.pdf
-data/**/*.json
-data/**/*.md
-debug_outputs/
-data/
-eval/
-logs/traces/
-notebooks/
-test-results/
+/data_before_refactor/
+/data/**/*.html
+/data/**/*.pdf
+/data/**/*.json
+/data/**/*.md
+/debug_outputs/
+/data/
+/eval/
+/logs/traces/
+/notebooks/
+/test-results/
 resume_without_bold.tex
+BENCHMARK_v0_bad.md
 
 # JS files are generated from TS files by the build process, so we ignore them.
 src/andromeda/static/js/
