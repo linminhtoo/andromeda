@@ -53,6 +53,7 @@ key/attribute existence, such as by using `dataclass`, `TypedDict` and class att
 * Before starting a big task, you should plan and document your plan as a markdown file in the `agent_logs/` folder.
 Give your plan file a descriptive and time-stamped name, such as `10Feb2026_refactor.md`.
     * IMPORTANT: start the plan name with the timestamp.
+    * IMPORTANT: place the plan in the appropriate subfolder, e.g. `agent_logs/plans/`.
 * Make sure to reference `agent_logs/LOGBOOK.md` to learn from previous lessons and avoid repeating past mistakes.
 * Implement the **entire phase**, not partial work
 * During refactors/migrations, when removing existing comments especially TODO, which is not relevant to the current task,
