@@ -2690,3 +2690,57 @@
 - Pending final repo checks at wrap-up:
   - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
   - `source .venv/bin/activate && pytest -vvv tests/`
+
+## 2026-02-18 - Heuristics Reduction Refactor (planner-first branch)
+
+### Scope
+- Branch context: `mlin/reduce-hardcoded-heuristics`.
+- Goal: make planner LLM the first-resort routing mechanism and demote regex/heuristic logic to fallback-only behavior.
+
+### What changed
+- Added fallback-only heuristics module:
+  - `src/andromeda/query/planner_heuristics.py`
+- Refactored runtime planner contract:
+  - `PlannerDecision` now uses multi-label `characteristics` for query traits.
+  - `resolve_tool_usage_from_decision(...)` now derives defaults from planner characteristics + explicit planner flags.
+  - Non-narrative market/financial queries default to tools-first (`use_rag=false` when tool flags are sufficient).
+  - Mixed narrative + tool queries can run both RAG and tools.
+- Added planner repair-on-failure behavior:
+  - `_planner_decision_from_llm(...)` now always attempts one repair call when the primary planner response is invalid JSON/schema **or** when the primary planner call errors.
+  - Heuristic fallback runs only after both planner attempts fail.
+- Disabled brittle heuristic stages in active runtime path by removing them from `runtime.py`:
+  - narrative query expansion
+  - narrative aspect coverage enforcement
+  - MMR diversity pass
+  - adaptive retrieval budget lowering
+- Reworked tests to match new behavior:
+  - `tests/test_query_runtime_tools_first.py` now validates planner-first routing, repair behavior, fallback-only heuristics usage, and yfinance-backed fallback ticker inference.
+
+### Validation
+- Ran targeted runtime suite:
+  - `source .venv/bin/activate && pytest -vvv tests/test_query_runtime_tools_first.py`
+  - Result: `14 passed`.
+
+### Notes
+- This refactor intentionally keeps heuristics available only as a resilience fallback (planner malformed/error path), not as a first-pass routing layer.
+
+### Post-refactor full checks
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> passed.
+- `source .venv/bin/activate && pytest -vvv tests/` -> passed (`114 passed`).
+
+## 2026-02-18 - Runtime test strategy correction (planner path realism)
+
+### Trigger
+- User review pointed out overuse of monkeypatching in `tests/test_query_runtime_tools_first.py`, especially for planner/ticker inference paths.
+
+### Changes made
+- Reworked tests to drive planner behavior through `RecordingLLM` structured outputs rather than monkeypatching `RAGService._planner_decision_from_llm`.
+- Added helper queue (`planner_outputs`) so tests exercise real planner parse/repair/fallback code paths inside `RAGService`.
+- Added live fallback integration-style coverage for ticker inference:
+  - `test_plan_query_fallback_infers_ticker_via_live_yfinance_search`
+  - Uses a vague company-name query and verifies `plan_query(...)` infers `NVDA` via yfinance-based fallback path when planner+repair are invalid.
+
+### Validation
+- `source .venv/bin/activate && pytest -vvv tests/test_query_runtime_tools_first.py` -> `14 passed`.
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> passed.
+- `source .venv/bin/activate && pytest -vvv tests/` -> `114 passed`.

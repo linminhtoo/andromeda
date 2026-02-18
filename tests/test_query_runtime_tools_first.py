@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
+
+import pytest
 
 from andromeda.dataclasses import DocChunk, ScoredChunk
-from andromeda.retrieval.db import IngestedCompanyRow, RetrievalFilters
 from andromeda.finance_tools import FinanceToolResult, FinanceToolStatus
 from andromeda.llm.generation_controls import resolve_generation_settings
-from andromeda.query.runtime import PlannerAction, PlannerDecision, QueryStatus, RAGService
+from andromeda.query.runtime import PlannerAction, PlannerDecision, QueryCharacteristic, QueryStatus, RAGService
+from andromeda.retrieval.db import IngestedCompanyRow, RetrievalFilters
 from tests.fakes import RecordingLLM
 
 
@@ -71,22 +75,6 @@ class FakeReranker:
         return hybrid[:top_k]
 
 
-def make_scored_chunk(*, chunk_id: str, section_path: str, text: str, score: float = 1.0) -> ScoredChunk:
-    return ScoredChunk(
-        chunk=DocChunk(
-            id=chunk_id,
-            doc_id="doc-AAPL",
-            text=text,
-            page_no=None,
-            headings=["Item 2"],
-            source="aapl_10q.md",
-            metadata={"retrieval_text": text, "section_path": section_path, "doc": {"ticker": "AAPL"}},
-        ),
-        score=score,
-        source="hybrid",
-    )
-
-
 @dataclass
 class FakeFinanceTools:
     calls: int = 0
@@ -116,8 +104,35 @@ class FakeFinanceTools:
         return "TOOL CONTEXT"
 
 
-def build_service(finance_tools: FakeFinanceTools) -> tuple[RAGService, FakeRetriever, RecordingLLM]:
-    llm = RecordingLLM(chat_fn=lambda _messages, _temperature, _response_model: "answer")
+PlannerOutput = PlannerDecision | str | Exception
+
+
+def planner_decision_payload(decision: PlannerDecision) -> str:
+    """
+    Serialize planner decision for fake LLM response.
+    """
+
+    return decision.model_dump_json()
+
+
+def build_service(
+    finance_tools: FakeFinanceTools, *, planner_outputs: list[PlannerOutput] | None = None, answer_text: str = "answer"
+) -> tuple[RAGService, FakeRetriever, RecordingLLM]:
+    outputs = deque(planner_outputs or [])
+
+    def chat_fn(_messages: list[dict[str, Any]], _temperature: float, response_model: Any) -> str:
+        if response_model is PlannerDecision:
+            if not outputs:
+                raise RuntimeError("No planner output configured for this test.")
+            item = outputs.popleft()
+            if isinstance(item, Exception):
+                raise item
+            if isinstance(item, PlannerDecision):
+                return planner_decision_payload(item)
+            return str(item)
+        return answer_text
+
+    llm = RecordingLLM(chat_fn=chat_fn)
     retriever = FakeRetriever()
     service = RAGService(
         llm=llm,
@@ -129,16 +144,27 @@ def build_service(finance_tools: FakeFinanceTools) -> tuple[RAGService, FakeRetr
     return service, retriever, llm
 
 
-def test_tools_only_plan_skips_rag_and_still_answers(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools()
-    service, retriever, llm = build_service(finance_tools)
+def generation_calls(llm: RecordingLLM) -> list[dict[str, Any]]:
+    """
+    Return non-planner LLM generation calls.
+    """
 
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_yfinance=True, use_edgar_financials=True
-        ),
+    return [call for call in llm.chat_calls if call["response_model"] is None]
+
+
+def test_tools_only_plan_skips_rag_and_still_answers() -> None:
+    finance_tools = FakeFinanceTools()
+    service, retriever, llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                use_rag=False,
+                use_yfinance=True,
+                use_edgar_financials=True,
+            )
+        ],
     )
 
     settings = resolve_generation_settings(mode="quick")
@@ -155,20 +181,24 @@ def test_tools_only_plan_skips_rag_and_still_answers(monkeypatch) -> None:
     assert len(response.tool_results) == 1
     assert response.tool_results[0].tool == "yfinance_get_ticker_info"
 
-    prompt_messages = llm.chat_calls[0]["messages"]
-    assert "Tool Context:\nTOOL CONTEXT" in prompt_messages[1]["content"]
+    calls = generation_calls(llm)
+    assert len(calls) == 1
+    assert "Tool Context:\nTOOL CONTEXT" in calls[0]["messages"][1]["content"]
 
 
-def test_tools_plus_rag_runs_retrieval(monkeypatch) -> None:
+def test_tools_plus_rag_runs_retrieval() -> None:
     finance_tools = FakeFinanceTools()
-    service, retriever, _llm = build_service(finance_tools)
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=True, use_edgar_financials=False
-        ),
+    service, retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                use_rag=True,
+                use_yfinance=True,
+                use_edgar_financials=False,
+            )
+        ],
     )
 
     settings = resolve_generation_settings(mode="quick")
@@ -183,125 +213,21 @@ def test_tools_plus_rag_runs_retrieval(monkeypatch) -> None:
     assert len(pipeline.reranked) == 1
 
 
-def test_adaptive_retrieval_budget_reduces_depth_for_simple_numeric_query(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No market data.")
-    service, retriever, _llm = build_service(finance_tools)
-    monkeypatch.setenv("FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET", "1")
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_yfinance=True, use_edgar_financials=False
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="normal", enable_refine=False)
-    pipeline = service.execute_query_pipeline(question="What is AAPL revenue value", settings=settings)
-
-    assert pipeline.planned.status == QueryStatus.ANSWERED
-    assert retriever.retrieve_calls == 1
-
-    adaptive_events = [event for event in pipeline.tool_trace if event.tool == "adaptive_retrieval_budget"]
-    assert len(adaptive_events) == 1
-    adaptive_args = adaptive_events[0].args
-    assert adaptive_args["old_top_k_retrieve"] == 40
-    assert adaptive_args["old_top_k_rerank"] == 25
-    assert adaptive_args["new_top_k_retrieve"] == 28
-    assert adaptive_args["new_top_k_rerank"] == 15
-
-    retrieve_events = [event for event in pipeline.tool_trace if event.tool == "retrieve_chunks"]
-    assert len(retrieve_events) == 1
-    assert retrieve_events[0].args["top_k_retrieve"] == 28
-
-
-def test_adaptive_retrieval_budget_does_not_apply_to_narrative_queries(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No tool data.")
-    service, retriever, _llm = build_service(finance_tools)
-    monkeypatch.setenv("FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET", "1")
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="normal", enable_refine=False)
-    pipeline = service.execute_query_pipeline(
-        question="Based on AAPL SEC filings, explain growth drivers and key risks.", settings=settings
-    )
-
-    assert pipeline.planned.status == QueryStatus.ANSWERED
-    assert retriever.retrieve_calls >= 1
-    assert all(event.tool != "adaptive_retrieval_budget" for event in pipeline.tool_trace)
-
-    retrieve_events = [event for event in pipeline.tool_trace if event.tool == "retrieve_chunks"]
-    assert len(retrieve_events) == 1
-    assert retrieve_events[0].args["top_k_retrieve"] == 40
-
-
-def test_narrative_query_expansion_can_be_disabled(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No tool data.")
-    service, retriever, _llm = build_service(finance_tools)
-    monkeypatch.setenv("FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION", "0")
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="normal", enable_refine=False)
-    pipeline = service.execute_query_pipeline(
-        question="Based on AAPL SEC filings, explain growth drivers and key risks.", settings=settings
-    )
-
-    retrieve_events = [event for event in pipeline.tool_trace if event.tool == "retrieve_chunks"]
-    assert len(retrieve_events) == 1
-    retrieval_queries = retrieve_events[0].args["retrieval_queries"]
-    assert retrieval_queries == ["Based on AAPL SEC filings, explain growth drivers and key risks."]
-    assert retriever.retrieve_calls == 1
-
-
-def test_narrative_aspect_coverage_can_be_disabled(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No tool data.")
-    service, retriever, _llm = build_service(finance_tools)
-    monkeypatch.setenv("FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE", "0")
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="normal", enable_refine=False)
-    pipeline = service.execute_query_pipeline(
-        question="Based on AAPL SEC filings, explain growth drivers and key risks.", settings=settings
-    )
-
-    assert retriever.retrieve_calls >= 1
-    assert all(event.tool != "enforce_narrative_aspect_coverage" for event in pipeline.tool_trace)
-    assert any(event.tool == "enforce_narrative_aspect_coverage_skip" for event in pipeline.tool_trace)
-
-
 def test_finance_tools_can_be_disabled_by_env(monkeypatch) -> None:
     finance_tools = FakeFinanceTools()
-    service, retriever, _llm = build_service(finance_tools)
-    monkeypatch.setenv("FINRAG_DISABLE_FINANCE_TOOLS", "1")
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=True, use_edgar_financials=True
-        ),
+    service, retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                use_rag=True,
+                use_yfinance=True,
+                use_edgar_financials=True,
+            )
+        ],
     )
+    monkeypatch.setenv("FINRAG_DISABLE_FINANCE_TOOLS", "1")
 
     settings = resolve_generation_settings(mode="quick")
     pipeline = service.execute_query_pipeline(question="What was AAPL revenue in the latest filing?", settings=settings)
@@ -312,22 +238,21 @@ def test_finance_tools_can_be_disabled_by_env(monkeypatch) -> None:
     assert any(event.tool == "finance_tools_skip" for event in pipeline.tool_trace)
 
 
-def test_multi_ticker_briefs_path_generates_parallel_briefs(monkeypatch) -> None:
+def test_multi_ticker_briefs_path_generates_parallel_briefs() -> None:
     finance_tools = FakeFinanceTools()
-    service, retriever, llm = build_service(finance_tools)
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER,
-            tickers=["NVDA", "GOOGL"],
-            use_rag=True,
-            use_yfinance=False,
-            use_edgar_financials=False,
-            use_per_ticker_retrieval=True,
-            use_multi_ticker_briefs=True,
-        ),
+    service, retriever, llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["NVDA", "GOOGL"],
+                use_rag=True,
+                use_yfinance=False,
+                use_edgar_financials=False,
+                use_per_ticker_retrieval=True,
+                use_multi_ticker_briefs=True,
+            )
+        ],
     )
 
     settings = resolve_generation_settings(mode="normal", enable_refine=False)
@@ -342,266 +267,22 @@ def test_multi_ticker_briefs_path_generates_parallel_briefs(monkeypatch) -> None
 
     response = service.response_from_pipeline(pipeline=pipeline, settings=settings)
     assert response.status == QueryStatus.ANSWERED
-    assert len(llm.chat_calls) >= 3
+    assert len(llm.chat_calls) >= 4
 
 
-def test_question_year_infers_retrieval_date_window(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools()
-    service, retriever, _llm = build_service(finance_tools)
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="quick")
-    pipeline = service.execute_query_pipeline(
-        question="Based on AAPL filings in 2025, summarize strategy and risks.", settings=settings
-    )
-
-    assert pipeline.planned.status == QueryStatus.ANSWERED
-    assert pipeline.planned.filters is not None
-    assert retriever.last_filing_date_from == "2025-01-01"
-    assert retriever.last_filing_date_to == "2025-12-31"
-    assert pipeline.planned.filters.filing_date_from is not None
-    assert pipeline.planned.filters.filing_date_from.isoformat() == "2025-01-01"
-    assert pipeline.planned.filters.filing_date_to is not None
-    assert pipeline.planned.filters.filing_date_to.isoformat() == "2025-12-31"
-    assert any(event.tool == "infer_question_date_window" for event in pipeline.tool_trace)
-
-
-def test_narrative_sec_question_forces_rag_and_disables_tools(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools()
-    service, retriever, _llm = build_service(finance_tools)
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_yfinance=True, use_edgar_financials=True
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="quick")
-    pipeline = service.execute_query_pipeline(
-        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.", settings=settings
-    )
-
-    assert pipeline.planned.status == QueryStatus.ANSWERED
-    assert pipeline.planned.use_rag is True
-    assert pipeline.planned.use_yfinance is False
-    assert pipeline.planned.use_edgar_financials is False
-    assert finance_tools.calls == 0
-    assert retriever.retrieve_calls >= 1
-
-
-def test_narrative_refine_runs_faithfulness_scrub_pass(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools()
-    service, _retriever, llm = build_service(finance_tools)
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="normal", enable_refine=True)
-    pipeline = service.execute_query_pipeline(
-        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.", settings=settings
-    )
-    _ = service.response_from_pipeline(pipeline=pipeline, settings=settings)
-
-    assert len(llm.chat_calls) == 3
-    assert any("Candidate answer:" in call["messages"][1]["content"] for call in llm.chat_calls)
-
-
-def test_narrative_question_injects_prompt_extra_guidance(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools()
-    service, _retriever, llm = build_service(finance_tools)
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=False, use_edgar_financials=False
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="quick", enable_refine=False)
-    pipeline = service.execute_query_pipeline(
-        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.", settings=settings
-    )
-    _ = service.response_from_pipeline(pipeline=pipeline, settings=settings)
-
-    assert len(llm.chat_calls) == 1
-    assert "Narrative evidence mode" in llm.chat_calls[0]["messages"][0]["content"]
-    assert "If a requested point has no explicit quote support" in llm.chat_calls[0]["messages"][0]["content"]
-
-
-def test_context_coverage_prompt_extra_flags_missing_growth() -> None:
-    finance_tools = FakeFinanceTools()
-    service, _retriever, _llm = build_service(finance_tools)
-
-    risk_only = make_scored_chunk(
-        chunk_id="risk-only",
-        section_path="PART II > ITEM 1A. RISK FACTORS",
-        text="Regulatory and cybersecurity risks may adversely affect the business.",
-    )
-    extra = service.context_coverage_prompt_extra(
-        question="Based on AAPL filings, what are key growth drivers and risks?", reranked=[risk_only]
-    )
-
-    assert extra is not None
-    assert "does not contain explicit growth/strategy evidence" in extra
-
-
-def test_narrative_aspect_coverage_adds_growth_chunk_when_question_needs_growth_and_risk() -> None:
-    finance_tools = FakeFinanceTools()
-    service, _retriever, _llm = build_service(finance_tools)
-    risk_a = make_scored_chunk(
-        chunk_id="risk-a",
-        section_path="PART II > ITEM 1A. RISK FACTORS",
-        text="Regulatory risks could adversely affect results.",
-        score=2.0,
-    )
-    risk_b = make_scored_chunk(
-        chunk_id="risk-b",
-        section_path="PART II > ITEM 1A. RISK FACTORS",
-        text="Cybersecurity risks remain elevated.",
-        score=1.8,
-    )
-    growth = make_scored_chunk(
-        chunk_id="growth-a",
-        section_path="PART I > ITEM 2. RESULTS OF OPERATIONS > REVENUE",
-        text="Revenue growth was driven by cloud demand and enterprise expansion.",
-        score=1.0,
-    )
-
-    out = service._enforce_narrative_aspect_coverage(
-        question="Based on AAPL filings, what are key growth drivers and key risks?",
-        primary=[risk_a, risk_b],
-        fallback=[risk_a, risk_b, growth],
-        limit=3,
-    )
-
-    out_ids = {item.chunk.id for item in out}
-    assert "growth-a" in out_ids
-    assert "risk-a" in out_ids or "risk-b" in out_ids
-
-
-def test_narrative_retrieval_queries_expand_growth_and_risk() -> None:
-    finance_tools = FakeFinanceTools()
-    service, _retriever, _llm = build_service(finance_tools)
-
-    queries = service.narrative_retrieval_queries(
-        "Based on AAPL filings in 2025, what are key growth drivers and key risks?"
-    )
-    assert len(queries) == 3
-    assert "growth drivers" in queries[1].lower() or "strategy" in queries[1].lower()
-    assert "risk factors" in queries[2].lower()
-
-
-def test_apply_mmr_diversity_prefers_diverse_chunks() -> None:
-    finance_tools = FakeFinanceTools()
-    service, _retriever, _llm = build_service(finance_tools)
-
-    risk_a = make_scored_chunk(
-        chunk_id="risk-a",
-        section_path="PART II > ITEM 1A. RISK FACTORS",
-        text="Regulatory risk factors include antitrust privacy and cybersecurity penalties.",
-        score=3.0,
-    )
-    risk_b = make_scored_chunk(
-        chunk_id="risk-b",
-        section_path="PART II > ITEM 1A. RISK FACTORS",
-        text="Regulatory risk factors include antitrust privacy and cybersecurity fines.",
-        score=2.8,
-    )
-    growth = make_scored_chunk(
-        chunk_id="growth-a",
-        section_path="PART I > ITEM 2. RESULTS OF OPERATIONS > REVENUE",
-        text="Revenue expansion was driven by cloud adoption and enterprise demand.",
-        score=2.9,
-    )
-
-    out = service.apply_mmr_diversity(candidates=[risk_a, risk_b, growth], limit=2, lambda_mult=0.78)
-    out_ids = {item.chunk.id for item in out}
-
-    assert "risk-a" in out_ids
-    assert "growth-a" in out_ids
-
-
-def test_mmr_diversity_flag_defaults_off(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools()
-    service, _retriever, _llm = build_service(finance_tools)
-
-    monkeypatch.delenv("FINRAG_ENABLE_MMR_DIVERSITY", raising=False)
-    assert service.mmr_diversity_enabled() is False
-
-    monkeypatch.setenv("FINRAG_ENABLE_MMR_DIVERSITY", "1")
-    assert service.mmr_diversity_enabled() is True
-
-
-def test_simple_numeric_question_forces_tools_first(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools()
-    service, retriever, _llm = build_service(finance_tools)
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_yfinance=True, use_edgar_financials=False
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="quick")
-    pipeline = service.execute_query_pipeline(question="What is AAPL market cap right now?", settings=settings)
-
-    assert pipeline.planned.status == QueryStatus.ANSWERED
-    assert pipeline.planned.use_rag is False
-    assert pipeline.planned.use_yfinance is True
-    assert pipeline.planned.use_edgar_financials is False
-    assert finance_tools.calls == 1
-    assert retriever.retrieve_calls == 0
-
-
-def test_period_scoped_numeric_question_uses_rag_for_grounding(monkeypatch) -> None:
-    finance_tools = FakeFinanceTools()
-    service, retriever, _llm = build_service(finance_tools)
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_yfinance=False, use_edgar_financials=True
-        ),
-    )
-
-    settings = resolve_generation_settings(mode="quick")
-    pipeline = service.execute_query_pipeline(question="What was AAPL net income in 2025?", settings=settings)
-
-    assert pipeline.planned.status == QueryStatus.ANSWERED
-    assert pipeline.planned.use_rag is True
-    assert pipeline.planned.use_edgar_financials is True
-    assert finance_tools.calls == 1
-    assert retriever.retrieve_calls == 1
-
-
-def test_tools_only_plan_falls_back_to_rag_when_tools_have_no_actionable_data(monkeypatch) -> None:
+def test_tools_only_plan_falls_back_to_rag_when_tools_have_no_actionable_data() -> None:
     finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No metrics available.", payload=None)
-    service, retriever, _llm = build_service(finance_tools)
-
-    monkeypatch.setattr(
-        service,
-        "_planner_decision_from_llm",
-        lambda **_kwargs: PlannerDecision(
-            action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_yfinance=True, use_edgar_financials=False
-        ),
+    service, retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                use_rag=False,
+                use_yfinance=True,
+                use_edgar_financials=False,
+            )
+        ],
     )
 
     settings = resolve_generation_settings(mode="quick")
@@ -612,3 +293,233 @@ def test_tools_only_plan_falls_back_to_rag_when_tools_have_no_actionable_data(mo
     assert finance_tools.calls == 1
     assert retriever.retrieve_calls == 1
     assert any(event.tool == "rag_function_fallback" for event in pipeline.tool_trace)
+
+
+def test_planner_invalid_json_triggers_repair_call() -> None:
+    finance_tools = FakeFinanceTools()
+    service, _retriever, llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            "definitely not valid planner json",
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                characteristics=[QueryCharacteristic.MARKET_DATA],
+                use_rag=False,
+                use_yfinance=True,
+                use_edgar_financials=False,
+            ),
+        ],
+    )
+
+    decision = service._planner_decision_from_llm(
+        question="What is AAPL market cap?",
+        companies=service.list_ingested_companies(),
+        explicit_tickers=["AAPL"],
+        filing_date_from=None,
+        filing_date_to=None,
+    )
+
+    assert decision is not None
+    assert decision.action == PlannerAction.ANSWER
+    assert decision.tickers == ["AAPL"]
+    assert len(llm.chat_calls) == 2
+    assert "You repair malformed planner outputs" in llm.chat_calls[1]["messages"][0]["content"]
+
+
+def test_planner_error_triggers_repair_call() -> None:
+    finance_tools = FakeFinanceTools()
+    service, _retriever, llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            RuntimeError("planner endpoint timeout"),
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                characteristics=[QueryCharacteristic.FINANCIAL_METRICS, QueryCharacteristic.PERIOD_SCOPED],
+                use_rag=False,
+                use_yfinance=False,
+                use_edgar_financials=True,
+            ),
+        ],
+    )
+
+    decision = service._planner_decision_from_llm(
+        question="What was AAPL net income in 2025?",
+        companies=service.list_ingested_companies(),
+        explicit_tickers=["AAPL"],
+        filing_date_from=None,
+        filing_date_to=None,
+    )
+
+    assert decision is not None
+    assert decision.use_edgar_financials is True
+    assert len(llm.chat_calls) == 2
+    assert "You repair malformed planner outputs" in llm.chat_calls[1]["messages"][0]["content"]
+
+
+def test_plan_query_uses_heuristics_only_after_planner_and_repair_failure() -> None:
+    finance_tools = FakeFinanceTools()
+    service, retriever, _llm = build_service(finance_tools, planner_outputs=["not-json", "still-not-json"])
+
+    planned = service.plan_query(
+        question="What was AAPL net income in 2025?", tickers=["AAPL"], filing_date_from=None, filing_date_to=None
+    )
+
+    assert planned.status == QueryStatus.ANSWERED
+    assert planned.tickers == ["AAPL"]
+    assert planned.filters is not None
+    assert retriever.last_filing_date_from == "2025-01-01"
+    assert retriever.last_filing_date_to == "2025-12-31"
+    fallback_events = [event for event in planned.tool_trace if event.tool == "planner_fallback"]
+    assert len(fallback_events) == 1
+
+
+def test_planner_characteristics_route_tools_first_without_rag() -> None:
+    finance_tools = FakeFinanceTools()
+    service, retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                characteristics=[QueryCharacteristic.MARKET_DATA, QueryCharacteristic.SIMPLE_NUMERIC],
+                use_rag=None,
+                use_yfinance=None,
+                use_edgar_financials=None,
+            )
+        ],
+    )
+
+    settings = resolve_generation_settings(mode="quick")
+    pipeline = service.execute_query_pipeline(question="What is AAPL market cap right now?", settings=settings)
+
+    assert pipeline.planned.use_rag is False
+    assert pipeline.planned.use_yfinance is True
+    assert pipeline.planned.use_edgar_financials is False
+    assert retriever.retrieve_calls == 0
+
+
+def test_planner_characteristics_route_rag_for_narrative() -> None:
+    finance_tools = FakeFinanceTools()
+    service, retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                characteristics=[QueryCharacteristic.FILING_NARRATIVE],
+                use_rag=None,
+                use_yfinance=None,
+                use_edgar_financials=None,
+            )
+        ],
+    )
+
+    settings = resolve_generation_settings(mode="quick")
+    pipeline = service.execute_query_pipeline(
+        question="Based on AAPL filings, summarize strategy and risk factors.", settings=settings
+    )
+
+    assert pipeline.planned.use_rag is True
+    assert pipeline.planned.use_yfinance is False
+    assert pipeline.planned.use_edgar_financials is False
+    assert finance_tools.calls == 0
+    assert retriever.retrieve_calls == 1
+
+
+def test_planner_mixed_characteristics_use_tools_and_rag() -> None:
+    finance_tools = FakeFinanceTools()
+    service, retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                characteristics=[QueryCharacteristic.FILING_NARRATIVE, QueryCharacteristic.MARKET_DATA],
+                use_rag=None,
+                use_yfinance=None,
+                use_edgar_financials=None,
+            )
+        ],
+    )
+
+    settings = resolve_generation_settings(mode="quick")
+    pipeline = service.execute_query_pipeline(
+        question="Explain AAPL strategy from filings and include current valuation context.", settings=settings
+    )
+
+    assert pipeline.planned.use_rag is True
+    assert pipeline.planned.use_yfinance is True
+    assert finance_tools.calls == 1
+    assert retriever.retrieve_calls == 1
+
+
+def test_period_scoped_financial_metrics_stay_tools_first_when_non_narrative() -> None:
+    finance_tools = FakeFinanceTools()
+    service, retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                characteristics=[QueryCharacteristic.FINANCIAL_METRICS, QueryCharacteristic.PERIOD_SCOPED],
+                use_rag=None,
+                use_yfinance=None,
+                use_edgar_financials=None,
+            )
+        ],
+    )
+
+    settings = resolve_generation_settings(mode="quick")
+    pipeline = service.execute_query_pipeline(question="What was AAPL net income in 2025?", settings=settings)
+
+    assert pipeline.planned.use_rag is False
+    assert pipeline.planned.use_edgar_financials is True
+    assert finance_tools.calls == 1
+    assert retriever.retrieve_calls == 0
+
+
+def test_prompt_extra_injects_evidence_discipline() -> None:
+    finance_tools = FakeFinanceTools()
+    service, _retriever, llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["AAPL"],
+                use_rag=True,
+                use_yfinance=False,
+                use_edgar_financials=False,
+            )
+        ],
+    )
+
+    settings = resolve_generation_settings(mode="quick", enable_refine=False)
+    pipeline = service.execute_query_pipeline(
+        question="Based on AAPL SEC filings in 2025, summarize strategy and key risks.", settings=settings
+    )
+    _ = service.response_from_pipeline(pipeline=pipeline, settings=settings)
+
+    calls = generation_calls(llm)
+    assert len(calls) == 1
+    assert "Evidence discipline mode" in calls[0]["messages"][0]["content"]
+    assert "If a requested point has no explicit quote support" in calls[0]["messages"][0]["content"]
+
+
+def test_plan_query_fallback_infers_ticker_via_live_yfinance_search() -> None:
+    finance_tools = FakeFinanceTools()
+    service, _retriever, _llm = build_service(finance_tools, planner_outputs=["bad-json", "still-bad-json"])
+
+    planned = service.plan_query(
+        question="How does NVIDIA Corporation look right now as an investment?",
+        tickers=None,
+        filing_date_from=None,
+        filing_date_to=None,
+    )
+
+    if planned.status != QueryStatus.ANSWERED:
+        pytest.skip("Live yfinance search was unavailable in this environment.")
+
+    assert "NVDA" in planned.tickers
+    assert any(event.tool == "planner_fallback" for event in planned.tool_trace)

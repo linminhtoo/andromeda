@@ -8,7 +8,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, cast
 
@@ -30,6 +30,7 @@ from andromeda.llm.qa import (
     build_refine_prompt,
     build_ticker_brief_prompt,
 )
+from andromeda.query.planner_heuristics import PlannerFallbackHeuristics
 from andromeda.retrieval.retriever import CrossEncoderReranker, PostgresHybridRetriever
 from andromeda.llm.streaming import TextDeltaBatcher, iter_chat_deltas, ndjson_bytes
 
@@ -46,8 +47,16 @@ class PlannerAction(str, Enum):
     REFUSED = "refused"
 
 
-class RetrievalBudgetProfile(str, Enum):
-    DEFAULT = "default"
+class QueryCharacteristic(str, Enum):
+    """
+    Non-mutually-exclusive planner labels describing query traits.
+    """
+
+    COMPARISON = "comparison"
+    MARKET_DATA = "market_data"
+    FINANCIAL_METRICS = "financial_metrics"
+    FILING_NARRATIVE = "filing_narrative"
+    PERIOD_SCOPED = "period_scoped"
     SIMPLE_NUMERIC = "simple_numeric"
 
 
@@ -165,6 +174,7 @@ async def stream_text_stage(
 class PlannerDecision(BaseModel):
     action: PlannerAction = PlannerAction.ANSWER
     tickers: list[str] = Field(default_factory=list)
+    characteristics: list[QueryCharacteristic] = Field(default_factory=list)
     filing_date_from: str | None = None
     filing_date_to: str | None = None
     clarifying_question: str | None = None
@@ -388,592 +398,42 @@ class RAGService:
         return QueryStatus.ANSWERED
 
     @staticmethod
-    def _question_mentions_comparison(question: str) -> bool:
-        lowered = question.lower()
-        tokens = (" compare ", " versus ", " vs ", " relative to ", " better investment ", " which is better ", " or ")
-        padded = f" {lowered} "
-        return any(token in padded for token in tokens)
-
-    @staticmethod
-    def _question_mentions_market_data(question: str) -> bool:
-        lowered = f" {question.lower()} "
-        tokens = (
-            " stock price ",
-            " price ",
-            " chart ",
-            " valuation ",
-            " market cap ",
-            " news ",
-            " return ",
-            " performance ",
-            " volume ",
-            " pe ratio ",
-            " p/e ",
-            " dividend ",
-        )
-        return any(token in lowered for token in tokens)
-
-    @staticmethod
-    def _question_mentions_financial_metrics(question: str) -> bool:
-        lowered = f" {question.lower()} "
-        tokens = (
-            " revenue ",
-            " net income ",
-            " gross margin ",
-            " operating margin ",
-            " eps ",
-            " balance sheet ",
-            " cash flow ",
-            " free cash flow ",
-            " assets ",
-            " liabilities ",
-            " equity ",
-            " ratio ",
-            " debt ",
-        )
-        return any(token in lowered for token in tokens)
-
-    @staticmethod
-    def _question_has_explicit_period_scope(question: str) -> bool:
-        lowered = f" {question.lower()} "
-        if re.search(r"\b20\d{2}\b", lowered):
-            return True
-        tokens = (
-            " quarter ",
-            " q1 ",
-            " q2 ",
-            " q3 ",
-            " q4 ",
-            " fiscal year ",
-            " fy ",
-            " year ended ",
-            " as of ",
-            " during ",
-            " in the latest filing ",
-            " latest filing ",
-        )
-        return any(token in lowered for token in tokens)
-
-    @staticmethod
-    def _infer_filing_date_window_from_question(question: str) -> tuple[str, str] | None:
-        """
-        Infer an inclusive filing-date window from explicit years in the question.
-        """
-
-        years = sorted({int(token) for token in re.findall(r"\b(20\d{2})\b", question)})
-        if not years:
-            return None
-        start_year = years[0]
-        end_year = years[-1]
-        if end_year - start_year > 6:
-            return None
-        return f"{start_year:04d}-01-01", f"{end_year:04d}-12-31"
-
-    @staticmethod
-    def _question_mentions_filing_narrative(question: str) -> bool:
-        lowered = f" {question.lower()} "
-        tokens = (
-            " sec filing ",
-            " sec filings ",
-            " long-term investment ",
-            " long term investment ",
-            " investment thesis ",
-            " bull-vs-bear ",
-            " bull vs bear ",
-            " business trajectory ",
-            " growth driver ",
-            " growth drivers ",
-            " growth opportunities ",
-            " key risks ",
-            " material risks ",
-            " downside risks ",
-            " competitive positioning ",
-            " competitive position ",
-            " risk factor ",
-            " management discussion ",
-            " management commentary ",
-            " md&a ",
-            " discuss ",
-            " explain ",
-            " guidance ",
-            " outlook ",
-            " strategy ",
-            " segment ",
-            " capital allocation ",
-            " margin resilience ",
-            " cash-flow quality ",
-            " cash flow quality ",
-            " operational bottleneck ",
-            " operational bottlenecks ",
-            " dependencies ",
-            " demand trends ",
-            " customer behavior ",
-            " trade-off ",
-            " trade-offs ",
-            " why ",
-        )
-        return any(token in lowered for token in tokens)
-
-    @staticmethod
-    def _question_mentions_growth_or_strategy(question: str) -> bool:
-        lowered = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
-        tokens = (
-            " growth ",
-            " growth driver ",
-            " growth drivers ",
-            " growth opportunities ",
-            " strategy ",
-            " competitive positioning ",
-            " positioning ",
-            " business trajectory ",
-            " long-term investment ",
-            " long term investment ",
-            " outlook ",
-            " opportunities ",
-            " investment thesis ",
-            " capital allocation ",
-        )
-        return any(token in lowered for token in tokens)
-
-    @staticmethod
-    def _question_mentions_risk_dimension(question: str) -> bool:
-        lowered = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
-        tokens = (" risk ", " risks ", " uncertainty ", " uncertainties ", " downside ", " bottleneck ")
-        return any(token in lowered for token in tokens)
-
-    @staticmethod
-    def _question_mentions_capital_margin_or_cashflow(question: str) -> bool:
-        lowered = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
-        tokens = (
-            " capital allocation ",
-            " capex ",
-            " buyback ",
-            " buybacks ",
-            " debt ",
-            " margin ",
-            " margins ",
-            " profitability ",
-            " operating leverage ",
-            " cash flow ",
-            " cashflow ",
-            " working capital ",
-            " trade off ",
-            " trade offs ",
-            " trade-off ",
-            " trade-offs ",
-        )
-        return any(token in lowered for token in tokens)
-
-    @staticmethod
-    def _question_mentions_execution_or_demand(question: str) -> bool:
-        lowered = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
-        tokens = (
-            " execution ",
-            " operational ",
-            " dependency ",
-            " dependencies ",
-            " bottleneck ",
-            " bottlenecks ",
-            " demand trend ",
-            " demand trends ",
-            " customer behavior ",
-            " customer demand ",
-            " supply chain ",
-            " constraint ",
-            " constraints ",
-        )
-        return any(token in lowered for token in tokens)
-
-    def narrative_retrieval_queries(self, question: str) -> list[str]:
-        """
-        Build diversified retrieval queries for filing-narrative questions.
-        """
-
-        base = question.strip()
-        if not base:
-            return []
-        queries = [base]
-        if self._question_mentions_growth_or_strategy(question):
-            queries.append(
-                f"{base} Focus on explicitly stated growth drivers, strategy, revenue, segment performance, and demand."
-            )
-        if self._question_mentions_risk_dimension(question):
-            queries.append(f"{base} Focus on explicitly stated risk factors, uncertainties, and constraints.")
-        if self._question_mentions_capital_margin_or_cashflow(question):
-            queries.append(
-                f"{base} Focus on explicit capital allocation, profitability, margin, and cash-flow disclosures."
-            )
-        if self._question_mentions_execution_or_demand(question):
-            queries.append(
-                f"{base} Focus on explicit execution dependencies, demand commentary, and operational constraints."
-            )
-
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for query in queries:
-            key = query.lower().strip()
-            if not key or key in seen:
+    def _characteristics_set(decision: PlannerDecision) -> set[QueryCharacteristic]:
+        out: set[QueryCharacteristic] = set()
+        for item in decision.characteristics:
+            if isinstance(item, QueryCharacteristic):
+                out.add(item)
                 continue
-            seen.add(key)
-            deduped.append(query)
-        return deduped[:4]
-
-    @staticmethod
-    def _chunk_text_signature(sc: ScoredChunk) -> str:
-        parsed = chunk_metadata_from_value(sc.chunk.metadata)
-        section = parsed.section_path or ""
-        headings = " ".join(sc.chunk.headings or [])
-        text = (sc.chunk.text or "")[:300]
-        return f"{section} {headings} {text}".lower()
-
-    def _is_risk_chunk(self, sc: ScoredChunk) -> bool:
-        text = self._chunk_text_signature(sc)
-        tokens = ("risk factor", "risks", "uncertaint", "adverse", "regulatory", "cyber")
-        return any(token in text for token in tokens)
-
-    def _is_growth_or_strategy_chunk(self, sc: ScoredChunk) -> bool:
-        text = self._chunk_text_signature(sc)
-        if self._is_risk_chunk(sc):
-            return False
-        tokens = (
-            "results of operations",
-            "revenue",
-            "segment",
-            "overview",
-            "management discussion",
-            "md&a",
-            "strategy",
-            "competitive",
-            "growth",
-            "demand",
-            "business",
-        )
-        return any(token in text for token in tokens)
-
-    def _enforce_narrative_aspect_coverage(
-        self, *, question: str, primary: list[ScoredChunk], fallback: list[ScoredChunk], limit: int
-    ) -> list[ScoredChunk]:
-        """
-        Ensure narrative contexts include both growth/strategy and risk evidence when requested.
-        """
-
-        need_growth = self._question_mentions_growth_or_strategy(question)
-        need_risk = self._question_mentions_risk_dimension(question)
-        if not need_growth and not need_risk:
-            return primary[:limit]
-
-        selected: list[ScoredChunk] = []
-        selected_ids: set[str] = set()
-
-        def add_first_matching(pool: list[ScoredChunk], predicate) -> bool:
-            for sc in pool:
-                if not predicate(sc):
-                    continue
-                chunk_id = sc.chunk.id
-                if chunk_id in selected_ids:
-                    continue
-                selected.append(sc)
-                selected_ids.add(chunk_id)
-                return True
-            return False
-
-        if need_growth:
-            if not add_first_matching(primary, self._is_growth_or_strategy_chunk):
-                add_first_matching(fallback, self._is_growth_or_strategy_chunk)
-        if need_risk:
-            if not add_first_matching(primary, self._is_risk_chunk):
-                add_first_matching(fallback, self._is_risk_chunk)
-
-        combined = self._dedupe_scored_chunks(primary + fallback)
-        for sc in combined:
-            if len(selected) >= limit:
-                break
-            if sc.chunk.id in selected_ids:
+            try:
+                out.add(QueryCharacteristic(str(item).strip().lower()))
+            except ValueError:
                 continue
-            selected.append(sc)
-            selected_ids.add(sc.chunk.id)
+        return out
 
-        selected.sort(key=lambda item: item.score, reverse=True)
-        return selected[:limit]
-
-    @staticmethod
-    def _mmr_token_set(sc: ScoredChunk) -> set[str]:
-        parsed = chunk_metadata_from_value(sc.chunk.metadata)
-        text = parsed.retrieval_text or sc.chunk.text or ""
-        text = str(text).lower()
-        tokens = re.findall(r"[a-z0-9]+", text)
-        stopwords = {
-            "the",
-            "and",
-            "for",
-            "with",
-            "that",
-            "this",
-            "from",
-            "were",
-            "are",
-            "was",
-            "have",
-            "has",
-            "had",
-            "into",
-            "than",
-            "over",
-            "under",
-            "their",
-            "they",
-            "its",
-            "our",
-            "you",
-            "your",
-            "also",
-            "may",
-            "can",
-            "could",
-            "would",
-            "should",
-            "will",
-        }
-        return {token for token in tokens[:140] if len(token) > 2 and token not in stopwords}
-
-    @staticmethod
-    def _token_jaccard_similarity(left: set[str], right: set[str]) -> float:
-        if not left or not right:
-            return 0.0
-        inter = len(left.intersection(right))
-        union = len(left.union(right))
-        if union <= 0:
-            return 0.0
-        return inter / union
-
-    def apply_mmr_diversity(
-        self, *, candidates: list[ScoredChunk], limit: int, lambda_mult: float = 0.78
-    ) -> list[ScoredChunk]:
-        """
-        Select a relevance-diverse subset using a bounded MMR pass.
-        """
-
-        if limit <= 0:
-            return []
-        if len(candidates) <= 1:
-            return candidates[:limit]
-
-        pool_size = max(limit, min(len(candidates), limit * 3))
-        pool = candidates[:pool_size]
-        token_sets = [self._mmr_token_set(sc) for sc in pool]
-        raw_scores = [float(sc.score) for sc in pool]
-        score_min = min(raw_scores)
-        score_max = max(raw_scores)
-
-        def normalized_score(index: int) -> float:
-            raw = raw_scores[index]
-            if score_max <= score_min:
-                return 1.0
-            return (raw - score_min) / (score_max - score_min)
-
-        selected_indices: list[int] = []
-        remaining = set(range(len(pool)))
-        while remaining and len(selected_indices) < limit:
-            best_idx: int | None = None
-            best_value = float("-inf")
-            for idx in remaining:
-                relevance = normalized_score(idx)
-                if not selected_indices:
-                    novelty_penalty = 0.0
-                else:
-                    novelty_penalty = max(
-                        self._token_jaccard_similarity(token_sets[idx], token_sets[sel]) for sel in selected_indices
-                    )
-                mmr_value = (lambda_mult * relevance) - ((1.0 - lambda_mult) * novelty_penalty)
-                if mmr_value > best_value:
-                    best_value = mmr_value
-                    best_idx = idx
-            if best_idx is None:
-                break
-            remaining.remove(best_idx)
-            selected_indices.append(best_idx)
-
-        out = [pool[idx] for idx in selected_indices]
-        out.sort(key=lambda item: item.score, reverse=True)
-        return out[:limit]
-
-    @staticmethod
-    def mmr_diversity_enabled() -> bool:
-        """
-        Return whether experimental MMR chunk diversity is enabled.
-        """
-
-        raw = (os.getenv("FINRAG_ENABLE_MMR_DIVERSITY") or "0").strip().lower()
-        return raw in {"1", "true", "yes", "on"}
-
-    @staticmethod
-    def narrative_query_expansion_enabled() -> bool:
-        """
-        Return whether diversified narrative retrieval-query expansion is enabled.
-        """
-
-        raw = (os.getenv("FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION") or "0").strip().lower()
-        return raw in {"1", "true", "yes", "on"}
-
-    @staticmethod
-    def narrative_aspect_coverage_enabled() -> bool:
-        """
-        Return whether narrative growth/risk aspect-coverage enforcement is enabled.
-
-        FIXME: feels too brittle.
-        """
-
-        raw = (os.getenv("FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE") or "1").strip().lower()
-        return raw in {"1", "true", "yes", "on"}
-
-    def _question_is_simple_numeric_metric(self, question: str) -> bool:
-        """
-        Return whether the question is a direct numeric metric lookup.
-        """
-
-        mentions_metrics = self._question_mentions_financial_metrics(question) or self._question_mentions_market_data(
-            question
-        )
-        mentions_narrative = self._question_mentions_filing_narrative(question)
-        mentions_comparison = self._question_mentions_comparison(question)
-        has_period_scope = self._question_has_explicit_period_scope(question)
-        lowered = f" {question.lower()} "
-        has_explicit_numeric_intent = any(
-            token in lowered
-            for token in (
-                " what was ",
-                " what is ",
-                " how much ",
-                " amount ",
-                " total ",
-                " value ",
-                " figure ",
-                " give me ",
-            )
-        )
-        token_count = len(question.split())
-        return (
-            mentions_metrics
-            and not mentions_narrative
-            and not mentions_comparison
-            and not has_period_scope
-            and has_explicit_numeric_intent
-            and token_count <= 24
-        )
-
-    @staticmethod
-    def adaptive_retrieval_budget_enabled() -> bool:
-        """
-        Return whether adaptive retrieval-budget scheduling is enabled.
-
-        FIXME: feels brittle.
-        """
-
-        raw = (os.getenv("FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET") or "1").strip().lower()
-        return raw in {"1", "true", "yes", "on"}
-
-    def apply_adaptive_retrieval_budget(
-        self, *, question: str, settings: GenerationSettings, planned: PlannedQuery
-    ) -> tuple[GenerationSettings, ToolTraceEvent | None]:
-        """
-        Adjust retrieval depth for simple tool-first numeric lookups.
-
-        The scheduler only reduces retrieval/rerank depth for low-complexity
-        numeric questions and leaves all other queries unchanged.
-        """
-
-        if not self.adaptive_retrieval_budget_enabled():
-            return settings, None
-
-        if not self._question_is_simple_numeric_metric(question):
-            return settings, None
-
-        if len(planned.tickers) > 1 or self._question_mentions_comparison(question):
-            return settings, None
-
-        if self._question_mentions_filing_narrative(question):
-            return settings, None
-
-        target_top_k_retrieve = max(12, int(round(settings.top_k_retrieve * 0.70)))
-        target_top_k_rerank = max(8, int(round(settings.top_k_rerank * 0.60)))
-        target_top_k_retrieve = min(settings.top_k_retrieve, target_top_k_retrieve)
-        target_top_k_rerank = min(settings.top_k_rerank, target_top_k_rerank, target_top_k_retrieve)
-
-        if target_top_k_retrieve == settings.top_k_retrieve and target_top_k_rerank == settings.top_k_rerank:
-            return settings, None
-
-        adjusted_settings = replace(settings, top_k_retrieve=target_top_k_retrieve, top_k_rerank=target_top_k_rerank)
-        trace_event = self._tool_event(
-            "adaptive_retrieval_budget",
-            args={
-                "profile": RetrievalBudgetProfile.SIMPLE_NUMERIC.value,
-                "old_top_k_retrieve": settings.top_k_retrieve,
-                "old_top_k_rerank": settings.top_k_rerank,
-                "new_top_k_retrieve": adjusted_settings.top_k_retrieve,
-                "new_top_k_rerank": adjusted_settings.top_k_rerank,
-            },
-            result="Applied adaptive retrieval budget for simple numeric query.",
-        )
-        return adjusted_settings, trace_event
-
-    def resolve_tool_usage_from_decision(self, *, question: str, decision: PlannerDecision) -> tuple[bool, bool, bool]:
+    def resolve_tool_usage_from_decision(self, *, decision: PlannerDecision) -> tuple[bool, bool, bool]:
         """
         Resolve planner tool flags into effective `use_rag`, `use_yfinance`, and `use_edgar_financials`.
-
-        FIXME
-        -----
-        - do not use regex/text heuristics to classify question.
-        - we should use planner LLM to do this.
-        - the heuristics should only be a fallback when planner LLM output was an error (eg invalid JSON format)
         """
 
-        simple_numeric_query = self._question_is_simple_numeric_metric(question)
-        narrative_query = self._question_mentions_filing_narrative(question)
-        period_scoped_metric_query = self._question_mentions_financial_metrics(
-            question
-        ) and self._question_has_explicit_period_scope(question)
-        market_data_query = self._question_mentions_market_data(question)
-        financial_metric_query = self._question_mentions_financial_metrics(question)
+        characteristics = self._characteristics_set(decision)
+        market_data_query = QueryCharacteristic.MARKET_DATA in characteristics
+        financial_metric_query = QueryCharacteristic.FINANCIAL_METRICS in characteristics
+        narrative_query = QueryCharacteristic.FILING_NARRATIVE in characteristics
 
         use_yfinance = bool(decision.use_yfinance) if decision.use_yfinance is not None else market_data_query
         use_edgar_financials = (
-            bool(decision.use_edgar_financials) if decision.use_edgar_financials is not None else financial_metric_query
+            bool(decision.use_edgar_financials)
+            if decision.use_edgar_financials is not None
+            else (financial_metric_query)
         )
-
-        if simple_numeric_query:
-            # For direct numeric lookup queries, choose the most relevant finance tool first.
-            if market_data_query and not financial_metric_query:
-                use_yfinance = True
-                use_edgar_financials = False
-            elif financial_metric_query and not market_data_query:
-                use_yfinance = False
-                use_edgar_financials = True
-            else:
-                use_yfinance = market_data_query
-                use_edgar_financials = financial_metric_query or not market_data_query
-        elif narrative_query:
-            # For filing-narrative requests, avoid mixing in external market/tool facts.
-            use_edgar_financials = False
-            use_yfinance = False
 
         if decision.use_rag is not None:
             use_rag = bool(decision.use_rag)
-        else:
-            if simple_numeric_query:
-                use_rag = False
-            elif narrative_query:
-                use_rag = True
-            elif use_yfinance or use_edgar_financials:
-                use_rag = False
-            else:
-                use_rag = True
-
-        if simple_numeric_query:
-            use_rag = False
         elif narrative_query:
             use_rag = True
-        elif period_scoped_metric_query:
-            # Period-specific metric questions usually need filing chunks for exact timeframe grounding.
+        elif use_yfinance or use_edgar_financials:
+            use_rag = False
+        else:
             use_rag = True
 
         if not use_rag and not use_yfinance and not use_edgar_financials:
@@ -981,33 +441,7 @@ class RAGService:
         return use_rag, use_yfinance, use_edgar_financials
 
     def _infer_tickers_from_question(self, question: str, companies: list[dict[str, str]]) -> list[str]:
-        # FIXME: extremely brittle logic. should use yfinance python library to get tickers from company name.
-        # TODO: use yfinance instead.
-        # see: https://deepwiki.com/ranaroussi/yfinance/4.3-search-and-lookup-functionality
-        inferred: list[str] = []
-        seen: set[str] = set()
-        known_tickers = {str(item["ticker"]).strip().upper() for item in companies if "ticker" in item}
-
-        upper_question = question.upper()
-        ticker_pattern = re.compile(r"\b[A-Z][A-Z0-9.-]{0,11}\b")
-        for match in ticker_pattern.findall(upper_question):
-            token = match.strip().upper()
-            if token in known_tickers and token not in seen:
-                seen.add(token)
-                inferred.append(token)
-
-        lowered_question = " " + re.sub(r"[^a-z0-9]+", " ", question.lower()).strip() + " "
-        for item in companies:
-            ticker = str(item["ticker"]).strip().upper()
-            company = str(item["company"]).strip()
-            if not ticker or not company:
-                continue
-            normalized_company = " " + re.sub(r"[^a-z0-9]+", " ", company.lower()).strip() + " "
-            if normalized_company.strip() and normalized_company in lowered_question and ticker not in seen:
-                seen.add(ticker)
-                inferred.append(ticker)
-
-        return inferred
+        return PlannerFallbackHeuristics.infer_tickers_from_question(question=question, companies=companies)
 
     @staticmethod
     def default_clarifying_question() -> str:
@@ -1025,13 +459,34 @@ class RAGService:
         filing_date_from: str | None,
         filing_date_to: str | None,
     ) -> list[ChatMessage]:
-        preview_limit = 250
+        preview_limit = 500
         preview_rows = companies[:preview_limit]
         catalog_lines = [f"- {row['ticker']}: {row['company']}" for row in preview_rows]
         catalog = "\n".join(catalog_lines) if catalog_lines else "- (none)"
         explicit = ", ".join(explicit_tickers) if explicit_tickers else "(none)"
         date_from = filing_date_from or "(none)"
         date_to = filing_date_to or "(none)"
+
+        characteristics = ", ".join([item.value for item in QueryCharacteristic])
+        few_shot = (
+            "Few-shot examples (non-mutually-exclusive characteristics):\n"
+            '- Q: "What is AAPL market cap right now?"\n'
+            "  characteristics: [market_data, simple_numeric]\n"
+            "  use_rag=false, use_yfinance=true, use_edgar_financials=false\n"
+            '- Q: "What was AAPL net income in 2025?"\n'
+            "  characteristics: [financial_metrics, period_scoped]\n"
+            "  use_rag=false, use_yfinance=false, use_edgar_financials=true\n"
+            '- Q: "Compare NVDA vs AMD on growth drivers and key risks from filings."\n'
+            "  characteristics: [comparison, filing_narrative]\n"
+            "  use_rag=true, use_yfinance=false, use_edgar_financials=false\n"
+            "  use_per_ticker_retrieval=true, use_multi_ticker_briefs=true\n"
+            '- Q: "Explain MSFT strategy from filings and include latest valuation context."\n'
+            "  characteristics: [filing_narrative, market_data]\n"
+            "  use_rag=true, use_yfinance=true, use_edgar_financials=false\n"
+            '- Q: "Summarize TSLA strategy and competitive positioning from recent SEC filings."\n'
+            "  characteristics: [filing_narrative]\n"
+            "  use_rag=true, use_yfinance=false, use_edgar_financials=false\n"
+        )
 
         return [
             {
@@ -1049,14 +504,24 @@ class RAGService:
                     "- use_yfinance=true for market price/news/valuation style requests.\n"
                     "- use_edgar_financials=true for direct SEC financial metric/statement requests.\n"
                     "- use_rag=true when filing narrative evidence is needed from retrieved chunks.\n"
-                    "- use_rag=false for simple direct metric queries answerable from finance tools.\n"
+                    "- use_rag=false when finance tools are sufficient for direct numeric questions.\n"
+                    "- For mixed requests (narrative + market/financial facts), enable both RAG and tools.\n"
                     "IMPORTANT: only clarify if absolutely needed. Do NOT keep asking clarifying questions."
                     "If no date range is provided, just set None for both date_from and date_to in the output - "
                     "do NOT ask for clarification on dates unless the question explicitly references time (like 'latest').\n"
+                    f"6) Set characteristics as a list from this enum: [{characteristics}].\n"
+                    "Characteristics are multi-label and non-mutually-exclusive.\n"
                     "Return only JSON with keys:\n"
-                    "action, tickers, filing_date_from, filing_date_to, clarifying_question, refusal_reason, "
+                    "action, tickers, characteristics, filing_date_from, filing_date_to, clarifying_question, refusal_reason, "
                     "use_per_ticker_retrieval, use_multi_ticker_briefs, use_rag, use_yfinance, use_edgar_financials."
+                    f"{few_shot}"
                 ),
+            },
+            {
+                "role": "system",
+                "content": (
+                    f"Indexed ticker catalog (first {len(preview_rows)} of {len(companies)}):\n{catalog}\n\n"
+                )
             },
             {
                 "role": "user",
@@ -1065,8 +530,48 @@ class RAGService:
                     f"Explicit request tickers: {explicit}\n"
                     f"Explicit filing_date_from: {date_from}\n"
                     f"Explicit filing_date_to: {date_to}\n\n"
-                    f"Indexed ticker catalog (first {len(preview_rows)} of {len(companies)}):\n{catalog}\n"
                 ),
+            },
+        ]
+
+    @staticmethod
+    def _planner_decision_from_raw(raw: str) -> PlannerDecision | None:
+        """
+        Parse planner output into structured decision.
+        """
+
+        try:
+            return PlannerDecision.model_validate_json(raw)
+        except ValidationError:
+            pass
+        payload = RAGService._extract_json_object(raw)
+        if payload is None:
+            return None
+        try:
+            return PlannerDecision.model_validate(payload)
+        except ValidationError:
+            return None
+
+    def _planner_repair_prompt(self, *, question: str, broken_output: str) -> list[ChatMessage]:
+        """
+        Build repair prompt to recover structured planner JSON.
+        """
+
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You repair malformed planner outputs.\n"
+                    "Return strictly valid JSON matching this schema keys:\n"
+                    "action, tickers, characteristics, filing_date_from, filing_date_to, clarifying_question, "
+                    "refusal_reason, use_per_ticker_retrieval, use_multi_ticker_briefs, use_rag, use_yfinance, "
+                    "use_edgar_financials.\n"
+                    "Do not add commentary or markdown."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (f"Original question:\n{question}\n\nMalformed planner output to repair:\n{broken_output}"),
             },
         ]
 
@@ -1086,20 +591,23 @@ class RAGService:
             filing_date_from=filing_date_from,
             filing_date_to=filing_date_to,
         )
+        raw_primary = ""
+        repair_input = ""
         try:
-            raw = self.llm.chat(prompt, temperature=0.0, max_tokens=700, response_model=PlannerDecision)
+            raw_primary = self.llm.chat(prompt, temperature=0.0, max_tokens=700, response_model=PlannerDecision)
+            primary_decision = self._planner_decision_from_raw(raw_primary)
+            if primary_decision is not None:
+                return primary_decision
+            repair_input = raw_primary
+        except Exception as exc:  # noqa: BLE001
+            repair_input = f"Planner call failed with error: {exc!s}"
+
+        repair_prompt = self._planner_repair_prompt(question=question, broken_output=repair_input)
+        try:
+            raw_repair = self.llm.chat(repair_prompt, temperature=0.0, max_tokens=700, response_model=PlannerDecision)
         except Exception:  # noqa: BLE001
             return None
-        try:
-            return PlannerDecision.model_validate_json(raw)
-        except ValidationError:
-            payload = self._extract_json_object(raw)
-            if payload is None:
-                return None
-            try:
-                return PlannerDecision.model_validate(payload)
-            except ValidationError:
-                return None
+        return self._planner_decision_from_raw(raw_repair)
 
     def plan_query(
         self,
@@ -1149,34 +657,46 @@ class RAGService:
             filing_date_to=filing_date_to,
         )
         if decision is None:
-            # this happens when the planner LLM fails to produce valid output
-            # we fall back to a simple deterministic planner that infers tickers
-            # from the question and ignores date filters, but still allows refusal if no tickers can be inferred
+            fallback_characteristics = PlannerFallbackHeuristics.classify_characteristics(question)
             inferred = self._infer_tickers_from_question(question, companies)
+            fallback_date_window = PlannerFallbackHeuristics.infer_filing_date_window_from_question(question)
+            fallback_date_from = filing_date_from
+            fallback_date_to = filing_date_to
+            if fallback_date_window is not None:
+                if fallback_date_from is None:
+                    fallback_date_from = fallback_date_window[0]
+                if fallback_date_to is None:
+                    fallback_date_to = fallback_date_window[1]
             action = QueryStatus.ANSWERED if explicit_tickers or inferred else QueryStatus.CLARIFICATION_REQUIRED
             decision = PlannerDecision(
                 action=(
                     PlannerAction.ANSWER if action == QueryStatus.ANSWERED else PlannerAction.CLARIFICATION_REQUIRED
                 ),
                 tickers=(explicit_tickers if explicit_tickers else inferred),
+                characteristics=[QueryCharacteristic(item) for item in fallback_characteristics],
+                filing_date_from=fallback_date_from,
+                filing_date_to=fallback_date_to,
                 clarifying_question=(
                     self.default_clarifying_question() if action == QueryStatus.CLARIFICATION_REQUIRED else None
                 ),
                 use_per_ticker_retrieval=(
                     True if len(explicit_tickers if explicit_tickers else inferred) > 1 else None
                 ),
-                use_multi_ticker_briefs=(
-                    True
-                    if len(explicit_tickers if explicit_tickers else inferred) > 1
-                    and self._question_mentions_comparison(question)
-                    else None
+                use_multi_ticker_briefs=(True if len(explicit_tickers if explicit_tickers else inferred) > 1 else None),
+                use_rag=(True if QueryCharacteristic.FILING_NARRATIVE.value in fallback_characteristics else None),
+                use_yfinance=(True if QueryCharacteristic.MARKET_DATA.value in fallback_characteristics else None),
+                use_edgar_financials=(
+                    True if QueryCharacteristic.FINANCIAL_METRICS.value in fallback_characteristics else None
                 ),
             )
             trace.append(
                 self._tool_event(
                     "planner_fallback",
-                    args={"inferred_tickers": list(decision.tickers)},
-                    result="Planner JSON parse failed; used deterministic fallback planner.",
+                    args={
+                        "inferred_tickers": list(decision.tickers),
+                        "characteristics": [item.value for item in decision.characteristics],
+                    },
+                    result="Planner output invalid after repair; used heuristic fallback planner.",
                 )
             )
         else:
@@ -1186,6 +706,7 @@ class RAGService:
                     args={
                         "raw_action": decision.action.value,
                         "tickers": [str(t) for t in decision.tickers],
+                        "characteristics": [item.value for item in decision.characteristics],
                         "use_rag": decision.use_rag,
                         "use_yfinance": decision.use_yfinance,
                         "use_edgar_financials": decision.use_edgar_financials,
@@ -1197,9 +718,7 @@ class RAGService:
 
         action = self._normalize_plan_action(decision.action)
         planned_tickers = explicit_tickers or self._normalize_ticker_list(decision.tickers)
-        use_rag, use_yfinance, use_edgar_financials = self.resolve_tool_usage_from_decision(
-            question=question, decision=decision
-        )
+        use_rag, use_yfinance, use_edgar_financials = self.resolve_tool_usage_from_decision(decision=decision)
 
         if action == QueryStatus.REFUSED:
             reason = (
@@ -1273,29 +792,20 @@ class RAGService:
 
         resolved_filing_date_from = filing_date_from if filing_date_from is not None else decision.filing_date_from
         resolved_filing_date_to = filing_date_to if filing_date_to is not None else decision.filing_date_to
-        if resolved_filing_date_from is None and resolved_filing_date_to is None:
-            inferred_window = self._infer_filing_date_window_from_question(question)
-            if inferred_window is not None:
-                resolved_filing_date_from, resolved_filing_date_to = inferred_window
-                trace.append(
-                    self._tool_event(
-                        "infer_question_date_window",
-                        args={"filing_date_from": resolved_filing_date_from, "filing_date_to": resolved_filing_date_to},
-                        result="Applied year window inferred from question text.",
-                    )
-                )
         filters = self.build_retrieval_filters(
             tickers=planned_tickers, filing_date_from=resolved_filing_date_from, filing_date_to=resolved_filing_date_to
         )
+        characteristics = self._characteristics_set(decision)
+        comparison_characteristic = QueryCharacteristic.COMPARISON in characteristics
         use_per_ticker = (
             bool(decision.use_per_ticker_retrieval)
             if decision.use_per_ticker_retrieval is not None
-            else (len(planned_tickers) > 1 or self._question_mentions_comparison(question))
+            else (len(planned_tickers) > 1 or comparison_characteristic)
         )
         use_multi_ticker_briefs = (
             bool(decision.use_multi_ticker_briefs)
             if decision.use_multi_ticker_briefs is not None
-            else (use_per_ticker and len(planned_tickers) > 1 and self._question_mentions_comparison(question))
+            else (use_per_ticker and len(planned_tickers) > 1)
         )
         trace.append(
             self._tool_event(
@@ -1477,12 +987,6 @@ class RAGService:
 
         if not planned.use_per_ticker_retrieval or len(planned.tickers) <= 1:
             retrieval_queries = [question]
-            if (
-                planned.use_rag
-                and self._question_mentions_filing_narrative(question)
-                and self.narrative_query_expansion_enabled()
-            ):
-                retrieval_queries = self.narrative_retrieval_queries(question)
 
             if len(retrieval_queries) == 1:
                 hybrid = self.retrieve_chunks(question, settings, filters=planned.filters)
@@ -1666,7 +1170,8 @@ class RAGService:
         Return whether strict factual scrub should run for the final answer.
         """
 
-        return self._question_mentions_filing_narrative(question)
+        _ = question
+        return True
 
     def scrub_answer_for_faithfulness(
         self,
@@ -1778,37 +1283,6 @@ class RAGService:
                     result=f"Adjusted reranked list to {len(reranked)} chunks with ticker coverage constraints.",
                 )
             )
-        if planned.use_rag and self._question_mentions_filing_narrative(question):
-            if self.mmr_diversity_enabled() and (
-                self._question_mentions_growth_or_strategy(question) or self._question_mentions_risk_dimension(question)
-            ):
-                reranked = self.apply_mmr_diversity(candidates=reranked, limit=settings.top_k_rerank)
-                trace.append(
-                    self._tool_event(
-                        "apply_mmr_diversity",
-                        args={"top_k_rerank": settings.top_k_rerank, "lambda_mult": 0.78},
-                        result=f"Applied bounded MMR diversification (size={len(reranked)}).",
-                    )
-                )
-            if self.narrative_aspect_coverage_enabled():
-                reranked = self._enforce_narrative_aspect_coverage(
-                    question=question, primary=reranked, fallback=hybrid, limit=settings.top_k_rerank
-                )
-                trace.append(
-                    self._tool_event(
-                        "enforce_narrative_aspect_coverage",
-                        args={"top_k_rerank": settings.top_k_rerank},
-                        result=(f"Adjusted reranked list for narrative aspect coverage (size={len(reranked)})."),
-                    )
-                )
-            else:
-                trace.append(
-                    self._tool_event(
-                        "enforce_narrative_aspect_coverage_skip",
-                        args={"reason": "disabled_by_env"},
-                        result="Skipped narrative aspect coverage enforcement per environment toggle.",
-                    )
-                )
         return reranked, trace
 
     def execute_query_pipeline(
@@ -1869,12 +1343,6 @@ class RAGService:
             use_rag_for_execution = True
 
         retrieval_settings = settings
-        if use_rag_for_execution:
-            retrieval_settings, adaptive_budget_trace = self.apply_adaptive_retrieval_budget(
-                question=question, settings=settings, planned=planned
-            )
-            if adaptive_budget_trace is not None:
-                execution.tool_trace.append(adaptive_budget_trace)
 
         if planned.use_multi_ticker_briefs and len(planned.tickers) > 1:
             retrieve_t0 = time.perf_counter()
@@ -2028,28 +1496,26 @@ class RAGService:
         Build targeted system prompt guidance for the current question.
         """
 
-        if self._question_mentions_filing_narrative(question):
-            years = self._requested_years(question)
-            year_scope_note = ""
-            if years:
-                year_scope_note = (
-                    "- Year-scope handling: when year(s) are requested, explicitly separate filing year from covered "
-                    "period before any analysis.\n"
-                    "- Never convert filing-year references into full-year performance claims unless cited evidence "
-                    "explicitly reports that year as the covered period.\n"
-                    "- If year scope is ambiguous, make the ambiguity explicit and avoid unsupported assumptions.\n"
-                )
-            return (
-                "Narrative evidence mode:\n"
-                "- Output at most 6 material points.\n"
-                "- For each point, include: point, why it matters, and one short direct quote with citation.\n"
-                "- Do not include a point unless a direct quote supports it.\n"
-                "- Keep quotes short and verbatim from context/tool context.\n"
-                "- Never cite doc/chunk IDs that are absent from the provided context headers.\n"
-                "- If a requested point has no explicit quote support, state: "
-                "'Not explicitly stated in the provided context.'\n" + year_scope_note
+        years = self._requested_years(question)
+        year_scope_note = ""
+        if years:
+            year_scope_note = (
+                "- Year-scope handling: when year(s) are requested, explicitly separate filing year from covered "
+                "period before any analysis.\n"
+                "- Never convert filing-year references into full-year performance claims unless cited evidence "
+                "explicitly reports that year as the covered period.\n"
+                "- If year scope is ambiguous, make the ambiguity explicit and avoid unsupported assumptions.\n"
             )
-        return None
+        return (
+            "Evidence discipline mode:\n"
+            "- Output at most 6 material points.\n"
+            "- For each point, include: point, why it matters, and one short direct quote with citation.\n"
+            "- Do not include a point unless a direct quote supports it.\n"
+            "- Keep quotes short and verbatim from context/tool context.\n"
+            "- Never cite doc/chunk IDs that are absent from the provided context headers.\n"
+            "- If a requested point has no explicit quote support, state: "
+            "'Not explicitly stated in the provided context.'\n" + year_scope_note
+        )
 
     @staticmethod
     def _requested_years(question: str) -> list[int]:
@@ -2127,29 +1593,12 @@ class RAGService:
 
     def context_coverage_prompt_extra(self, *, question: str, reranked: list[ScoredChunk]) -> str | None:
         """
-        Add missing-evidence guardrails when requested narrative dimensions are absent in context.
+        Add period-scope guardrails from retrieved metadata.
         """
 
         if not reranked:
             return None
-        if not self._question_mentions_filing_narrative(question):
-            return None
-
-        top_window = reranked[: min(len(reranked), 14)]
-        growth_count = sum(1 for sc in top_window if self._is_growth_or_strategy_chunk(sc))
-        risk_count = sum(1 for sc in top_window if self._is_risk_chunk(sc))
-
         lines: list[str] = []
-        if self._question_mentions_growth_or_strategy(question) and growth_count == 0:
-            lines.append(
-                "Retrieved context does not contain explicit growth/strategy evidence; state that these points are "
-                "not explicitly stated unless directly quoted."
-            )
-        if self._question_mentions_risk_dimension(question) and risk_count == 0:
-            lines.append(
-                "Retrieved context does not contain explicit risk disclosures; state that risk details are not "
-                "explicitly stated unless directly quoted."
-            )
         period_scope_extra = self.period_scope_prompt_extra(question=question, reranked=reranked)
         if period_scope_extra:
             lines.append(period_scope_extra)

@@ -8,12 +8,25 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
+- Planner fallback heuristics module at `src/andromeda/query/planner_heuristics.py` to isolate regex/keyword logic from normal runtime flow.
 
 ### Changed
+- Query planning is now planner-first with explicit multi-label `characteristics` in `PlannerDecision`; routing defaults derive from planner output rather than question regex checks.
+- Planner execution now attempts a structured-output repair call after both malformed planner JSON and primary planner call errors; heuristic fallback is used only if both attempts fail.
+- Fallback ticker inference now uses `yfinance.Search(...)` and intersects results with indexed tickers instead of regex ticker extraction.
+- Tools-first routing defaults were tightened:
+  - non-narrative market/financial metric requests default to finance tools without mandatory RAG,
+  - mixed narrative + market/financial requests can enable both RAG and tools.
 
 ### Fixed
 
 ### Removed
+- Removed brittle runtime heuristic stages from active execution path:
+  - narrative retrieval-query expansion
+  - narrative aspect-coverage chunk post-processing
+  - MMR chunk diversification
+  - adaptive retrieval-budget lowering
+- Removed corresponding heuristic helper implementations from `src/andromeda/query/runtime.py`; fallback heuristics now live in the dedicated planner fallback module.
 
 ### Dev
 
