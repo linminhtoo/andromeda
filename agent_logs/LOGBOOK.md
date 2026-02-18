@@ -2465,3 +2465,47 @@
 ### Validation
 - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> pass.
 - `source .venv/bin/activate && pytest -vvv tests/` -> pass (`116 passed, 2 warnings`).
+
+## 2026-02-18 - Chunk-size ablation rerun (80k judge) + latency/accuracy frontier completion
+
+### Context
+- Previous chunk-size study used a lower judge context and needed replay under current best settings.
+- Frontier run completed generation/scoring but collector failed due malformed manifest CSV rows when settings contained commas.
+
+### What changed
+- Re-ran chunk-size ablation with deploy-matched settings and expanded suite context:
+  - script: `agent_logs/scripts/eval/20260218_060200_rerun_chunk_size_ablation_expanded80k.sh`
+  - settings: tools enabled, no refine, `judge_context_chars=80000`, generation/judge timeout `350s`, retries `1`, workers `12`.
+  - outputs:
+    - `eval/results_revamp/chunk_size_study_v2_expanded80k/chunk_size_metrics_expanded80k.md`
+    - `eval/results_revamp/chunk_size_study_v2_expanded80k/chunk_size_tradeoff_expanded80k.png`
+- Hardened frontier harness to avoid CSV corruption and recover existing malformed manifests:
+  - `agent_logs/scripts/eval/20260218_060600_run_latency_accuracy_frontier.sh` now writes manifest rows with Python `csv.writer`.
+  - `agent_logs/scripts/eval/20260218_060700_collect_latency_accuracy_frontier.py` now parses both quoted rows and older malformed rows.
+- Generated frontier artifacts successfully from completed runs:
+  - `eval/results_revamp/latency_accuracy_frontier_20260218/latency_accuracy_frontier_metrics.md`
+  - `eval/results_revamp/latency_accuracy_frontier_20260218/latency_accuracy_frontier.png`
+
+### Results
+- Chunk-size rerun (single100 + multi60, judge 80k):
+  - `256`: qps `0.1321`, p95 `180216.6ms`, factual fail `0.0857`, open faith fail `0.0000`, comparison fail `0.0333`
+  - `512`: qps `0.1385`, p95 `162625.8ms`, factual fail `0.0571`, open faith fail `0.0667`, comparison fail `0.0167`
+  - `1024`: qps `0.1376`, p95 `158374.3ms`, factual fail `0.1143`, open faith fail `0.1000`, comparison fail `0.0333`
+  - `2048`: qps `0.1360`, p95 `152962.3ms`, factual fail `0.0857`, open faith fail `0.2000`, comparison fail `0.0167`
+- Latency/accuracy frontier (7 settings):
+  - Best factual correctness fail: `effort_high` and `temperature_0` at `0.0286`.
+  - Best open faithfulness fail: `effort_low` at `0.0000` on this suite.
+  - Worst factual fail among tested knobs: `retrieve_high_60_35` at `0.1714` with lower throughput.
+
+### Observations
+- Increasing retrieval depth to `60/35` did not help this benchmark; quality and throughput both worsened.
+- Lower retrieval depth (`30/18`) improved throughput and factual fail vs baseline but regressed open-ended faithfulness relative to `effort_high`.
+- Tight token budget (`32k/16k`) reduced throughput significantly (`0.1077 qps`) without headline quality wins.
+
+### Actionable next steps
+- Keep chunk size `512` as default for deploy-matched evals.
+- Use `effort_high` as quality-oriented operating point and `effort_low` as speed-oriented point; avoid raising retrieval depth above normal by default.
+- Add additional frontier axes next: rerank off/on and max-chunks budget sweep.
+
+- Commit:
+  - `8a0f67a`
