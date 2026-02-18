@@ -2561,3 +2561,23 @@
   - `strategy_adaptive_off`
   - `strategy_mmr_on_adaptive_off`
 - Re-collect frontier metrics and compare effect sizes against the measured judge variance band before drawing conclusions.
+
+## 2026-02-18 - Retrieval strategy frontier: adaptive-off condition completed
+
+### Completed condition
+- `strategy_adaptive_off` (`mmr=0, adaptive=0`) completed for single100 + multi60.
+- Script: `agent_logs/scripts/eval/20260218_114300_extend_latency_accuracy_frontier_mmr_adaptive.sh`
+
+### Metrics snapshot (collector)
+- `qps=0.1213`
+- `p95=178635.1ms`
+- `factual_fail=0.0286`
+- `open_faith_fail=0.1000`
+- `comparison_fail=0.0333`
+
+### Comparison to completed retrieval-strategy rows
+- vs `strategy_baseline_flags_explicit` (`mmr=0, adaptive=1`): lower factual fail (`0.1429 -> 0.0286`) but worse open faithfulness (`0.0000 -> 0.1000`) and worse comparison (`0.0167 -> 0.0333`), with slower throughput (`0.1396 -> 0.1213`).
+- vs `strategy_mmr_on` (`mmr=1, adaptive=1`): slower and weaker on open-faithfulness/comparison.
+
+### In-flight
+- Final retrieval-strategy condition now running: `strategy_mmr_on_adaptive_off`.
