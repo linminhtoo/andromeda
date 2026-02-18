@@ -2509,3 +2509,55 @@
 
 - Commit:
   - `8a0f67a`
+
+## 2026-02-18 - Judge variance quantification + retrieval strategy frontier extension (in-progress)
+
+### Scope
+- Continued autonomous benchmark loop on deploy-matched eval settings (`normal`, tools enabled, no refine, judge context 80k, timeout 350s, retries 1, workers 12).
+- Added new runtime knobs and benchmark harness for retrieval-strategy tradeoff mapping.
+
+### Code changes
+- Commit: `cf5aad4`
+- Updated:
+  - `src/andromeda/query/runtime.py`
+    - Added environment toggles:
+      - `FINRAG_ENABLE_NARRATIVE_QUERY_EXPANSION` (default on)
+      - `FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE` (default on)
+    - Wired toggles into retrieval/rerank path for narrative queries.
+  - `tests/test_query_runtime_tools_first.py`
+    - Added coverage tests for narrative query expansion/aspect-coverage toggles.
+- New benchmark scripts:
+  - `agent_logs/scripts/eval/20260218_114300_extend_latency_accuracy_frontier_mmr_adaptive.sh`
+  - `agent_logs/scripts/eval/20260218_115700_extend_latency_accuracy_frontier_narrative_flags.sh`
+
+### Completed experiments
+1. Judge stability rescore (6 independent judge passes, fixed generations)
+- Script: `agent_logs/scripts/eval/20260218_113300_judge_stability_rescore_single100_baseline.sh`
+- Output:
+  - `eval/results_revamp/judge_stability_single100_baseline_20260218/judge_stability_replicate_metrics.md`
+- Key variance bands:
+  - `factual_fail`: mean `0.0619`, std `0.0106`, range `[0.0571, 0.0857]`
+  - `open_faith_fail`: mean `0.1000`, std `0.0272`, range `[0.0667, 0.1333]`
+- Observation:
+  - Judge noise is large enough that sub-3.3pp open-faithfulness deltas are likely inconclusive on this set.
+
+2. Frontier extension: retrieval strategy axis (partial completion)
+- Script running: `agent_logs/scripts/eval/20260218_114300_extend_latency_accuracy_frontier_mmr_adaptive.sh`
+- Completed rows so far:
+  - `strategy_baseline_flags_explicit` (`mmr=0, adaptive=1`)
+    - `qps=0.1396`, `p95=154830.0ms`, factual fail `0.1429`, open faith fail `0.0000`, comparison fail `0.0167`
+  - `strategy_mmr_on` (`mmr=1, adaptive=1`)
+    - `qps=0.1072`, `p95=158371.7ms`, factual fail `0.0000`, open faith fail `0.0333`, comparison fail `0.0167`
+- Updated aggregate artifacts:
+  - `eval/results_revamp/latency_accuracy_frontier_20260218/latency_accuracy_frontier_metrics.md`
+  - `eval/results_revamp/latency_accuracy_frontier_20260218/latency_accuracy_frontier.png`
+
+### In-flight status at log time
+- Current active condition: `strategy_adaptive_off` (single run in progress).
+- One prior long-tail decode event was handled by configured timeout+retry (no manual interruption required).
+
+### Next actions
+- Finish remaining frontier conditions in the same script:
+  - `strategy_adaptive_off`
+  - `strategy_mmr_on_adaptive_off`
+- Re-collect frontier metrics and compare effect sizes against the measured judge variance band before drawing conclusions.
