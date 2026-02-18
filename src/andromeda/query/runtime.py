@@ -819,6 +819,8 @@ class RAGService:
     def narrative_aspect_coverage_enabled() -> bool:
         """
         Return whether narrative growth/risk aspect-coverage enforcement is enabled.
+
+        FIXME: feels too brittle.
         """
 
         raw = (os.getenv("FINRAG_ENABLE_NARRATIVE_ASPECT_COVERAGE") or "1").strip().lower()
@@ -863,6 +865,8 @@ class RAGService:
     def adaptive_retrieval_budget_enabled() -> bool:
         """
         Return whether adaptive retrieval-budget scheduling is enabled.
+
+        FIXME: feels brittle.
         """
 
         raw = (os.getenv("FINRAG_ENABLE_ADAPTIVE_RETRIEVAL_BUDGET") or "1").strip().lower()
@@ -977,6 +981,9 @@ class RAGService:
         return use_rag, use_yfinance, use_edgar_financials
 
     def _infer_tickers_from_question(self, question: str, companies: list[dict[str, str]]) -> list[str]:
+        # FIXME: extremely brittle logic. should use yfinance python library to get tickers from company name.
+        # TODO: use yfinance instead.
+        # see: https://deepwiki.com/ranaroussi/yfinance/4.3-search-and-lookup-functionality
         inferred: list[str] = []
         seen: set[str] = set()
         known_tickers = {str(item["ticker"]).strip().upper() for item in companies if "ticker" in item}
