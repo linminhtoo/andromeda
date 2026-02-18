@@ -2744,3 +2744,12 @@
 - `source .venv/bin/activate && pytest -vvv tests/test_query_runtime_tools_first.py` -> `14 passed`.
 - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> passed.
 - `source .venv/bin/activate && pytest -vvv tests/` -> `114 passed`.
+
+## 2026-02-18 - Commit lineage checkpoint (reduced heuristics branch)
+
+### Commits
+- `45b19cb` - docs: add eval-improvement guidance and reduced-heuristics benchmark plan.
+- `a127bd0` - refactor: planner-first runtime, fallback heuristics module, reduced monkeypatching tests, and associated changelog/logbook updates.
+
+### Notes
+- Branch is clean after checkpoint; proceeding to eval rerun and benchmark analysis.
