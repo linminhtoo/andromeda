@@ -85,6 +85,11 @@ you must ensure those comments continue to exist in the new/migrated function/co
     including modifications to `LOGBOOK.md`, `agent_logs/`, `CHANGELOG.md` and so on.
     - NEVER undo others' work.
     - Keep calm and continue executing with your plan. You do not need to stop and ask me about it.
+* WHEN WRITING UNIT TESTS:
+    - Monkeypatching is fine for isolating specific logic to test for, but you should NOT abuse it.
+    - You should still have proper "integration" style tests that pass in legitimate production-style inputs, and assert for legitimate outputs (as far as pragmatically possible).
+    - When dealing with tests that require external APIs like LLM APIs, of course monkeypatching helps to run these tests locally without actually calling the external LLM API and incurring costs. However, we should still set aside a comprehensive suite of integration tests that actually make the required LLM calls, and do comprehensive asserts/checks on the outputs. These tests can be run in special environment with LLM key available, and can be disabled by default for normal CI tests.
+    - But these tests should still exist.
 
 ## Testing rules
 
