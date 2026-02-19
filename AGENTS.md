@@ -98,6 +98,6 @@ you must ensure those comments continue to exist in the new/migrated function/co
 which relies on recent changes to the codebase, to ensure that core functions work as expected.
     - You don't need to run the tests after every little change. Exercise judgement.
 * First, activate the venv by running `source .venv/bin/activate` from the repository root.
-* Then, run tests with `pytest -vvv tests/`.
+* Then, run tests with `pytest tests/`.
 * Fix failing tests before proceeding.
 * Never bypass tests without explicit instruction.
