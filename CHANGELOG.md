@@ -5,7 +5,38 @@ this file.
 
 This format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+---
+
+## Template (do not modify this)
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+### Dev
+
+---
+
+## Unreleased (modify this)
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+### Dev
+
+---
+
+
+## v1.10.0 - 18 Feb 2026
 
 ### Added
 - Planner fallback heuristics module at `src/andromeda/query/planner_heuristics.py` to isolate regex/keyword logic from normal runtime flow.
@@ -18,8 +49,6 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - non-narrative market/financial metric requests default to finance tools without mandatory RAG,
   - mixed narrative + market/financial requests can enable both RAG and tools.
 
-### Fixed
-
 ### Removed
 - Removed brittle runtime heuristic stages from active execution path:
   - narrative retrieval-query expansion
@@ -27,8 +56,6 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - MMR chunk diversification
   - adaptive retrieval-budget lowering
 - Removed corresponding heuristic helper implementations from `src/andromeda/query/runtime.py`; fallback heuristics now live in the dedicated planner fallback module.
-
-### Dev
 
 
 
