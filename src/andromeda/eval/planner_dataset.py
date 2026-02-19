@@ -35,7 +35,7 @@ def build_manual_planner_eval_queries() -> list[PlannerEvalQuery]:
             )
         )
 
-    # Group A: market_data + simple_numeric (14)
+    # Group A: market_data (14)
     market_simple = [
         ("What is AAPL's market cap right now?", ["AAPL"]),
         ("What's NVDA's current P/E ratio?", ["NVDA"]),
@@ -55,9 +55,9 @@ def build_manual_planner_eval_queries() -> list[PlannerEvalQuery]:
     for question, tickers in market_simple:
         add(
             question=question,
-            characteristics=[PlannerEvalCharacteristic.MARKET_DATA, PlannerEvalCharacteristic.SIMPLE_NUMERIC],
+            characteristics=[PlannerEvalCharacteristic.MARKET_DATA],
             explicit_tickers=tickers,
-            tags=["market_data", "simple_numeric"],
+            tags=["market_data", "point_lookup"],
             rationale="Direct point-in-time market metric lookup.",
         )
 
@@ -81,7 +81,7 @@ def build_manual_planner_eval_queries() -> list[PlannerEvalQuery]:
             rationale="Market-centric request without strict numeric single-value target.",
         )
 
-    # Group C: financial_metrics + period_scoped + simple_numeric (20)
+    # Group C: financial_metrics point lookups (20)
     metric_period_simple = [
         ("What was AAPL's net income in 2025?", ["AAPL"]),
         ("What was MSFT's total revenue in FY2024?", ["MSFT"]),
@@ -107,17 +107,13 @@ def build_manual_planner_eval_queries() -> list[PlannerEvalQuery]:
     for question, tickers in metric_period_simple:
         add(
             question=question,
-            characteristics=[
-                PlannerEvalCharacteristic.FINANCIAL_METRICS,
-                PlannerEvalCharacteristic.PERIOD_SCOPED,
-                PlannerEvalCharacteristic.SIMPLE_NUMERIC,
-            ],
+            characteristics=[PlannerEvalCharacteristic.FINANCIAL_METRICS],
             explicit_tickers=tickers,
-            tags=["financial_metrics", "period_scoped", "simple_numeric"],
+            tags=["financial_metrics", "point_lookup"],
             rationale="Single metric lookup for an explicit reporting period.",
         )
 
-    # Group D: financial_metrics + period_scoped (8)
+    # Group D: financial_metrics analysis over windows (8)
     metric_period_analytic = [
         ("How did AAPL's gross margin trend from 2023 to 2025?", ["AAPL"]),
         ("Analyze MSFT revenue growth by year from 2022 through 2025.", ["MSFT"]),
@@ -131,9 +127,9 @@ def build_manual_planner_eval_queries() -> list[PlannerEvalQuery]:
     for question, tickers in metric_period_analytic:
         add(
             question=question,
-            characteristics=[PlannerEvalCharacteristic.FINANCIAL_METRICS, PlannerEvalCharacteristic.PERIOD_SCOPED],
+            characteristics=[PlannerEvalCharacteristic.FINANCIAL_METRICS],
             explicit_tickers=tickers,
-            tags=["financial_metrics", "period_scoped", "analysis"],
+            tags=["financial_metrics", "analysis", "time_window"],
             rationale="Financial statement analysis over explicit time windows, not single-point numeric lookup.",
         )
 
@@ -251,27 +247,20 @@ def build_manual_planner_eval_queries() -> list[PlannerEvalQuery]:
 
     # Group J: clarification expected (2)
     clarification_rows = [
-        (
-            "Compare the two semiconductor companies in my watchlist on growth and risks.",
-            [PlannerEvalCharacteristic.COMPARISON, PlannerEvalCharacteristic.FILING_NARRATIVE],
-        ),
-        (
-            "Which bank stock should I buy based on filings and valuation?",
-            [
-                PlannerEvalCharacteristic.COMPARISON,
-                PlannerEvalCharacteristic.FILING_NARRATIVE,
-                PlannerEvalCharacteristic.MARKET_DATA,
-            ],
-        ),
+        "Compare the two semiconductor companies in my watchlist on growth and risks.",
+        "Which bank stock should I buy based on filings and valuation?",
     ]
-    for question, characteristics in clarification_rows:
+    for question in clarification_rows:
         add(
             question=question,
-            characteristics=characteristics,
+            characteristics=[],
             explicit_tickers=[],
-            tags=["clarification", "ambiguous_ticker"],
+            tags=["clarification", "relevant_but_ambiguous"],
             expected_action=PlannerEvalAction.CLARIFICATION_REQUIRED,
-            rationale="Comparison intent is clear but concrete tickers are missing.",
+            rationale=(
+                "Relevant financial request, but key identifiers are missing/ambiguous. "
+                "Planner should ask for clarification rather than refuse."
+            ),
         )
 
     if len(rows) != 100:

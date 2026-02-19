@@ -15,8 +15,6 @@ class PlannerEvalCharacteristic(str, Enum):
     MARKET_DATA = "market_data"
     FINANCIAL_METRICS = "financial_metrics"
     FILING_NARRATIVE = "filing_narrative"
-    PERIOD_SCOPED = "period_scoped"
-    SIMPLE_NUMERIC = "simple_numeric"
 
 
 class PlannerEvalAction(str, Enum):
@@ -83,8 +81,7 @@ class PlannerEvalPrediction(BaseModel):
     predicted_tickers: list[str] = Field(default_factory=list)
 
     use_rag: bool | None = None
-    use_yfinance: bool | None = None
-    use_edgar_financials: bool | None = None
+    use_finance_tools: bool | None = None
     use_per_ticker_retrieval: bool | None = None
     use_multi_ticker_briefs: bool | None = None
 

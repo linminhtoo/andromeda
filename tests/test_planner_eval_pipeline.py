@@ -34,7 +34,7 @@ def test_score_planner_predictions_perfect_match() -> None:
         PlannerEvalQuery(
             id="q1",
             question="What is AAPL market cap?",
-            expected_characteristics=[PlannerEvalCharacteristic.MARKET_DATA, PlannerEvalCharacteristic.SIMPLE_NUMERIC],
+            expected_characteristics=[PlannerEvalCharacteristic.MARKET_DATA],
         ),
         PlannerEvalQuery(
             id="q2", question="Refuse this", expected_characteristics=[], expected_action=PlannerEvalAction.REFUSED
@@ -44,7 +44,7 @@ def test_score_planner_predictions_perfect_match() -> None:
         PlannerEvalPrediction(
             query_id="q1",
             question=queries[0].question,
-            predicted_characteristics=[PlannerEvalCharacteristic.MARKET_DATA, PlannerEvalCharacteristic.SIMPLE_NUMERIC],
+            predicted_characteristics=[PlannerEvalCharacteristic.MARKET_DATA],
             predicted_action=PlannerEvalAction.ANSWERED,
         ),
         PlannerEvalPrediction(
@@ -76,7 +76,7 @@ def test_score_planner_predictions_handles_missing_and_partial() -> None:
         PlannerEvalQuery(
             id="q1",
             question="What is AAPL market cap?",
-            expected_characteristics=[PlannerEvalCharacteristic.MARKET_DATA, PlannerEvalCharacteristic.SIMPLE_NUMERIC],
+            expected_characteristics=[PlannerEvalCharacteristic.MARKET_DATA],
         ),
         PlannerEvalQuery(
             id="q2", question="Write a poem", expected_characteristics=[], expected_action=PlannerEvalAction.REFUSED
@@ -96,12 +96,12 @@ def test_score_planner_predictions_handles_missing_and_partial() -> None:
     assert len(scores) == 2
     assert summary["missing_predictions"] == 1
     assert summary["prediction_errors"] == 1
-    assert summary["characteristic_exact_match_rate"] == 0.5
-    assert summary["expected_subset_recall_rate"] == 0.5
+    assert summary["characteristic_exact_match_rate"] == 1.0
+    assert summary["expected_subset_recall_rate"] == 1.0
     assert summary["action_accuracy"] == 0.0
 
     q1_score = next(item for item in scores if item.query_id == "q1")
-    assert q1_score.missing_characteristics == [PlannerEvalCharacteristic.SIMPLE_NUMERIC]
+    assert q1_score.missing_characteristics == []
     assert q1_score.extra_characteristics == []
 
     q2_score = next(item for item in scores if item.query_id == "q2")
@@ -113,12 +113,11 @@ def test_run_one_maps_planner_output() -> None:
         def plan_query(self, question, tickers, filing_date_from, filing_date_to):  # noqa: ANN001
             _ = (question, tickers, filing_date_from, filing_date_to)
             return SimpleNamespace(
-                characteristics=[QueryCharacteristic.MARKET_DATA, QueryCharacteristic.SIMPLE_NUMERIC],
+                characteristics=[QueryCharacteristic.MARKET_DATA],
                 status=QueryStatus.ANSWERED,
                 tickers=["aapl"],
                 use_rag=False,
-                use_yfinance=True,
-                use_edgar_financials=False,
+                use_finance_tools=True,
                 use_per_ticker_retrieval=False,
                 use_multi_ticker_briefs=False,
             )
@@ -133,12 +132,9 @@ def test_run_one_maps_planner_output() -> None:
     assert ok is True
     assert prediction.error is None
     assert prediction.predicted_action == PlannerEvalAction.ANSWERED
-    assert prediction.predicted_characteristics == [
-        PlannerEvalCharacteristic.MARKET_DATA,
-        PlannerEvalCharacteristic.SIMPLE_NUMERIC,
-    ]
+    assert prediction.predicted_characteristics == [PlannerEvalCharacteristic.MARKET_DATA]
     assert prediction.predicted_tickers == ["AAPL"]
-    assert prediction.use_yfinance is True
+    assert prediction.use_finance_tools is True
 
 
 def test_run_one_retries_timeout_once() -> None:
@@ -156,8 +152,7 @@ def test_run_one_retries_timeout_once() -> None:
                 status=QueryStatus.ANSWERED,
                 tickers=["MSFT"],
                 use_rag=True,
-                use_yfinance=False,
-                use_edgar_financials=True,
+                use_finance_tools=True,
                 use_per_ticker_retrieval=False,
                 use_multi_ticker_briefs=False,
             )
