@@ -231,8 +231,7 @@ def score_one(
         score.retrieval["retrieved_tickers_top"] = retrieved_tickers[: min(12, len(retrieved_tickers))]
 
     citation_stats = citation_support_summary(
-        cited_chunk_ids=cited_chunk_ids,
-        available_chunk_ids=list(dict.fromkeys(pre_chunk_ids + retrieved_chunk_ids)),
+        cited_chunk_ids=cited_chunk_ids, available_chunk_ids=list(dict.fromkeys(pre_chunk_ids + retrieved_chunk_ids))
     )
     score.answer["cited_chunk_ids"] = cited_chunk_ids
     score.answer["citation_count"] = citation_stats.citation_count
@@ -251,22 +250,13 @@ def score_one(
             relevance_by_id={gold_chunk: 1.0},
         )
         post_doc_metrics = metrics_for_ranked_ids(
-            ranked_ids=retrieved_doc_ids,
-            relevant_ids={gold_doc},
-            target_id=gold_doc,
-            relevance_by_id={gold_doc: 1.0},
+            ranked_ids=retrieved_doc_ids, relevant_ids={gold_doc}, target_id=gold_doc, relevance_by_id={gold_doc: 1.0}
         )
         pre_chunk_metrics = metrics_for_ranked_ids(
-            ranked_ids=pre_chunk_ids,
-            relevant_ids={gold_chunk},
-            target_id=gold_chunk,
-            relevance_by_id={gold_chunk: 1.0},
+            ranked_ids=pre_chunk_ids, relevant_ids={gold_chunk}, target_id=gold_chunk, relevance_by_id={gold_chunk: 1.0}
         )
         pre_doc_metrics = metrics_for_ranked_ids(
-            ranked_ids=pre_doc_ids,
-            relevant_ids={gold_doc},
-            target_id=gold_doc,
-            relevance_by_id={gold_doc: 1.0},
+            ranked_ids=pre_doc_ids, relevant_ids={gold_doc}, target_id=gold_doc, relevance_by_id={gold_doc: 1.0}
         )
         chunk_uplift = rerank_uplift(pre=pre_chunk_metrics, post=post_chunk_metrics)
         doc_uplift = rerank_uplift(pre=pre_doc_metrics, post=post_doc_metrics)
@@ -573,21 +563,15 @@ def summarize(scores: list[EvalScore]) -> dict[str, Any]:
         out["factual_rerank_chunk_precision_at_25_delta"] = _mean_retrieval(
             factual_ok, "rerank_chunk_delta_precision_at_25"
         )
-        out["factual_rerank_chunk_recall_at_25_delta"] = _mean_retrieval(
-            factual_ok, "rerank_chunk_delta_recall_at_25"
-        )
-        out["factual_rerank_doc_precision_at_5_delta"] = _mean_retrieval(
-            factual_ok, "rerank_doc_delta_precision_at_5"
-        )
+        out["factual_rerank_chunk_recall_at_25_delta"] = _mean_retrieval(factual_ok, "rerank_chunk_delta_recall_at_25")
+        out["factual_rerank_doc_precision_at_5_delta"] = _mean_retrieval(factual_ok, "rerank_doc_delta_precision_at_5")
         out["factual_rerank_doc_precision_at_10_delta"] = _mean_retrieval(
             factual_ok, "rerank_doc_delta_precision_at_10"
         )
         out["factual_rerank_doc_precision_at_25_delta"] = _mean_retrieval(
             factual_ok, "rerank_doc_delta_precision_at_25"
         )
-        out["factual_rerank_doc_recall_at_25_delta"] = _mean_retrieval(
-            factual_ok, "rerank_doc_delta_recall_at_25"
-        )
+        out["factual_rerank_doc_recall_at_25_delta"] = _mean_retrieval(factual_ok, "rerank_doc_delta_recall_at_25")
         out["factual_rerank_chunk_win_rate"] = _mean_retrieval(factual_ok, "rerank_chunk_win")
         out["factual_rerank_doc_win_rate"] = _mean_retrieval(factual_ok, "rerank_doc_win")
         out["factual_numeric_accuracy"] = _mean(

@@ -54,12 +54,7 @@ def _metric_payload(y_true: list[int], y_pred: list[int]) -> dict[str, float | i
 
 
 def _bootstrap_ci(
-    y_true: list[int],
-    y_pred: list[int],
-    *,
-    metric: str,
-    n_bootstrap: int,
-    seed: int,
+    y_true: list[int], y_pred: list[int], *, metric: str, n_bootstrap: int, seed: int
 ) -> dict[str, float]:
     if not y_true or len(y_true) != len(y_pred):
         return {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan}
@@ -140,4 +135,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

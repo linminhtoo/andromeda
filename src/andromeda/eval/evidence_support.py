@@ -41,10 +41,7 @@ def citation_support_summary(*, cited_chunk_ids: list[str], available_chunk_ids:
     cited = [item for item in cited_chunk_ids if item]
     if not cited:
         return CitationSupportSummary(
-            citation_count=0,
-            supported_citation_count=0,
-            unsupported_citation_count=0,
-            supported_rate=math.nan,
+            citation_count=0, supported_citation_count=0, unsupported_citation_count=0, supported_rate=math.nan
         )
 
     available = set(item for item in available_chunk_ids if item)

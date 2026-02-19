@@ -137,14 +137,7 @@ def _spec_for_audit(judge_id: str) -> JudgeSpec:
 
 def _build_output_fieldnames(rows: list[dict[str, str]]) -> list[str]:
     base_fields = list(rows[0].keys()) if rows else []
-    extras = [
-        "audit_prediction",
-        "audit_explanation",
-        "audit_raw",
-        "audit_error",
-        "audit_model",
-        "audit_timestamp",
-    ]
+    extras = ["audit_prediction", "audit_explanation", "audit_raw", "audit_error", "audit_model", "audit_timestamp"]
     for field in extras:
         if field not in base_fields:
             base_fields.append(field)
@@ -156,10 +149,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--audit-csv", type=Path, required=True, help="Decision CSV from scripts/judge_reliability.py")
     parser.add_argument("--out-csv", type=Path, default=None, help="Output CSV path (default: overwrite --audit-csv)")
     parser.add_argument(
-        "--judges",
-        nargs="*",
-        default=None,
-        help="Optional subset of judge IDs. Defaults to all decisions in CSV.",
+        "--judges", nargs="*", default=None, help="Optional subset of judge IDs. Defaults to all decisions in CSV."
     )
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--context-chars", type=int, default=80_000)
@@ -203,9 +193,7 @@ def main() -> None:
     def _get_llm():
         if not hasattr(thread_local, "judge_llm"):
             thread_local.judge_llm = get_judge_client(
-                provider=args.judge_provider,
-                chat_model=args.judge_model,
-                base_url=args.judge_base_url,
+                provider=args.judge_provider, chat_model=args.judge_model, base_url=args.judge_base_url
             )
         return thread_local.judge_llm
 
@@ -314,4 +302,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

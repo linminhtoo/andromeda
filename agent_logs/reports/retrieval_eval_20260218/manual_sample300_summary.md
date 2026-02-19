@@ -54,4 +54,3 @@
 ## Weak Label Alignment (subset with weak labels)
 
 - n: `140`, tp: `19`, fp: `121`, tn: `0`, fn: `0`, accuracy: `0.1357`, precision_1: `0.1357`, recall_1: `1.0000`
-

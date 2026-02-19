@@ -100,7 +100,9 @@ def _write_markdown(path: Path, summary: dict[str, Any], factual_rows: list[dict
     lines.append("")
     lines.append("## Factual Query Rows (sample)")
     lines.append("")
-    lines.append("| query_id | pre_chunk_rank | post_chunk_rank | pre_doc_rank | post_doc_rank | delta_chunk_mrr | delta_doc_mrr |")
+    lines.append(
+        "| query_id | pre_chunk_rank | post_chunk_rank | pre_doc_rank | post_doc_rank | delta_chunk_mrr | delta_doc_mrr |"
+    )
     lines.append("|---|---:|---:|---:|---:|---:|---:|")
     for row in factual_rows[:20]:
         lines.append(
@@ -128,7 +130,6 @@ def main() -> None:
     eval_queries = load_jsonl(run_dir / "eval_queries.jsonl", EvalQuery)
     generations = load_jsonl(run_dir / "generations.jsonl", EvalGeneration)
     generation_by_id = {item.query_id: item for item in generations}
-    query_by_id = {item.id: item for item in eval_queries}
 
     factual_rows: list[dict[str, Any]] = []
     for query in eval_queries:
@@ -151,10 +152,7 @@ def main() -> None:
         pre_doc_ids = _dedupe_order([item.doc_id for item in pre_chunks])
 
         pre_chunk_metrics = metrics_for_ranked_ids(
-            ranked_ids=pre_chunk_ids,
-            relevant_ids={gold_chunk},
-            target_id=gold_chunk,
-            relevance_by_id={gold_chunk: 1.0},
+            ranked_ids=pre_chunk_ids, relevant_ids={gold_chunk}, target_id=gold_chunk, relevance_by_id={gold_chunk: 1.0}
         )
         post_chunk_metrics = metrics_for_ranked_ids(
             ranked_ids=post_chunk_ids,
@@ -163,16 +161,10 @@ def main() -> None:
             relevance_by_id={gold_chunk: 1.0},
         )
         pre_doc_metrics = metrics_for_ranked_ids(
-            ranked_ids=pre_doc_ids,
-            relevant_ids={gold_doc},
-            target_id=gold_doc,
-            relevance_by_id={gold_doc: 1.0},
+            ranked_ids=pre_doc_ids, relevant_ids={gold_doc}, target_id=gold_doc, relevance_by_id={gold_doc: 1.0}
         )
         post_doc_metrics = metrics_for_ranked_ids(
-            ranked_ids=post_doc_ids,
-            relevant_ids={gold_doc},
-            target_id=gold_doc,
-            relevance_by_id={gold_doc: 1.0},
+            ranked_ids=post_doc_ids, relevant_ids={gold_doc}, target_id=gold_doc, relevance_by_id={gold_doc: 1.0}
         )
         chunk_uplift = rerank_uplift(pre=pre_chunk_metrics, post=post_chunk_metrics)
         doc_uplift = rerank_uplift(pre=pre_doc_metrics, post=post_doc_metrics)
@@ -241,7 +233,9 @@ def main() -> None:
         "post_chunk_hit_at_25": _safe_round(_mean([_to_float(row["post_chunk_hit_at_25"]) for row in factual_rows])),
         "pre_doc_hit_at_25": _safe_round(_mean([_to_float(row["pre_doc_hit_at_25"]) for row in factual_rows])),
         "post_doc_hit_at_25": _safe_round(_mean([_to_float(row["post_doc_hit_at_25"]) for row in factual_rows])),
-        "pre_chunk_precision_at_5": _safe_round(_mean([_to_float(row["pre_chunk_precision_at_5"]) for row in factual_rows])),
+        "pre_chunk_precision_at_5": _safe_round(
+            _mean([_to_float(row["pre_chunk_precision_at_5"]) for row in factual_rows])
+        ),
         "post_chunk_precision_at_5": _safe_round(
             _mean([_to_float(row["post_chunk_precision_at_5"]) for row in factual_rows])
         ),
@@ -257,19 +251,27 @@ def main() -> None:
         "post_chunk_precision_at_25": _safe_round(
             _mean([_to_float(row["post_chunk_precision_at_25"]) for row in factual_rows])
         ),
-        "pre_chunk_recall_at_25": _safe_round(_mean([_to_float(row["pre_chunk_recall_at_25"]) for row in factual_rows])),
+        "pre_chunk_recall_at_25": _safe_round(
+            _mean([_to_float(row["pre_chunk_recall_at_25"]) for row in factual_rows])
+        ),
         "post_chunk_recall_at_25": _safe_round(
             _mean([_to_float(row["post_chunk_recall_at_25"]) for row in factual_rows])
         ),
-        "pre_doc_precision_at_5": _safe_round(_mean([_to_float(row["pre_doc_precision_at_5"]) for row in factual_rows])),
+        "pre_doc_precision_at_5": _safe_round(
+            _mean([_to_float(row["pre_doc_precision_at_5"]) for row in factual_rows])
+        ),
         "post_doc_precision_at_5": _safe_round(
             _mean([_to_float(row["post_doc_precision_at_5"]) for row in factual_rows])
         ),
-        "pre_doc_precision_at_10": _safe_round(_mean([_to_float(row["pre_doc_precision_at_10"]) for row in factual_rows])),
+        "pre_doc_precision_at_10": _safe_round(
+            _mean([_to_float(row["pre_doc_precision_at_10"]) for row in factual_rows])
+        ),
         "post_doc_precision_at_10": _safe_round(
             _mean([_to_float(row["post_doc_precision_at_10"]) for row in factual_rows])
         ),
-        "pre_doc_precision_at_25": _safe_round(_mean([_to_float(row["pre_doc_precision_at_25"]) for row in factual_rows])),
+        "pre_doc_precision_at_25": _safe_round(
+            _mean([_to_float(row["pre_doc_precision_at_25"]) for row in factual_rows])
+        ),
         "post_doc_precision_at_25": _safe_round(
             _mean([_to_float(row["post_doc_precision_at_25"]) for row in factual_rows])
         ),
@@ -309,7 +311,9 @@ def main() -> None:
             predict_chunk_size=args.nli_chunk_size,
         )
         support_rows: list[dict[str, Any]] = []
-        open_ended_queries = [item for item in eval_queries if item.kind == "open_ended"][: max(0, args.nli_max_open_ended)]
+        open_ended_queries = [item for item in eval_queries if item.kind == "open_ended"][
+            : max(0, args.nli_max_open_ended)
+        ]
         for query in open_ended_queries:
             generation = generation_by_id.get(query.id)
             if generation is None or generation.error:
@@ -350,8 +354,7 @@ def main() -> None:
 
     _write_csv(run_dir / "retrieval_rerank_metrics.csv", factual_rows)
     (run_dir / "retrieval_rerank_metrics.json").write_text(
-        json.dumps({"summary": summary, "rows": factual_rows}, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
+        json.dumps({"summary": summary, "rows": factual_rows}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     _write_markdown(run_dir / "retrieval_rerank_metrics.md", summary, factual_rows)
     print(json.dumps(summary, indent=2, ensure_ascii=False))

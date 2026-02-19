@@ -79,7 +79,9 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build pooled retrieval chunk label candidates from eval run artifacts.")
+    parser = argparse.ArgumentParser(
+        description="Build pooled retrieval chunk label candidates from eval run artifacts."
+    )
     parser.add_argument("--run-dirs", nargs="+", required=True, type=Path)
     parser.add_argument("--out-csv", required=True, type=Path)
     parser.add_argument("--out-json", default=None, type=Path)
@@ -135,7 +137,7 @@ def main() -> None:
             for chunk_id in merged_ids:
                 pre_meta = pre_index.get(chunk_id)
                 post_meta = post_index.get(chunk_id)
-                doc_id = (post_meta[2] if post_meta is not None else (pre_meta[2] if pre_meta is not None else ""))
+                doc_id = post_meta[2] if post_meta is not None else (pre_meta[2] if pre_meta is not None else "")
                 rows.append(
                     _row(
                         run_name=run_path.name,
@@ -150,10 +152,7 @@ def main() -> None:
                     )
                 )
 
-        per_run_stats[run_path.name] = {
-            "n_queries": len(query_by_id),
-            "pooled_rows": len(rows) - run_rows_before,
-        }
+        per_run_stats[run_path.name] = {"n_queries": len(query_by_id), "pooled_rows": len(rows) - run_rows_before}
 
     _write_csv(args.out_csv, rows)
     out_json = args.out_json or args.out_csv.with_suffix(".stats.json")
@@ -181,4 +180,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
