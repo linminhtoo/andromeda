@@ -519,9 +519,7 @@ class RAGService:
             },
             {
                 "role": "system",
-                "content": (
-                    f"Indexed ticker catalog (first {len(preview_rows)} of {len(companies)}):\n{catalog}\n\n"
-                )
+                "content": (f"Indexed ticker catalog (first {len(preview_rows)} of {len(companies)}):\n{catalog}\n\n"),
             },
             {
                 "role": "user",

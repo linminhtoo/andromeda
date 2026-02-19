@@ -151,7 +151,9 @@ class PlannerFallbackHeuristics:
         Return whether the question is a direct numeric metric lookup.
         """
 
-        mentions_metrics = cls.question_mentions_financial_metrics(question) or cls.question_mentions_market_data(question)
+        mentions_metrics = cls.question_mentions_financial_metrics(question) or cls.question_mentions_market_data(
+            question
+        )
         mentions_narrative = cls.question_mentions_filing_narrative(question)
         mentions_comparison = cls.question_mentions_comparison(question)
         has_period_scope = cls.question_has_explicit_period_scope(question)
