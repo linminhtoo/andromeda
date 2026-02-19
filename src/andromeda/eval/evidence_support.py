@@ -88,9 +88,19 @@ class EntailmentScorer:
     Local cross-encoder entailment scorer for claim-evidence support checks.
     """
 
-    def __init__(self, model_name: str = "cross-encoder/nli-deberta-v3-base", max_length: int = 512):
+    def __init__(
+        self,
+        model_name: str = "cross-encoder/nli-deberta-v3-base",
+        max_length: int = 512,
+        batch_size: int = 128,
+        device: str | None = None,
+        predict_chunk_size: int | None = None,
+    ):
         self.model_name = model_name
         self.model = CrossEncoder(model_name, max_length=max_length)
+        self.batch_size = max(1, int(batch_size))
+        self.predict_chunk_size = predict_chunk_size
+        self.device = self._resolve_device(device)
         id2label = getattr(self.model.model.config, "id2label", {}) or {}
         entailment_id: int | None = None
         contradiction_id: int | None = None
@@ -102,6 +112,23 @@ class EntailmentScorer:
                 contradiction_id = int(idx)
         self.entailment_id = entailment_id if entailment_id is not None else 2
         self.contradiction_id = contradiction_id if contradiction_id is not None else 0
+
+    @staticmethod
+    def _resolve_device(device: str | None) -> str | None:
+        """
+        Resolve a concrete device for CrossEncoder.predict.
+        """
+
+        if device and device.strip():
+            return device.strip()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                return "cuda"
+        except Exception:
+            return None
+        return None
 
     def score_claims_against_evidence(
         self,
@@ -142,7 +169,14 @@ class EntailmentScorer:
         for claim in valid_claims:
             for evidence in valid_evidence:
                 pairs.append((claim, evidence))
-        outputs = self.model.predict(pairs, apply_softmax=True)
+        outputs = self.model.predict(
+            pairs,
+            apply_softmax=True,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+            device=self.device,
+            chunk_size=self.predict_chunk_size,
+        )
 
         supported = 0
         contradicted = 0

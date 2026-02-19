@@ -40,6 +40,23 @@ def rank_of_id(ranked_ids: list[str], target_id: str) -> int | None:
     return None
 
 
+def _unique_prefix(items: list[str], limit: int) -> list[str]:
+    """
+    Return an order-preserving unique top-k prefix.
+    """
+
+    if limit <= 0:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items[:limit]:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
 def reciprocal_rank(rank: int | None) -> float:
     """
     Compute reciprocal rank from a 1-based rank value.
@@ -57,7 +74,7 @@ def hit_at_k(ranked_ids: list[str], relevant_ids: set[str], k: int) -> float:
 
     if k <= 0:
         return 0.0
-    return 1.0 if any(item in relevant_ids for item in ranked_ids[:k]) else 0.0
+    return 1.0 if any(item in relevant_ids for item in _unique_prefix(ranked_ids, k)) else 0.0
 
 
 def precision_at_k(ranked_ids: list[str], relevant_ids: set[str], k: int) -> float:
@@ -67,7 +84,7 @@ def precision_at_k(ranked_ids: list[str], relevant_ids: set[str], k: int) -> flo
 
     if k <= 0 or not ranked_ids:
         return 0.0
-    topk = ranked_ids[:k]
+    topk = _unique_prefix(ranked_ids, k)
     if not topk:
         return 0.0
     hits = sum(1 for item in topk if item in relevant_ids)
@@ -81,7 +98,7 @@ def recall_at_k(ranked_ids: list[str], relevant_ids: set[str], k: int) -> float:
 
     if k <= 0 or not relevant_ids:
         return 0.0
-    topk = ranked_ids[:k]
+    topk = _unique_prefix(ranked_ids, k)
     hits = sum(1 for item in topk if item in relevant_ids)
     return float(hits) / float(len(relevant_ids))
 

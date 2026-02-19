@@ -123,6 +123,21 @@ def _chunk_tickers(chunks: list[RetrievedChunk]) -> list[str]:
     return out
 
 
+def _dedupe_order(values: list[str]) -> list[str]:
+    """
+    Return an order-preserving unique list.
+    """
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
 def _mentions_token(text: str, token: str) -> bool:
     if not token or not token.strip():
         return False
@@ -202,9 +217,9 @@ def score_one(
         pre_chunks = list(top_chunks)
     cited_chunk_ids = _cited_chunk_ids(final)
     retrieved_chunk_ids = [c.chunk_id for c in top_chunks]
-    retrieved_doc_ids = [c.doc_id for c in top_chunks]
+    retrieved_doc_ids = _dedupe_order([c.doc_id for c in top_chunks])
     pre_chunk_ids = [c.chunk_id for c in pre_chunks]
-    pre_doc_ids = [c.doc_id for c in pre_chunks]
+    pre_doc_ids = _dedupe_order([c.doc_id for c in pre_chunks])
     retrieved_tickers = _chunk_tickers(top_chunks)
 
     score.retrieval["retrieved_chunks"] = len(retrieved_chunk_ids)

@@ -36,6 +36,17 @@ def _safe_round(value: float, digits: int = 4) -> float:
     return round(value, digits)
 
 
+def _dedupe_order(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
 def _evidence_blocks(gen: EvalGeneration, *, max_blocks: int = 10, max_chars: int = 900) -> list[str]:
     blocks: list[str] = []
     for chunk in (gen.top_chunks or [])[:max_blocks]:
@@ -108,6 +119,9 @@ def main() -> None:
     parser.add_argument("--nli-max-open-ended", type=int, default=120)
     parser.add_argument("--nli-support-threshold", type=float, default=0.50)
     parser.add_argument("--nli-contradiction-threshold", type=float, default=0.50)
+    parser.add_argument("--nli-batch-size", type=int, default=128)
+    parser.add_argument("--nli-device", default=None)
+    parser.add_argument("--nli-chunk-size", type=int, default=None)
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir).expanduser().resolve()
@@ -133,8 +147,8 @@ def main() -> None:
 
         post_chunk_ids = [item.chunk_id for item in post_chunks]
         pre_chunk_ids = [item.chunk_id for item in pre_chunks]
-        post_doc_ids = [item.doc_id for item in post_chunks]
-        pre_doc_ids = [item.doc_id for item in pre_chunks]
+        post_doc_ids = _dedupe_order([item.doc_id for item in post_chunks])
+        pre_doc_ids = _dedupe_order([item.doc_id for item in pre_chunks])
 
         pre_chunk_metrics = metrics_for_ranked_ids(
             ranked_ids=pre_chunk_ids,
@@ -288,7 +302,12 @@ def main() -> None:
     }
 
     if args.enable_nli:
-        scorer = EntailmentScorer(model_name=args.nli_model)
+        scorer = EntailmentScorer(
+            model_name=args.nli_model,
+            batch_size=args.nli_batch_size,
+            device=args.nli_device,
+            predict_chunk_size=args.nli_chunk_size,
+        )
         support_rows: list[dict[str, Any]] = []
         open_ended_queries = [item for item in eval_queries if item.kind == "open_ended"][: max(0, args.nli_max_open_ended)]
         for query in open_ended_queries:
