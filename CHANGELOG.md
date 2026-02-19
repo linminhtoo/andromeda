@@ -24,8 +24,23 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased (modify this)
 
 ### Added
+- Comparison-structured synthesis controls for multi-ticker answering:
+  - `comparison_required` support in `build_multi_ticker_synthesis_prompt(...)` and
+    `build_multi_ticker_refine_prompt(...)` with an explicit output contract for side-by-side analysis.
+- Planner fallback utility `infer_unindexed_tickers_from_question(...)` to detect ticker candidates that are referenced
+  but not currently indexed.
+- Eval runner retry-timeout controls:
+  - `query_retry_timeout_multiplier`
+  - `query_retry_timeout_cap_s`
+  - CLI flags `--query-retry-timeout-multiplier` and `--query-retry-timeout-cap-s` in `scripts/run_eval.py`.
 
 ### Changed
+- `PlannedQuery` now carries planner `characteristics` through execution so downstream generation can apply
+  comparison-specific synthesis constraints.
+- Query planning now refuses (instead of entering clarification loops) when no indexed ticker can be resolved but
+  unindexed ticker candidates are detected from the query.
+- Eval generation retries now use per-attempt timeout budgets (scaled by multiplier and capped) and persist timeout
+  telemetry (`query_timeout_attempt_s`, retry parameters) in generation settings for postmortems.
 
 ### Fixed
 

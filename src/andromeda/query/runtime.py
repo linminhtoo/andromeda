@@ -192,6 +192,7 @@ class PlannedQuery:
     question: str
     filters: RetrievalFilters | None
     tickers: list[str]
+    characteristics: list[QueryCharacteristic] = field(default_factory=list)
     clarifying_question: str | None = None
     refusal_message: str | None = None
     use_per_ticker_retrieval: bool = False
@@ -716,6 +717,7 @@ class RAGService:
 
         action = self._normalize_plan_action(decision.action)
         planned_tickers = explicit_tickers or self._normalize_ticker_list(decision.tickers)
+        characteristics = sorted(self._characteristics_set(decision), key=lambda item: item.value)
         use_rag, use_yfinance, use_edgar_financials = self.resolve_tool_usage_from_decision(decision=decision)
 
         if action == QueryStatus.REFUSED:
@@ -730,6 +732,7 @@ class RAGService:
                 question=question,
                 filters=None,
                 tickers=planned_tickers,
+                characteristics=characteristics,
                 refusal_message=reason,
                 use_rag=use_rag,
                 use_yfinance=use_yfinance,
@@ -758,12 +761,47 @@ class RAGService:
                 question=question,
                 filters=None,
                 tickers=planned_tickers,
+                characteristics=characteristics,
                 refusal_message=reason,
                 use_rag=use_rag,
                 use_yfinance=use_yfinance,
                 use_edgar_financials=use_edgar_financials,
                 tool_trace=trace,
             )
+
+        if not planned_tickers:
+            unindexed_candidates = PlannerFallbackHeuristics.infer_unindexed_tickers_from_question(
+                question=question, companies=companies
+            )
+            if unindexed_candidates:
+                candidate_sample = ", ".join(unindexed_candidates[:6])
+                available_sample = ", ".join(sorted(available_set)[:20])
+                reason = (
+                    "I can't answer this request because the referenced ticker(s) are not indexed in this deployment: "
+                    + candidate_sample
+                    + ". "
+                    + ("Indexed tickers include: " + available_sample + ". " if available_sample else "")
+                    + "Please ingest/index those tickers and retry."
+                )
+                trace.append(
+                    self._tool_event(
+                        "refuse_unindexed_ticker_candidates",
+                        args={"candidates": unindexed_candidates[:6]},
+                        result=reason,
+                    )
+                )
+                return PlannedQuery(
+                    status=QueryStatus.REFUSED,
+                    question=question,
+                    filters=None,
+                    tickers=[],
+                    characteristics=characteristics,
+                    refusal_message=reason,
+                    use_rag=use_rag,
+                    use_yfinance=use_yfinance,
+                    use_edgar_financials=use_edgar_financials,
+                    tool_trace=trace,
+                )
 
         if action == QueryStatus.CLARIFICATION_REQUIRED or not planned_tickers:
             clarifying_question = (
@@ -781,6 +819,7 @@ class RAGService:
                 question=question,
                 filters=None,
                 tickers=planned_tickers,
+                characteristics=characteristics,
                 clarifying_question=clarifying_question,
                 use_rag=use_rag,
                 use_yfinance=use_yfinance,
@@ -793,7 +832,6 @@ class RAGService:
         filters = self.build_retrieval_filters(
             tickers=planned_tickers, filing_date_from=resolved_filing_date_from, filing_date_to=resolved_filing_date_to
         )
-        characteristics = self._characteristics_set(decision)
         comparison_characteristic = QueryCharacteristic.COMPARISON in characteristics
         use_per_ticker = (
             bool(decision.use_per_ticker_retrieval)
@@ -830,6 +868,7 @@ class RAGService:
             question=question,
             filters=filters,
             tickers=planned_tickers,
+            characteristics=characteristics,
             use_per_ticker_retrieval=use_per_ticker,
             use_multi_ticker_briefs=use_multi_ticker_briefs,
             use_rag=use_rag,
@@ -1136,6 +1175,7 @@ class RAGService:
         question: str,
         settings: GenerationSettings,
         per_ticker_briefs: dict[str, str],
+        comparison_required: bool = False,
         tool_results: list[FinanceToolResult] | None = None,
         draft_answer: str | None = None,
     ) -> list[ChatMessage]:
@@ -1152,6 +1192,7 @@ class RAGService:
                 final_max_tokens=settings.final_max_tokens,
                 answer_style=settings.answer_style,
                 answering_effort=settings.answering_effort,
+                comparison_required=comparison_required,
                 tool_context=tool_context,
             )
         return build_multi_ticker_synthesis_prompt(
@@ -1160,6 +1201,7 @@ class RAGService:
             final_max_tokens=settings.final_max_tokens,
             answer_style=settings.answer_style,
             answering_effort=settings.answering_effort,
+            comparison_required=comparison_required,
             tool_context=tool_context,
         )
 
@@ -1204,6 +1246,7 @@ class RAGService:
         question: str,
         settings: GenerationSettings,
         per_ticker_briefs: dict[str, str],
+        comparison_required: bool = False,
         reranked_context: list[ScoredChunk] | None = None,
         tool_results: list[FinanceToolResult] | None = None,
     ) -> tuple[str, str]:
@@ -1213,7 +1256,11 @@ class RAGService:
 
         draft = self.llm.chat(
             self.multi_ticker_synthesis_prompt(
-                question=question, settings=settings, per_ticker_briefs=per_ticker_briefs, tool_results=tool_results
+                question=question,
+                settings=settings,
+                per_ticker_briefs=per_ticker_briefs,
+                comparison_required=comparison_required,
+                tool_results=tool_results,
             ),
             temperature=self._effort_temperature(settings.answering_effort),
             max_tokens=settings.final_max_tokens,
@@ -1225,6 +1272,7 @@ class RAGService:
                     question=question,
                     settings=settings,
                     per_ticker_briefs=per_ticker_briefs,
+                    comparison_required=comparison_required,
                     tool_results=tool_results,
                     draft_answer=draft,
                 ),
@@ -1731,10 +1779,12 @@ class RAGService:
             )
 
         if pipeline.planned.use_multi_ticker_briefs and pipeline.per_ticker_briefs:
+            comparison_required = QueryCharacteristic.COMPARISON in pipeline.planned.characteristics
             draft, final = self.generate_answers_from_ticker_briefs(
                 question=pipeline.question,
                 settings=settings,
                 per_ticker_briefs=pipeline.per_ticker_briefs,
+                comparison_required=comparison_required,
                 reranked_context=pipeline.reranked,
                 tool_results=pipeline.tool_results,
             )

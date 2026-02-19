@@ -2916,3 +2916,48 @@
 - Not purely a batching starvation issue: isolated runtime can still stall in rare cases.
 - Also not deterministically expensive: isolated runs can finish quickly (~20.6s).
 - Most plausible explanation remains intermittent model/runtime stall behavior (decoding or backend-level transient), reinforcing timeout+retry as the right control mechanism.
+
+## 2026-02-19 - Implemented immediate follow-ups from BENCHMARK_REDUCED_HEURISTICS
+
+### Scope implemented
+Implemented the three immediate follow-ups listed in `BENCHMARK_REDUCED_HEURISTICS.md` without live vLLM calls.
+
+1. Comparison answer planning improvements
+- Added explicit comparison output contract support in multi-ticker synthesis/refine prompt builders.
+- Added `comparison_required` plumbing from runtime plan state into synthesis generation.
+- `PlannedQuery` now carries planner `characteristics` so comparison intent survives planning -> generation.
+
+2. Stricter refusal for out-of-scope/unindexed tickers
+- Added `infer_unindexed_tickers_from_question(...)` in fallback heuristics.
+- In `plan_query`, when no indexed ticker is resolved and unindexed ticker candidates are detected, runtime now returns `REFUSED` with an explicit ingestion guidance message instead of clarification loops.
+
+3. Retry/continue safeguards for long-tail timeouts
+- Added retry timeout scaling controls in eval runner:
+  - `query_retry_timeout_multiplier`
+  - `query_retry_timeout_cap_s`
+- Retry attempts now use per-attempt timeout budgets and record timeout telemetry into generation settings.
+- Added matching CLI flags in `scripts/run_eval.py`.
+
+### Files changed
+- `src/andromeda/llm/qa.py`
+- `src/andromeda/query/runtime.py`
+- `src/andromeda/query/planner_heuristics.py`
+- `src/andromeda/eval/runner.py`
+- `scripts/run_eval.py`
+- `tests/test_query_runtime_tools_first.py`
+- `tests/test_qa.py`
+- `tests/test_eval_runner.py`
+- `CHANGELOG.md`
+
+### Validation
+- `source .venv/bin/activate && pytest -vvv tests/test_query_runtime_tools_first.py tests/test_qa.py tests/test_eval_runner.py`
+- Result: `28 passed`.
+
+### Notes
+- No LLM benchmark reruns were executed in this iteration because the vLLM server was down.
+- Changes were implemented to be deploy-path aligned and testable offline.
+
+### Final quality gates for this iteration
+- `source .venv/bin/activate && pytest -vvv tests/` -> `121 passed`.
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> passed.
+- Note: pre-commit required `PRE_COMMIT_HOME=/tmp/pre-commit-cache` due readonly permission on default `~/.cache/pre-commit` in this sandbox.

@@ -208,6 +208,38 @@ class PlannerFallbackHeuristics:
         Infer candidate tickers using yfinance search (fallback path only).
         """
 
+        known_tickers = PlannerFallbackHeuristics.known_ticker_set(companies=companies)
+        if not known_tickers:
+            return []
+        candidates = PlannerFallbackHeuristics.search_candidate_tickers(question=question, companies=companies)
+        inferred: list[str] = []
+        for symbol in candidates:
+            if symbol in known_tickers:
+                inferred.append(symbol)
+        return inferred
+
+    @staticmethod
+    def infer_unindexed_tickers_from_question(question: str, companies: list[dict[str, str]]) -> list[str]:
+        """
+        Infer candidate tickers that are referenced but not indexed.
+        """
+
+        known_tickers = PlannerFallbackHeuristics.known_ticker_set(companies=companies)
+        if not known_tickers:
+            return PlannerFallbackHeuristics.search_candidate_tickers(question=question, companies=companies)
+        candidates = PlannerFallbackHeuristics.search_candidate_tickers(question=question, companies=companies)
+        out: list[str] = []
+        for symbol in candidates:
+            if symbol not in known_tickers:
+                out.append(symbol)
+        return out
+
+    @staticmethod
+    def known_ticker_set(*, companies: list[dict[str, str]]) -> set[str]:
+        """
+        Build a normalized set of indexed ticker symbols.
+        """
+
         known_tickers: set[str] = set()
         for item in companies:
             if "ticker" not in item:
@@ -215,8 +247,13 @@ class PlannerFallbackHeuristics:
             ticker = str(item["ticker"]).strip().upper()
             if ticker:
                 known_tickers.add(ticker)
-        if not known_tickers:
-            return []
+        return known_tickers
+
+    @staticmethod
+    def search_candidate_tickers(question: str, companies: list[dict[str, str]]) -> list[str]:
+        """
+        Query yfinance search for likely ticker symbols mentioned in question text.
+        """
 
         try:
             yfinance = importlib.import_module("yfinance")
@@ -279,7 +316,7 @@ class PlannerFallbackHeuristics:
                     symbol = normalize_ticker(raw_symbol)
                 except ValueError:
                     symbol = raw_symbol.upper()
-                if symbol not in known_tickers or symbol in seen_tickers:
+                if symbol in seen_tickers:
                     continue
                 seen_tickers.add(symbol)
                 inferred.append(symbol)

@@ -270,6 +270,38 @@ def test_multi_ticker_briefs_path_generates_parallel_briefs() -> None:
     assert len(llm.chat_calls) >= 4
 
 
+def test_multi_ticker_comparison_prompt_contract_is_used() -> None:
+    finance_tools = FakeFinanceTools()
+    service, _retriever, llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=["NVDA", "GOOGL"],
+                characteristics=[QueryCharacteristic.COMPARISON, QueryCharacteristic.FILING_NARRATIVE],
+                use_rag=True,
+                use_yfinance=False,
+                use_edgar_financials=False,
+                use_per_ticker_retrieval=True,
+                use_multi_ticker_briefs=True,
+            )
+        ],
+    )
+
+    settings = resolve_generation_settings(mode="normal", enable_refine=False)
+    pipeline = service.execute_query_pipeline(
+        question="Compare NVDA vs GOOGL as long-term investments.", settings=settings
+    )
+    assert QueryCharacteristic.COMPARISON in pipeline.planned.characteristics
+
+    _ = service.response_from_pipeline(pipeline=pipeline, settings=settings)
+    calls = generation_calls(llm)
+    assert len(calls) >= 3
+    final_call = calls[-1]
+    assert "Comparison output contract" in final_call["messages"][0]["content"]
+    assert "follow the comparison output contract exactly" in final_call["messages"][1]["content"]
+
+
 def test_tools_only_plan_falls_back_to_rag_when_tools_have_no_actionable_data() -> None:
     finance_tools = FakeFinanceTools(status=FinanceToolStatus.NO_DATA, summary="No metrics available.", payload=None)
     service, retriever, _llm = build_service(
@@ -523,3 +555,35 @@ def test_plan_query_fallback_infers_ticker_via_live_yfinance_search() -> None:
 
     assert "NVDA" in planned.tickers
     assert any(event.tool == "planner_fallback" for event in planned.tool_trace)
+
+
+def test_clarification_path_refuses_detected_unindexed_ticker_candidates(monkeypatch) -> None:
+    finance_tools = FakeFinanceTools()
+    service, _retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.CLARIFICATION_REQUIRED,
+                tickers=[],
+                characteristics=[QueryCharacteristic.MARKET_DATA],
+                clarifying_question="Which ticker?",
+                use_rag=False,
+                use_yfinance=True,
+                use_edgar_financials=False,
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        "andromeda.query.planner_heuristics.PlannerFallbackHeuristics.infer_unindexed_tickers_from_question",
+        lambda question, companies: ["TSLA"],
+    )
+
+    planned = service.plan_query(
+        question="How does Tesla look right now?", tickers=None, filing_date_from=None, filing_date_to=None
+    )
+
+    assert planned.status == QueryStatus.REFUSED
+    assert planned.refusal_message is not None
+    assert "TSLA" in planned.refusal_message
+    assert any(event.tool == "refuse_unindexed_ticker_candidates" for event in planned.tool_trace)
