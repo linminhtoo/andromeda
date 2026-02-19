@@ -33,6 +33,19 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `query_retry_timeout_multiplier`
   - `query_retry_timeout_cap_s`
   - CLI flags `--query-retry-timeout-multiplier` and `--query-retry-timeout-cap-s` in `scripts/run_eval.py`.
+- Planner characteristics evaluation pipeline:
+  - eval schema/models in `src/andromeda/eval/planner_schema.py`
+  - manually curated 100-query dataset builder in `src/andromeda/eval/planner_dataset.py`
+  - scoring/summary utilities in `src/andromeda/eval/planner_scoring.py`
+  - CLI scripts:
+    - `scripts/make_planner_eval_set.py`
+    - `scripts/run_planner_eval.py`
+    - `scripts/score_planner_eval.py`
+    - `scripts/run_planner_eval_suite.sh`
+  - generated dataset artifact:
+    - `eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`
+  - test coverage:
+    - `tests/test_planner_eval_pipeline.py`
 
 ### Changed
 - `PlannedQuery` now carries planner `characteristics` through execution so downstream generation can apply

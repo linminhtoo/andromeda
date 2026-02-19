@@ -157,3 +157,57 @@ The eval pipeline was upgraded in four major steps:
 - Calibrated faithfulness rubric toward material errors to reduce false-positive fail calls while preserving key-error sensitivity.
 
 Net result: the project now has a reproducible, end-to-end eval system with explicit data lineage, production-matched answering settings, and auditable judge calibration, instead of single-run ad hoc scoring.
+
+## 7) Planner Characteristics Eval (New)
+
+Goal: verify that the planner correctly assigns multi-label query characteristics (`comparison`, `market_data`, `financial_metrics`, `filing_narrative`, `period_scoped`, `simple_numeric`) before downstream answering.
+
+### Ground-truth dataset
+- Dataset file (manual labels, non-LLM-generated):
+  - `eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`
+- Generator source:
+  - `src/andromeda/eval/planner_dataset.py`
+  - `scripts/make_planner_eval_set.py`
+
+### One-command run (when vLLM is up)
+```bash
+source .venv/bin/activate
+bash scripts/run_planner_eval_suite.sh
+```
+
+This command:
+- creates the manual dataset if missing,
+- runs planner-only inference (no answer generation),
+- scores predictions and writes a review CSV + markdown report.
+
+### Manual run path
+```bash
+source .venv/bin/activate
+python -m scripts.run_planner_eval \
+  --eval-queries eval/eval_queries_planner_characteristics_manual100_20260219.jsonl \
+  --out-dir eval/results_planner \
+  --run-name planner_characteristics_manual100 \
+  --concurrency 12 \
+  --query-timeout-s 350 \
+  --query-max-retries 1
+
+python -m scripts.score_planner_eval \
+  --run-dir <planner_eval_run_dir>
+```
+
+### Planner eval artifacts
+Per run directory (`planner_eval_run.*`):
+- `eval_queries.jsonl`
+- `planner_predictions.jsonl`
+- `planner_prediction_summary.json`
+- `planner_scores.jsonl`
+- `planner_score_summary.json`
+- `planner_score_summary.md`
+- `planner_review.csv`
+
+### Key metrics produced
+- characteristic exact match rate
+- expected-subset recall rate
+- macro/micro precision, recall, F1
+- per-characteristic TP/FP/FN/TN with precision/recall/F1
+- action accuracy for labeled action rows (`refused`, `clarification_required`)
