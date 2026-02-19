@@ -36,6 +36,7 @@ key/attribute existence, such as by using `dataclass`, `TypedDict` and class att
     * Do not run the linter after every change. It is too slow.
 * First, activate the python venv by running `source .venv/bin/activate` from the repository root.
 * Then, run `pre-commit run --all`.
+* IMPORTANT NOTE: due to sandbox permission errors, you will need to set `PRE_COMMIT_HOME` env var to `PRE_COMMIT_HOME=/tmp/pre-commit-cache` when running `pre-commit`.
 * We use the pyright pre-commit hook to catch typing issues. There may be a large number of such errors. Try your best to fix them where possible, and document your findings in the `agent_logs/LOGBOOK.md`. If fixing a particular error is too tedious, make a judgement as to whether you should just ignore it in-line, or modify the pyright config (if applicable).
 
 
