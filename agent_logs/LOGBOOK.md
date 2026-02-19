@@ -3083,3 +3083,230 @@ Implemented the three immediate follow-ups listed in `BENCHMARK_REDUCED_HEURISTI
 ### Report written
 - `BENCHMARK_PLANNER.md`
   - includes experiment table, configuration, metrics, failure analysis, surprises, and recommendations.
+
+## 2026-02-19 - Removed `simple_numeric` from runtime planner taxonomy
+
+### Why
+- `simple_numeric` was not consumed by downstream runtime routing logic (`resolve_tool_usage_from_decision(...)` uses
+  `market_data`, `financial_metrics`, `filing_narrative` only).
+- Keeping a non-actionable characteristic created redundant planner outputs and avoidable prompt confusion.
+
+### What changed
+1. Runtime characteristic taxonomy
+- Removed `QueryCharacteristic.SIMPLE_NUMERIC` from:
+  - `src/andromeda/query/runtime.py`
+
+2. Planner prompt and few-shot rubric
+- Updated planner few-shot examples to stop emitting `simple_numeric`.
+- Added explicit characteristic definitions to reduce overlap:
+  - `comparison`: 2+ entity compare/rank
+  - `market_data`: price/returns/valuation/news/sentiment
+  - `financial_metrics`: filing-grounded accounting metrics
+  - `filing_narrative`: qualitative filing text
+  - `period_scoped`: explicit year/quarter/date/range
+- Added guardrail note:
+  - do not label `period_scoped` for generic recency phrasing alone.
+
+3. Fallback heuristic compatibility
+- Removed fallback heuristic emission of `simple_numeric` from:
+  - `src/andromeda/query/planner_heuristics.py`
+- Removed obsolete helper:
+  - `question_is_simple_numeric_metric(...)`
+- This prevents enum conversion failures in fallback plan construction after taxonomy removal.
+
+4. Tests updated
+- Updated runtime tests that referenced removed enum value:
+  - `tests/test_query_runtime_tools_first.py`
+  - `tests/test_planner_eval_pipeline.py`
+
+### Validation
+- `source .venv/bin/activate && pytest tests/`
+  - result: `127 passed`, `1 warning` (third-party deprecation warning).
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - result: passed.
+
+## 2026-02-19 - Removed `period_scoped` from runtime planner characteristics
+
+### Why
+- `period_scoped` was not consumed by runtime routing/tool-mix logic.
+- Runtime behavior is determined by:
+  - `comparison` (comparison-specific synthesis path),
+  - `market_data`, `financial_metrics`, `filing_narrative` (tool/RAG routing).
+- Keeping non-behavioral labels in runtime planner output increased prompt entropy without affecting execution.
+
+### Changes made
+1. Runtime planner taxonomy
+- Removed `PERIOD_SCOPED` from `QueryCharacteristic` in `src/andromeda/query/runtime.py`.
+
+2. Planner prompt/few-shot cleanup
+- Updated few-shot examples to stop using `period_scoped`.
+- Simplified characteristic rubric to the four actionable runtime labels.
+
+3. Heuristic fallback cleanup
+- Removed `CHARACTERISTIC_PERIOD_SCOPED` from `src/andromeda/query/planner_heuristics.py`.
+- Removed `question_has_explicit_period_scope(...)` because it only supported the removed characteristic.
+- Fallback characteristic classification now emits only actionable runtime labels.
+
+4. Tests
+- Updated runtime tests that referenced `QueryCharacteristic.PERIOD_SCOPED`:
+  - `tests/test_query_runtime_tools_first.py`
+
+### Notes
+- Period/date handling still exists through explicit planner date fields (`filing_date_from`, `filing_date_to`) and fallback date-window inference (`infer_filing_date_window_from_question(...)`); only the unused characteristic label was removed.
+
+## 2026-02-19 - Planner eval rerun after taxonomy sync (`simple_numeric`/`period_scoped` removal)
+
+### Context
+- User requested rerunning planner evaluation and noted the dataset likely needed updating.
+- Runtime planner taxonomy had already removed `simple_numeric` and `period_scoped`; planner-eval schema/dataset still included them.
+
+### What changed
+1. Planner eval taxonomy sync
+- `src/andromeda/eval/planner_schema.py`
+  - removed `PlannerEvalCharacteristic.PERIOD_SCOPED`
+  - removed `PlannerEvalCharacteristic.SIMPLE_NUMERIC`
+
+2. Manual dataset builder sync
+- `src/andromeda/eval/planner_dataset.py`
+  - removed references to removed characteristics from query labels.
+  - updated tags where needed (`point_lookup`, `time_window`) while keeping question set size and ids stable.
+
+3. Regenerated planner eval dataset artifact
+- Command:
+  - `source .venv/bin/activate && python -m scripts.make_planner_eval_set --out eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`
+
+4. Test fix for removed labels
+- `tests/test_planner_eval_pipeline.py`
+  - removed stale assertions using `SIMPLE_NUMERIC`.
+  - updated expected exact/subset rates in partial-missing test to reflect updated labels.
+
+### Eval run
+- Repro script saved:
+  - `agent_logs/scripts/20260219_2142_rerun_planner_eval_taxonomy_sync.sh`
+- Command:
+  - `source .venv/bin/activate && bash scripts/run_planner_eval_suite.sh`
+- Run directory:
+  - `eval/results_planner/planner_eval_run.planner_characteristics_20260219_214202.20260219_214203`
+- Prediction summary:
+  - `n=100`, `n_ok=100`, `n_err=0`
+  - `avg_total_ms=2038.44`
+  - `wall_total_ms=21457.25`
+  - concurrency `12`, timeout `350s`, retries `1`
+
+### Scored metrics
+- `characteristic_exact_match_rate`: `0.92`
+- `expected_subset_recall_rate`: `0.96`
+- `macro_precision`: `0.9433`
+- `macro_recall`: `0.96`
+- `macro_f1`: `0.9493`
+- `micro_precision`: `0.9524`
+- `micro_recall`: `0.9449`
+- `micro_f1`: `0.9486`
+- `action_accuracy`: `0.6667` on 6 action-evaluable queries
+
+### Error pattern snapshot
+- 8 characteristic exact-match misses:
+  - 4 false-positive extras (`financial_metrics` or `filing_narrative` over-added)
+  - 2 market-data mislabeled as financial-metrics-only
+  - 2 clarification-required queries predicted with empty characteristics
+- Action mismatches remained the same class as before:
+  - both clarification-required cases were not classified as clarification.
+
+### Validation
+- `source .venv/bin/activate && pytest tests/test_planner_eval_pipeline.py`
+  - `6 passed`
+
+## 2026-02-19 - Clarification vs refusal boundary update + planner benchmark v2
+
+### Request handled
+- Made the clarification/refusal boundary explicit in planner behavior and eval labels.
+- Produced a new report (`BENCHMARK_PLANNER_v2.md`) listing each error case with:
+  - query text,
+  - expected decision/response behavior,
+  - actual LLM planner decision payload.
+
+### Runtime changes
+1. Prompt policy in `src/andromeda/query/runtime.py`
+- Clarification now explicitly means: in-scope financial query, but missing/ambiguous detail (typically ticker disambiguation).
+- Refusal now explicitly means: blatantly out-of-scope/irrelevant to SEC financial analysis.
+- Prompt now instructs `characteristics=[]` for both `clarification_required` and `refused`.
+- Added few-shot examples for clarification and refusal actions.
+
+2. Clarification normalization in `src/andromeda/query/runtime.py`
+- Added runtime normalization so if planner action is clarification, downstream planned characteristics are reset to `[]`.
+- Added trace event `planner_clarification_characteristics_reset` when model output included characteristics but action was clarification.
+- Fallback planner path now also emits empty characteristics for clarification action.
+
+### Eval dataset changes
+- Updated `src/andromeda/eval/planner_dataset.py` Group J (clarification rows):
+  - `expected_characteristics=[]` for clarification rows,
+  - tags switched to `relevant_but_ambiguous`,
+  - rationale clarified: clarify rather than refuse.
+- Regenerated dataset:
+  - `eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`
+
+### Validation commands
+- Repro script saved:
+  - `agent_logs/scripts/20260219_2157_rerun_planner_eval_after_clarification_policy.sh`
+- `source .venv/bin/activate && pytest tests/test_planner_eval_pipeline.py tests/test_query_runtime_tools_first.py`
+  - result: `22 passed`
+- `source .venv/bin/activate && bash scripts/run_planner_eval_suite.sh`
+- final wrap-up validation:
+  - `source .venv/bin/activate && pytest tests/` -> `128 passed`
+  - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> passed
+
+### Planner eval run (post-update)
+- Run dir:
+  - `eval/results_planner/planner_eval_run.planner_characteristics_20260219_215722.20260219_215723`
+- Summary:
+  - characteristic_exact_match_rate: `0.95`
+  - expected_subset_recall_rate: `1.00`
+  - macro_f1: `0.9860`
+  - micro_f1: `0.9799`
+  - action_accuracy: `0.6667` (6 action-labeled rows)
+  - avg_total_ms: `2005.75`
+
+### Error cases
+- Wrote explicit case-by-case report:
+  - `BENCHMARK_PLANNER_v2.md`
+- Total error rows listed: `7`.
+- Remaining action failures are the two clarification-labeled rows still predicted as refusal (`planner_eval_0099`, `planner_eval_0100`).
+
+## 2026-02-19 - Planner eval rerun after manual planner-prompt update (v3 report)
+
+### Scope
+- User updated planner prompt and requested a fresh planner eval run + new benchmark report.
+
+### Run
+- Command:
+  - `source .venv/bin/activate && bash scripts/run_planner_eval_suite.sh`
+- Repro script:
+  - `agent_logs/scripts/20260219_2340_rerun_planner_eval_after_prompt_update.sh`
+- Run dir:
+  - `eval/results_planner/planner_eval_run.planner_characteristics_20260219_234046.20260219_234046`
+
+### Metrics
+- `characteristic_exact_match_rate`: `0.98`
+- `expected_subset_recall_rate`: `1.00`
+- `macro_f1`: `0.9960`
+- `micro_f1`: `0.9919`
+- `action_accuracy`: `0.6667` (6 action-labeled rows)
+- `avg_total_ms`: `2035.25`
+
+### Comparison vs v2 run
+- characteristic exact match: `0.95 -> 0.98`
+- macro F1: `0.9860 -> 0.9960`
+- micro F1: `0.9799 -> 0.9919`
+- action accuracy: unchanged (`0.6667`)
+
+### Error snapshot
+- Total error rows: `4` (down from `7` in v2 report).
+- Remaining failures are concentrated in:
+  1. two market comparison prompts that are over-labeled (`financial_metrics` / `filing_narrative` extras),
+  2. two clarification gold rows still predicted as refusal.
+
+### Report
+- Wrote `BENCHMARK_PLANNER_v3.md` with explicit per-error entries:
+  - query text,
+  - expected decision + expected response behavior,
+  - actual LLM planner decision payload.

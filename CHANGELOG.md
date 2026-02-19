@@ -54,6 +54,21 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
   unindexed ticker candidates are detected from the query.
 - Eval generation retries now use per-attempt timeout budgets (scaled by multiplier and capped) and persist timeout
   telemetry (`query_timeout_attempt_s`, retry parameters) in generation settings for postmortems.
+- Runtime planner characteristic taxonomy was reduced to only behavior-driving labels:
+  - removed `simple_numeric` and `period_scoped` from `QueryCharacteristic`,
+  - updated planner few-shot examples and rubric definitions in `src/andromeda/query/runtime.py`,
+  - fallback heuristic classifier in `src/andromeda/query/planner_heuristics.py` no longer emits removed labels.
+- Planner-characteristics eval artifacts now match runtime taxonomy:
+  - removed `simple_numeric` and `period_scoped` from `PlannerEvalCharacteristic`,
+  - updated manual 100-query planner dataset labeling in `src/andromeda/eval/planner_dataset.py`,
+  - regenerated `eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`.
+- Clarification/refusal planner boundary is now explicit:
+  - prompt instructions now define `clarification_required` as relevant-but-ambiguous and `refused` as out-of-scope,
+  - planner prompt now instructs `characteristics=[]` for clarification/refusal actions,
+  - runtime normalizes clarification decisions to `characteristics=[]` for downstream consistency.
+- Planner eval clarification rows were relabeled to match policy:
+  - clarification examples now use `expected_characteristics=[]` and focus evaluation on action correctness,
+  - published detailed error-case report in `BENCHMARK_PLANNER_v2.md` with query + expected decision/response + LLM decision.
 
 ### Fixed
 
