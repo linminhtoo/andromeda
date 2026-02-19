@@ -3023,3 +3023,63 @@ Implemented the three immediate follow-ups listed in `BENCHMARK_REDUCED_HEURISTI
 - vLLM server was down during this iteration, so no live planner inference run was executed yet.
 - Pipeline is ready to run as soon as vLLM is available:
   - `bash scripts/run_planner_eval_suite.sh`
+
+## 2026-02-19 - Planner characteristics live benchmark run + report
+
+### Context
+- User restarted vLLM and requested:
+  - git commits for planner-eval additions,
+  - live eval run,
+  - benchmark-style report with surprising observations.
+
+### Commit completed
+- Planner-eval implementation commit:
+  - `9c80b1d` (`Add planner characteristics evaluation pipeline and docs`)
+
+### Scripts executed
+- `agent_logs/scripts/eval/20260219_205324_run_planner_eval_suite_live.sh`
+  - Runs planner eval with:
+    - `CONCURRENCY=12`
+    - `QUERY_TIMEOUT_S=350`
+    - `QUERY_MAX_RETRIES=1`
+- `agent_logs/scripts/eval/20260219_205431_analyze_planner_eval_run.sh`
+  - Produces mismatch/tag/action analysis JSON for the run.
+
+### Run artifacts
+- Run dir:
+  - `eval/results_planner/planner_eval_run.planner_live_manual100_20260219_205341.20260219_205341`
+- Key outputs:
+  - `planner_prediction_summary.json`
+  - `planner_score_summary.json`
+  - `planner_scores.jsonl`
+  - `planner_review.csv`
+  - `planner_score_summary.md`
+- Analysis output:
+  - `agent_logs/reports/planner_eval_20260219/planner_eval_analysis_20260219_205341.json`
+
+### Topline metrics
+- generation:
+  - `n=100`, `n_ok=100`, `n_err=0`
+  - `avg_total_ms=2347.22`
+  - `wall_total_ms=21404.30` (~`4.67 qps`)
+- scoring:
+  - `characteristic_exact_match_rate=0.64`
+  - `expected_subset_recall_rate=0.76`
+  - `macro_f1=0.8907`
+  - `micro_f1=0.8828`
+  - `action_accuracy=0.6667` (`6` evaluable rows)
+
+### Key observations
+1. Dominant planner miss pattern is concentrated:
+   - `missing=simple_numeric | extra=-` occurred `20` times.
+   - all from `financial_metrics + period_scoped + simple_numeric` bucket.
+2. Per-characteristic bottleneck is `simple_numeric`:
+   - precision `0.7778`, recall `0.4118`, f1 `0.5385`.
+3. Prompt inconsistency likely drives this:
+   - planner few-shot currently labels `"What was AAPL net income in 2025?"` as `[financial_metrics, period_scoped]` (without `simple_numeric`) in `src/andromeda/query/runtime.py`.
+4. Action mismatches are both clarification-vs-refusal cases:
+   - `planner_eval_0099`, `planner_eval_0100` expected clarification, predicted refusal.
+
+### Report written
+- `BENCHMARK_PLANNER.md`
+  - includes experiment table, configuration, metrics, failure analysis, surprises, and recommendations.
