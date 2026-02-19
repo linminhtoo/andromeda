@@ -135,3 +135,17 @@ def test_tool_context_text_is_bounded() -> None:
     assert "[tool=yfinance_get_ticker_info" in text
     assert "[tool=manual ticker=AAPL" in text
     assert "(truncated)" in text
+
+
+def test_price_history_context_uses_compact_monthly_closes() -> None:
+    tools = FinanceTools(max_history_points=10, max_context_chars_per_result=400)
+    result = tools.fetch_yfinance_price_history(ticker="AAPL", ticker_obj=FakeYFinanceTicker())
+
+    assert result.status == FinanceToolStatus.OK
+    assert isinstance(result.payload, dict)
+    assert "series" in result.payload
+    assert "monthly_close_12m" in result.payload
+
+    context = tools.tool_context_text([result], max_chars=2000)
+    assert "monthly_close_12m" in context
+    assert '"series"' not in context

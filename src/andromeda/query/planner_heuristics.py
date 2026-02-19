@@ -15,8 +15,6 @@ class PlannerFallbackHeuristics:
     CHARACTERISTIC_MARKET_DATA = "market_data"
     CHARACTERISTIC_FINANCIAL_METRICS = "financial_metrics"
     CHARACTERISTIC_FILING_NARRATIVE = "filing_narrative"
-    CHARACTERISTIC_PERIOD_SCOPED = "period_scoped"
-    CHARACTERISTIC_SIMPLE_NUMERIC = "simple_numeric"
 
     @staticmethod
     def question_mentions_comparison(question: str) -> bool:
@@ -61,27 +59,6 @@ class PlannerFallbackHeuristics:
             " equity ",
             " ratio ",
             " debt ",
-        )
-        return any(token in lowered for token in tokens)
-
-    @staticmethod
-    def question_has_explicit_period_scope(question: str) -> bool:
-        lowered = f" {question.lower()} "
-        if re.search(r"\b20\d{2}\b", lowered):
-            return True
-        tokens = (
-            " quarter ",
-            " q1 ",
-            " q2 ",
-            " q3 ",
-            " q4 ",
-            " fiscal year ",
-            " fy ",
-            " year ended ",
-            " as of ",
-            " during ",
-            " in the latest filing ",
-            " latest filing ",
         )
         return any(token in lowered for token in tokens)
 
@@ -146,42 +123,6 @@ class PlannerFallbackHeuristics:
         return any(token in lowered for token in tokens)
 
     @classmethod
-    def question_is_simple_numeric_metric(cls, question: str) -> bool:
-        """
-        Return whether the question is a direct numeric metric lookup.
-        """
-
-        mentions_metrics = cls.question_mentions_financial_metrics(question) or cls.question_mentions_market_data(
-            question
-        )
-        mentions_narrative = cls.question_mentions_filing_narrative(question)
-        mentions_comparison = cls.question_mentions_comparison(question)
-        has_period_scope = cls.question_has_explicit_period_scope(question)
-        lowered = f" {question.lower()} "
-        has_explicit_numeric_intent = any(
-            token in lowered
-            for token in (
-                " what was ",
-                " what is ",
-                " how much ",
-                " amount ",
-                " total ",
-                " value ",
-                " figure ",
-                " give me ",
-            )
-        )
-        token_count = len(question.split())
-        return (
-            mentions_metrics
-            and not mentions_narrative
-            and not mentions_comparison
-            and not has_period_scope
-            and has_explicit_numeric_intent
-            and token_count <= 24
-        )
-
-    @classmethod
     def classify_characteristics(cls, question: str) -> list[str]:
         """
         Infer planner characteristics with fallback heuristics.
@@ -196,10 +137,6 @@ class PlannerFallbackHeuristics:
             out.append(cls.CHARACTERISTIC_FINANCIAL_METRICS)
         if cls.question_mentions_filing_narrative(question):
             out.append(cls.CHARACTERISTIC_FILING_NARRATIVE)
-        if cls.question_has_explicit_period_scope(question):
-            out.append(cls.CHARACTERISTIC_PERIOD_SCOPED)
-        if cls.question_is_simple_numeric_metric(question):
-            out.append(cls.CHARACTERISTIC_SIMPLE_NUMERIC)
         return out
 
     @staticmethod

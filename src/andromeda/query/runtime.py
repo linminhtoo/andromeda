@@ -56,8 +56,6 @@ class QueryCharacteristic(str, Enum):
     MARKET_DATA = "market_data"
     FINANCIAL_METRICS = "financial_metrics"
     FILING_NARRATIVE = "filing_narrative"
-    PERIOD_SCOPED = "period_scoped"
-    SIMPLE_NUMERIC = "simple_numeric"
 
 
 class QueryRequest(BaseModel):
@@ -182,8 +180,7 @@ class PlannerDecision(BaseModel):
     use_per_ticker_retrieval: bool | None = None
     use_multi_ticker_briefs: bool | None = None
     use_rag: bool | None = None
-    use_yfinance: bool | None = None
-    use_edgar_financials: bool | None = None
+    use_finance_tools: bool | None = None
 
 
 @dataclass
@@ -198,8 +195,7 @@ class PlannedQuery:
     use_per_ticker_retrieval: bool = False
     use_multi_ticker_briefs: bool = False
     use_rag: bool = True
-    use_yfinance: bool = False
-    use_edgar_financials: bool = False
+    use_finance_tools: bool = True
     tool_trace: list[ToolTraceEvent] = field(default_factory=list)
 
 
@@ -209,6 +205,7 @@ class QueryPipelineExecution:
     planned: PlannedQuery
     tool_trace: list[ToolTraceEvent] = field(default_factory=list)
     tool_results: list[FinanceToolResult] = field(default_factory=list)
+    tool_results_for_llm: list[FinanceToolResult] = field(default_factory=list)
     hybrid: list[ScoredChunk] = field(default_factory=list)
     reranked: list[ScoredChunk] = field(default_factory=list)
     per_ticker_hybrid: dict[str, list[ScoredChunk]] = field(default_factory=dict)
@@ -411,9 +408,9 @@ class RAGService:
                 continue
         return out
 
-    def resolve_tool_usage_from_decision(self, *, decision: PlannerDecision) -> tuple[bool, bool, bool]:
+    def resolve_tool_usage_from_decision(self, *, decision: PlannerDecision) -> tuple[bool, bool]:
         """
-        Resolve planner tool flags into effective `use_rag`, `use_yfinance`, and `use_edgar_financials`.
+        Resolve planner flags into effective `use_rag` and `use_finance_tools`.
         """
 
         characteristics = self._characteristics_set(decision)
@@ -421,25 +418,24 @@ class RAGService:
         financial_metric_query = QueryCharacteristic.FINANCIAL_METRICS in characteristics
         narrative_query = QueryCharacteristic.FILING_NARRATIVE in characteristics
 
-        use_yfinance = bool(decision.use_yfinance) if decision.use_yfinance is not None else market_data_query
-        use_edgar_financials = (
-            bool(decision.use_edgar_financials)
-            if decision.use_edgar_financials is not None
-            else (financial_metric_query)
+        use_finance_tools = (
+            bool(decision.use_finance_tools)
+            if decision.use_finance_tools is not None
+            else (market_data_query or financial_metric_query)
         )
 
         if decision.use_rag is not None:
             use_rag = bool(decision.use_rag)
         elif narrative_query:
             use_rag = True
-        elif use_yfinance or use_edgar_financials:
+        elif use_finance_tools:
             use_rag = False
         else:
             use_rag = True
 
-        if not use_rag and not use_yfinance and not use_edgar_financials:
+        if not use_rag and not use_finance_tools:
             use_rag = True
-        return use_rag, use_yfinance, use_edgar_financials
+        return use_rag, use_finance_tools
 
     def _infer_tickers_from_question(self, question: str, companies: list[dict[str, str]]) -> list[str]:
         return PlannerFallbackHeuristics.infer_tickers_from_question(question=question, companies=companies)
@@ -472,21 +468,29 @@ class RAGService:
         few_shot = (
             "Few-shot examples (non-mutually-exclusive characteristics):\n"
             '- Q: "What is AAPL market cap right now?"\n'
-            "  characteristics: [market_data, simple_numeric]\n"
-            "  use_rag=false, use_yfinance=true, use_edgar_financials=false\n"
-            '- Q: "What was AAPL net income in 2025?"\n'
-            "  characteristics: [financial_metrics, period_scoped]\n"
-            "  use_rag=false, use_yfinance=false, use_edgar_financials=true\n"
+            "  characteristics: [market_data]\n"
+            "  use_rag=false, use_finance_tools=true\n"
+            '- Q: "What was AMZN net income in 2025?"\n'
+            "  characteristics: [financial_metrics]\n"
+            "  use_rag=false, use_finance_tools=true\n"
             '- Q: "Compare NVDA vs AMD on growth drivers and key risks from filings."\n'
             "  characteristics: [comparison, filing_narrative]\n"
-            "  use_rag=true, use_yfinance=false, use_edgar_financials=false\n"
+            "  use_rag=true, use_finance_tools=false\n"
             "  use_per_ticker_retrieval=true, use_multi_ticker_briefs=true\n"
             '- Q: "Explain MSFT strategy from filings and include latest valuation context."\n'
             "  characteristics: [filing_narrative, market_data]\n"
-            "  use_rag=true, use_yfinance=true, use_edgar_financials=false\n"
-            '- Q: "Summarize TSLA strategy and competitive positioning from recent SEC filings."\n'
+            "  use_rag=true, use_finance_tools=true\n"
+            '- Q: "Summarize TSLA strategy and competitive positioning."\n'
             "  characteristics: [filing_narrative]\n"
-            "  use_rag=true, use_yfinance=false, use_edgar_financials=false\n"
+            "  use_rag=true, use_finance_tools=false\n"
+            '- Q: "Compare the two semiconductor companies in my watchlist on growth and risks."\n'
+            "  action: clarification_required\n"
+            "  characteristics: []\n"
+            "  clarifying_question: ask for explicit ticker symbols. we do not yet support open-ended questions that lack explicit tickers.\n"
+            '- Q: "Write me a romantic poem about my partner."\n'
+            "  action: refused\n"
+            "  characteristics: []\n"
+            "  refusal_reason: out of scope for financial analysis\n"
         )
 
         return [
@@ -497,24 +501,34 @@ class RAGService:
                     "Decide the next action before retrieval. Actions: answer, clarification_required, refused.\n"
                     "Rules:\n"
                     "1) Default to 'answer' as much as possible. This gives the greenlight to proceed with document retrieval.\n"
-                    "2) If the query is too vague, choose clarification_required (USE SPARINGLY).\n"
-                    "3) If the query is out-of-scope for SEC filing analysis, choose refused.\n"
+                    "2) clarification_required means the query is relevant/in-scope, but you cannot execute safely "
+                    "without one missing detail (usually ticker/entity disambiguation). "
+                    "For example, 'which bank stock should I buy based on filings and valuation' requires clarification on tickers, not refusal"
+                    "3) refused means the query must be blatantly irrelevant to financial analysis.\n"
                     "4) For comparisons across multiple entities, include all required tickers and set "
                     "use_per_ticker_retrieval=true and use_multi_ticker_briefs=true.\n"
                     "5) Decide tool mix flags:\n"
-                    "- use_yfinance=true for market price/news/valuation style requests.\n"
-                    "- use_edgar_financials=true for direct SEC financial metric/statement requests.\n"
+                    "- use_finance_tools=true when market data or SEC financial metrics should inform the answer.\n"
                     "- use_rag=true when filing narrative evidence is needed from retrieved chunks.\n"
-                    "- use_rag=false when finance tools are sufficient for direct numeric questions.\n"
-                    "- For mixed requests (narrative + market/financial facts), enable both RAG and tools.\n"
-                    "IMPORTANT: only clarify if absolutely needed. Do NOT keep asking clarifying questions."
+                    "- For mixed requests (narrative + market/financial facts), enable both RAG and finance tools.\n"
+                    "Characteristic rubric (use only when clearly applicable):\n"
+                    "- comparison: user asks to compare or rank 2+ stocks. "
+                    "This does NOT include comparing 1 stock against market indices like SPY, Nasdaq, QQQ, etc. That belongs to 'market_data'. \n"
+                    "- market_data: market-derived signals "
+                    "(price, return, valuation multiples like price-to-earnings, free-cash-flow yield, market news/sentiment).\n"
+                    "- financial_metrics: accounting and earnings statement metrics grounded in SEC filings. "
+                    "these are metrics independent of stock price, they are fundamental to the business. \n"
+                    "- filing_narrative: qualitative filing text (strategy, risk factors, management discussion).\n"
+                    "If action is clarification_required, set characteristics=[] and only ask for the missing detail.\n"
+                    "If action is refused, set characteristics=[] and provide a concise refusal_reason.\n"
+                    "IMPORTANT: only clarify if absolutely needed. Do NOT keep asking clarifying questions.\n"
                     "If no date range is provided, just set None for both date_from and date_to in the output - "
                     "do NOT ask for clarification on dates unless the question explicitly references time (like 'latest').\n"
                     f"6) Set characteristics as a list from this enum: [{characteristics}].\n"
                     "Characteristics are multi-label and non-mutually-exclusive.\n"
                     "Return only JSON with keys:\n"
                     "action, tickers, characteristics, filing_date_from, filing_date_to, clarifying_question, refusal_reason, "
-                    "use_per_ticker_retrieval, use_multi_ticker_briefs, use_rag, use_yfinance, use_edgar_financials."
+                    "use_per_ticker_retrieval, use_multi_ticker_briefs, use_rag, use_finance_tools."
                     f"{few_shot}"
                 ),
             },
@@ -563,8 +577,8 @@ class RAGService:
                     "You repair malformed planner outputs.\n"
                     "Return strictly valid JSON matching this schema keys:\n"
                     "action, tickers, characteristics, filing_date_from, filing_date_to, clarifying_question, "
-                    "refusal_reason, use_per_ticker_retrieval, use_multi_ticker_briefs, use_rag, use_yfinance, "
-                    "use_edgar_financials.\n"
+                    "refusal_reason, use_per_ticker_retrieval, use_multi_ticker_briefs, use_rag, "
+                    "use_finance_tools.\n"
                     "Do not add commentary or markdown."
                 ),
             },
@@ -667,12 +681,13 @@ class RAGService:
                 if fallback_date_to is None:
                     fallback_date_to = fallback_date_window[1]
             action = QueryStatus.ANSWERED if explicit_tickers or inferred else QueryStatus.CLARIFICATION_REQUIRED
+            action_characteristics = fallback_characteristics if action == QueryStatus.ANSWERED else []
             decision = PlannerDecision(
                 action=(
                     PlannerAction.ANSWER if action == QueryStatus.ANSWERED else PlannerAction.CLARIFICATION_REQUIRED
                 ),
                 tickers=(explicit_tickers if explicit_tickers else inferred),
-                characteristics=[QueryCharacteristic(item) for item in fallback_characteristics],
+                characteristics=[QueryCharacteristic(item) for item in action_characteristics],
                 filing_date_from=fallback_date_from,
                 filing_date_to=fallback_date_to,
                 clarifying_question=(
@@ -682,10 +697,14 @@ class RAGService:
                     True if len(explicit_tickers if explicit_tickers else inferred) > 1 else None
                 ),
                 use_multi_ticker_briefs=(True if len(explicit_tickers if explicit_tickers else inferred) > 1 else None),
-                use_rag=(True if QueryCharacteristic.FILING_NARRATIVE.value in fallback_characteristics else None),
-                use_yfinance=(True if QueryCharacteristic.MARKET_DATA.value in fallback_characteristics else None),
-                use_edgar_financials=(
-                    True if QueryCharacteristic.FINANCIAL_METRICS.value in fallback_characteristics else None
+                use_rag=(True if QueryCharacteristic.FILING_NARRATIVE.value in action_characteristics else None),
+                use_finance_tools=(
+                    True
+                    if (
+                        QueryCharacteristic.MARKET_DATA.value in action_characteristics
+                        or QueryCharacteristic.FINANCIAL_METRICS.value in action_characteristics
+                    )
+                    else None
                 ),
             )
             trace.append(
@@ -707,8 +726,7 @@ class RAGService:
                         "tickers": [str(t) for t in decision.tickers],
                         "characteristics": [item.value for item in decision.characteristics],
                         "use_rag": decision.use_rag,
-                        "use_yfinance": decision.use_yfinance,
-                        "use_edgar_financials": decision.use_edgar_financials,
+                        "use_finance_tools": decision.use_finance_tools,
                         "use_multi_ticker_briefs": decision.use_multi_ticker_briefs,
                     },
                     result="Planner produced structured query decision.",
@@ -718,7 +736,20 @@ class RAGService:
         action = self._normalize_plan_action(decision.action)
         planned_tickers = explicit_tickers or self._normalize_ticker_list(decision.tickers)
         characteristics = sorted(self._characteristics_set(decision), key=lambda item: item.value)
-        use_rag, use_yfinance, use_edgar_financials = self.resolve_tool_usage_from_decision(decision=decision)
+        use_rag, use_finance_tools = self.resolve_tool_usage_from_decision(decision=decision)
+
+        if action == QueryStatus.CLARIFICATION_REQUIRED:
+            if characteristics:
+                trace.append(
+                    self._tool_event(
+                        "planner_clarification_characteristics_reset",
+                        args={"dropped_characteristics": [item.value for item in characteristics]},
+                        result="Clarification-required action forces characteristics=[] for downstream consistency.",
+                    )
+                )
+            characteristics = []
+            use_rag = False
+            use_finance_tools = False
 
         if action == QueryStatus.REFUSED:
             reason = (
@@ -735,8 +766,7 @@ class RAGService:
                 characteristics=characteristics,
                 refusal_message=reason,
                 use_rag=use_rag,
-                use_yfinance=use_yfinance,
-                use_edgar_financials=use_edgar_financials,
+                use_finance_tools=use_finance_tools,
                 tool_trace=trace,
             )
 
@@ -764,8 +794,7 @@ class RAGService:
                 characteristics=characteristics,
                 refusal_message=reason,
                 use_rag=use_rag,
-                use_yfinance=use_yfinance,
-                use_edgar_financials=use_edgar_financials,
+                use_finance_tools=use_finance_tools,
                 tool_trace=trace,
             )
 
@@ -798,8 +827,7 @@ class RAGService:
                     characteristics=characteristics,
                     refusal_message=reason,
                     use_rag=use_rag,
-                    use_yfinance=use_yfinance,
-                    use_edgar_financials=use_edgar_financials,
+                    use_finance_tools=use_finance_tools,
                     tool_trace=trace,
                 )
 
@@ -822,8 +850,7 @@ class RAGService:
                 characteristics=characteristics,
                 clarifying_question=clarifying_question,
                 use_rag=use_rag,
-                use_yfinance=use_yfinance,
-                use_edgar_financials=use_edgar_financials,
+                use_finance_tools=use_finance_tools,
                 tool_trace=trace,
             )
 
@@ -846,7 +873,7 @@ class RAGService:
         trace.append(
             self._tool_event(
                 "plan_tool_usage",
-                args={"use_rag": use_rag, "use_yfinance": use_yfinance, "use_edgar_financials": use_edgar_financials},
+                args={"use_rag": use_rag, "use_finance_tools": use_finance_tools},
                 result="Resolved planner tool usage flags.",
             )
         )
@@ -872,18 +899,9 @@ class RAGService:
             use_per_ticker_retrieval=use_per_ticker,
             use_multi_ticker_briefs=use_multi_ticker_briefs,
             use_rag=use_rag,
-            use_yfinance=use_yfinance,
-            use_edgar_financials=use_edgar_financials,
+            use_finance_tools=use_finance_tools,
             tool_trace=trace,
         )
-
-    @staticmethod
-    def _chunk_ticker(sc: ScoredChunk) -> str | None:
-        parsed = chunk_metadata_from_value(sc.chunk.metadata)
-        if parsed.doc is None or parsed.doc.ticker is None:
-            return None
-        ticker = parsed.doc.ticker.strip().upper()
-        return ticker if ticker else None
 
     @staticmethod
     def _dedupe_scored_chunks(chunks: list[ScoredChunk]) -> list[ScoredChunk]:
@@ -896,42 +914,6 @@ class RAGService:
         out = list(by_chunk_id.values())
         out.sort(key=lambda item: item.score, reverse=True)
         return out
-
-    def _enforce_ticker_coverage(
-        self, *, primary: list[ScoredChunk], fallback: list[ScoredChunk], tickers: list[str], limit: int
-    ) -> list[ScoredChunk]:
-        selected: list[ScoredChunk] = []
-        selected_ids: set[str] = set()
-
-        def pick_from_pool(pool: list[ScoredChunk], ticker: str) -> ScoredChunk | None:
-            for sc in pool:
-                chunk_ticker = self._chunk_ticker(sc)
-                if chunk_ticker == ticker:
-                    return sc
-            return None
-
-        for ticker in tickers:
-            candidate = pick_from_pool(primary, ticker)
-            if candidate is None:
-                candidate = pick_from_pool(fallback, ticker)
-            if candidate is None:
-                continue
-            if candidate.chunk.id in selected_ids:
-                continue
-            selected_ids.add(candidate.chunk.id)
-            selected.append(candidate)
-
-        combined = self._dedupe_scored_chunks(primary + fallback)
-        for sc in combined:
-            if len(selected) >= limit:
-                break
-            if sc.chunk.id in selected_ids:
-                continue
-            selected_ids.add(sc.chunk.id)
-            selected.append(sc)
-
-        selected.sort(key=lambda item: item.score, reverse=True)
-        return selected[:limit]
 
     def build_retrieval_filters(
         self, *, tickers: list[str] | None, filing_date_from: str | None, filing_date_to: str | None
@@ -948,7 +930,7 @@ class RAGService:
         self, *, question: str, planned: PlannedQuery
     ) -> tuple[list[FinanceToolResult], list[ToolTraceEvent]]:
         """
-        Execute finance tools requested by planner for the current plan.
+        Execute finance tools for UI snapshots and optional LLM context.
         """
 
         disable_finance_tools = (os.getenv("FINRAG_DISABLE_FINANCE_TOOLS") or "").strip().lower()
@@ -960,22 +942,13 @@ class RAGService:
         if not planned.tickers:
             return [], [self._tool_event("finance_tools_skip", result="Skipped finance tools (no planned tickers).")]
 
-        if not planned.use_yfinance and not planned.use_edgar_financials:
-            return [], [self._tool_event("finance_tools_skip", result="Planner disabled finance tool calls.")]
-
-        tool_results = self.finance_tools.fetch_for_plan(
-            question=question,
-            tickers=planned.tickers,
-            use_yfinance=planned.use_yfinance,
-            use_edgar_financials=planned.use_edgar_financials,
-        )
+        tool_results = self.finance_tools.fetch_for_plan(question=question, tickers=planned.tickers)
         trace = [
             self._tool_event(
                 "finance_tools_execute",
                 args={
                     "tickers": list(planned.tickers),
-                    "use_yfinance": planned.use_yfinance,
-                    "use_edgar_financials": planned.use_edgar_financials,
+                    "include_in_llm_context": planned.use_finance_tools,
                     "result_count": len(tool_results),
                 },
                 result=f"Executed finance tools and produced {len(tool_results)} result objects.",
@@ -1279,14 +1252,15 @@ class RAGService:
                 temperature=0.0,
                 max_tokens=settings.final_max_tokens,
             )
-        if settings.enable_refine and self.should_apply_faithfulness_scrub(question) and reranked_context:
-            final = self.scrub_answer_for_faithfulness(
-                question=question,
-                settings=settings,
-                candidate_answer=final,
-                reranked=reranked_context,
-                tool_results=tool_results,
-            )
+        # FIXME: decide whether this should be enabled.
+        # if settings.enable_refine and self.should_apply_faithfulness_scrub(question) and reranked_context:
+        #     final = self.scrub_answer_for_faithfulness(
+        #         question=question,
+        #         settings=settings,
+        #         candidate_answer=final,
+        #         reranked=reranked_context,
+        #         tool_results=tool_results,
+        #     )
         return draft, final
 
     def rerank_chunks(
@@ -1317,16 +1291,15 @@ class RAGService:
                 result=f"Produced {len(reranked)} reranked chunks.",
             )
         ]
-        if planned.use_per_ticker_retrieval and len(planned.tickers) > 1:
-            # FIXME: current logic is too naive.
-            reranked = self._enforce_ticker_coverage(
-                primary=reranked, fallback=hybrid, tickers=planned.tickers, limit=settings.top_k_rerank
-            )
+        if planned.use_per_ticker_retrieval and len(planned.tickers) > 1 and not planned.use_multi_ticker_briefs:
             trace.append(
                 self._tool_event(
-                    "enforce_ticker_coverage",
+                    "multi_ticker_rerank_no_coverage_enforcement",
                     args={"tickers": planned.tickers, "top_k_rerank": settings.top_k_rerank},
-                    result=f"Adjusted reranked list to {len(reranked)} chunks with ticker coverage constraints.",
+                    result=(
+                        "Skipped heuristic ticker-coverage enforcement; using raw rerank ordering for "
+                        "multi-ticker non-brief mode."
+                    ),
                 )
             )
         return reranked, trace
@@ -1366,7 +1339,15 @@ class RAGService:
         tool_results, finance_tool_trace = self.execute_finance_tools_for_plan(question=question, planned=planned)
         execution.tools_step_ms = (time.perf_counter() - tools_t0) * 1000.0
         execution.tool_results = tool_results
+        execution.tool_results_for_llm = tool_results if planned.use_finance_tools else []
         execution.tool_trace.extend(finance_tool_trace)
+        if tool_results and not planned.use_finance_tools:
+            execution.tool_trace.append(
+                self._tool_event(
+                    "finance_tools_context_skip",
+                    result="Tool results retained for UI only; excluded from LLM context per planner decision.",
+                )
+            )
 
         use_rag_for_execution = planned.use_rag
         if not use_rag_for_execution:
@@ -1452,7 +1433,7 @@ class RAGService:
                     question=question,
                     settings=settings,
                     per_ticker_reranked=per_ticker_reranked,
-                    tool_results=execution.tool_results,
+                    tool_results=execution.tool_results_for_llm,
                 )
                 execution.brief_step_ms = (time.perf_counter() - brief_t0) * 1000.0
                 execution.tool_trace.append(
@@ -1552,21 +1533,50 @@ class RAGService:
                 "explicitly reports that year as the covered period.\n"
                 "- If year scope is ambiguous, make the ambiguity explicit and avoid unsupported assumptions.\n"
             )
+        material_point_line = self._material_points_instruction()
         return (
             "Evidence discipline mode:\n"
-            "- Output at most 6 material points.\n"
-            "- For each point, include: point, why it matters, and one short direct quote with citation.\n"
-            "- Do not include a point unless a direct quote supports it.\n"
-            "- Keep quotes short and verbatim from context/tool context.\n"
-            "- Never cite doc/chunk IDs that are absent from the provided context headers.\n"
-            "- If a requested point has no explicit quote support, state: "
-            "'Not explicitly stated in the provided context.'\n" + year_scope_note
+            + material_point_line
+            + "- For each point, include: point, why it matters, and one short direct quote with citation.\n"
+            + "- Do not include a point unless a direct quote supports it.\n"
+            + "- Keep quotes short and verbatim from context/tool context.\n"
+            + "- Never cite doc/chunk IDs that are absent from the provided context headers.\n"
+            + "- If a requested point has no explicit quote support, state: "
+            + "'Not explicitly stated in the provided context.'\n"
+            + year_scope_note
         )
+
+    @staticmethod
+    def material_points_limit() -> int | None:
+        """
+        Return the configured evidence-point cap, or None when disabled.
+        """
+
+        raw = (os.getenv("FINRAG_MAX_MATERIAL_POINTS") or "").strip()
+        if not raw:
+            return 6
+        try:
+            parsed = int(raw)
+        except ValueError:
+            return 6
+        return parsed if parsed > 0 else None
+
+    def _material_points_instruction(self) -> str:
+        """
+        Build the evidence-point instruction line for prompt extras.
+        """
+
+        limit = self.material_points_limit()
+        if limit is None:
+            return "- No fixed maximum number of material points; prioritize coverage of all materially supported points.\n"
+        return f"- Output at most {limit} material points.\n"
 
     @staticmethod
     def _requested_years(question: str) -> list[int]:
         """
         Extract distinct requested years from question text.
+
+        FIXME: what if user said last year? this will break.
         """
 
         years = {int(token) for token in re.findall(r"\b20\d{2}\b", question)}
@@ -1786,11 +1796,11 @@ class RAGService:
                 per_ticker_briefs=pipeline.per_ticker_briefs,
                 comparison_required=comparison_required,
                 reranked_context=pipeline.reranked,
-                tool_results=pipeline.tool_results,
+                tool_results=pipeline.tool_results_for_llm,
             )
         else:
             draft, final = self.generate_answers(
-                pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results
+                pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results_for_llm
             )
         return self.build_query_response(
             status=QueryStatus.ANSWERED,

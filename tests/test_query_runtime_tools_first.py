@@ -82,10 +82,8 @@ class FakeFinanceTools:
     summary: str = "Fetched snapshot."
     payload: object | None = None
 
-    def fetch_for_plan(
-        self, *, question: str, tickers: list[str], use_yfinance: bool, use_edgar_financials: bool
-    ) -> list[FinanceToolResult]:
-        _ = question, use_yfinance, use_edgar_financials
+    def fetch_for_plan(self, *, question: str, tickers: list[str]) -> list[FinanceToolResult]:
+        _ = question
         self.calls += 1
         return [
             FinanceToolResult(
@@ -157,13 +155,7 @@ def test_tools_only_plan_skips_rag_and_still_answers() -> None:
     service, retriever, llm = build_service(
         finance_tools,
         planner_outputs=[
-            PlannerDecision(
-                action=PlannerAction.ANSWER,
-                tickers=["AAPL"],
-                use_rag=False,
-                use_yfinance=True,
-                use_edgar_financials=True,
-            )
+            PlannerDecision(action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_finance_tools=True)
         ],
     )
 
@@ -191,13 +183,7 @@ def test_tools_plus_rag_runs_retrieval() -> None:
     service, retriever, _llm = build_service(
         finance_tools,
         planner_outputs=[
-            PlannerDecision(
-                action=PlannerAction.ANSWER,
-                tickers=["AAPL"],
-                use_rag=True,
-                use_yfinance=True,
-                use_edgar_financials=False,
-            )
+            PlannerDecision(action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_finance_tools=True)
         ],
     )
 
@@ -218,13 +204,7 @@ def test_finance_tools_can_be_disabled_by_env(monkeypatch) -> None:
     service, retriever, _llm = build_service(
         finance_tools,
         planner_outputs=[
-            PlannerDecision(
-                action=PlannerAction.ANSWER,
-                tickers=["AAPL"],
-                use_rag=True,
-                use_yfinance=True,
-                use_edgar_financials=True,
-            )
+            PlannerDecision(action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_finance_tools=True)
         ],
     )
     monkeypatch.setenv("FINRAG_DISABLE_FINANCE_TOOLS", "1")
@@ -247,8 +227,7 @@ def test_multi_ticker_briefs_path_generates_parallel_briefs() -> None:
                 action=PlannerAction.ANSWER,
                 tickers=["NVDA", "GOOGL"],
                 use_rag=True,
-                use_yfinance=False,
-                use_edgar_financials=False,
+                use_finance_tools=False,
                 use_per_ticker_retrieval=True,
                 use_multi_ticker_briefs=True,
             )
@@ -280,8 +259,7 @@ def test_multi_ticker_comparison_prompt_contract_is_used() -> None:
                 tickers=["NVDA", "GOOGL"],
                 characteristics=[QueryCharacteristic.COMPARISON, QueryCharacteristic.FILING_NARRATIVE],
                 use_rag=True,
-                use_yfinance=False,
-                use_edgar_financials=False,
+                use_finance_tools=False,
                 use_per_ticker_retrieval=True,
                 use_multi_ticker_briefs=True,
             )
@@ -307,13 +285,7 @@ def test_tools_only_plan_falls_back_to_rag_when_tools_have_no_actionable_data() 
     service, retriever, _llm = build_service(
         finance_tools,
         planner_outputs=[
-            PlannerDecision(
-                action=PlannerAction.ANSWER,
-                tickers=["AAPL"],
-                use_rag=False,
-                use_yfinance=True,
-                use_edgar_financials=False,
-            )
+            PlannerDecision(action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=False, use_finance_tools=True)
         ],
     )
 
@@ -338,8 +310,7 @@ def test_planner_invalid_json_triggers_repair_call() -> None:
                 tickers=["AAPL"],
                 characteristics=[QueryCharacteristic.MARKET_DATA],
                 use_rag=False,
-                use_yfinance=True,
-                use_edgar_financials=False,
+                use_finance_tools=True,
             ),
         ],
     )
@@ -368,10 +339,9 @@ def test_planner_error_triggers_repair_call() -> None:
             PlannerDecision(
                 action=PlannerAction.ANSWER,
                 tickers=["AAPL"],
-                characteristics=[QueryCharacteristic.FINANCIAL_METRICS, QueryCharacteristic.PERIOD_SCOPED],
+                characteristics=[QueryCharacteristic.FINANCIAL_METRICS],
                 use_rag=False,
-                use_yfinance=False,
-                use_edgar_financials=True,
+                use_finance_tools=True,
             ),
         ],
     )
@@ -385,7 +355,7 @@ def test_planner_error_triggers_repair_call() -> None:
     )
 
     assert decision is not None
-    assert decision.use_edgar_financials is True
+    assert decision.use_finance_tools is True
     assert len(llm.chat_calls) == 2
     assert "You repair malformed planner outputs" in llm.chat_calls[1]["messages"][0]["content"]
 
@@ -415,10 +385,9 @@ def test_planner_characteristics_route_tools_first_without_rag() -> None:
             PlannerDecision(
                 action=PlannerAction.ANSWER,
                 tickers=["AAPL"],
-                characteristics=[QueryCharacteristic.MARKET_DATA, QueryCharacteristic.SIMPLE_NUMERIC],
+                characteristics=[QueryCharacteristic.MARKET_DATA],
                 use_rag=None,
-                use_yfinance=None,
-                use_edgar_financials=None,
+                use_finance_tools=None,
             )
         ],
     )
@@ -427,8 +396,7 @@ def test_planner_characteristics_route_tools_first_without_rag() -> None:
     pipeline = service.execute_query_pipeline(question="What is AAPL market cap right now?", settings=settings)
 
     assert pipeline.planned.use_rag is False
-    assert pipeline.planned.use_yfinance is True
-    assert pipeline.planned.use_edgar_financials is False
+    assert pipeline.planned.use_finance_tools is True
     assert retriever.retrieve_calls == 0
 
 
@@ -442,8 +410,7 @@ def test_planner_characteristics_route_rag_for_narrative() -> None:
                 tickers=["AAPL"],
                 characteristics=[QueryCharacteristic.FILING_NARRATIVE],
                 use_rag=None,
-                use_yfinance=None,
-                use_edgar_financials=None,
+                use_finance_tools=None,
             )
         ],
     )
@@ -454,9 +421,9 @@ def test_planner_characteristics_route_rag_for_narrative() -> None:
     )
 
     assert pipeline.planned.use_rag is True
-    assert pipeline.planned.use_yfinance is False
-    assert pipeline.planned.use_edgar_financials is False
-    assert finance_tools.calls == 0
+    assert pipeline.planned.use_finance_tools is False
+    assert finance_tools.calls == 1
+    assert pipeline.tool_results_for_llm == []
     assert retriever.retrieve_calls == 1
 
 
@@ -470,8 +437,7 @@ def test_planner_mixed_characteristics_use_tools_and_rag() -> None:
                 tickers=["AAPL"],
                 characteristics=[QueryCharacteristic.FILING_NARRATIVE, QueryCharacteristic.MARKET_DATA],
                 use_rag=None,
-                use_yfinance=None,
-                use_edgar_financials=None,
+                use_finance_tools=None,
             )
         ],
     )
@@ -482,12 +448,12 @@ def test_planner_mixed_characteristics_use_tools_and_rag() -> None:
     )
 
     assert pipeline.planned.use_rag is True
-    assert pipeline.planned.use_yfinance is True
+    assert pipeline.planned.use_finance_tools is True
     assert finance_tools.calls == 1
     assert retriever.retrieve_calls == 1
 
 
-def test_period_scoped_financial_metrics_stay_tools_first_when_non_narrative() -> None:
+def test_financial_metrics_stay_tools_first_when_non_narrative() -> None:
     finance_tools = FakeFinanceTools()
     service, retriever, _llm = build_service(
         finance_tools,
@@ -495,10 +461,9 @@ def test_period_scoped_financial_metrics_stay_tools_first_when_non_narrative() -
             PlannerDecision(
                 action=PlannerAction.ANSWER,
                 tickers=["AAPL"],
-                characteristics=[QueryCharacteristic.FINANCIAL_METRICS, QueryCharacteristic.PERIOD_SCOPED],
+                characteristics=[QueryCharacteristic.FINANCIAL_METRICS],
                 use_rag=None,
-                use_yfinance=None,
-                use_edgar_financials=None,
+                use_finance_tools=None,
             )
         ],
     )
@@ -507,7 +472,7 @@ def test_period_scoped_financial_metrics_stay_tools_first_when_non_narrative() -
     pipeline = service.execute_query_pipeline(question="What was AAPL net income in 2025?", settings=settings)
 
     assert pipeline.planned.use_rag is False
-    assert pipeline.planned.use_edgar_financials is True
+    assert pipeline.planned.use_finance_tools is True
     assert finance_tools.calls == 1
     assert retriever.retrieve_calls == 0
 
@@ -517,13 +482,7 @@ def test_prompt_extra_injects_evidence_discipline() -> None:
     service, _retriever, llm = build_service(
         finance_tools,
         planner_outputs=[
-            PlannerDecision(
-                action=PlannerAction.ANSWER,
-                tickers=["AAPL"],
-                use_rag=True,
-                use_yfinance=False,
-                use_edgar_financials=False,
-            )
+            PlannerDecision(action=PlannerAction.ANSWER, tickers=["AAPL"], use_rag=True, use_finance_tools=False)
         ],
     )
 
@@ -568,8 +527,7 @@ def test_clarification_path_refuses_detected_unindexed_ticker_candidates(monkeyp
                 characteristics=[QueryCharacteristic.MARKET_DATA],
                 clarifying_question="Which ticker?",
                 use_rag=False,
-                use_yfinance=True,
-                use_edgar_financials=False,
+                use_finance_tools=True,
             )
         ],
     )
