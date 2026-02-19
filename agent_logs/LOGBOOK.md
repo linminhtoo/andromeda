@@ -2753,3 +2753,166 @@
 
 ### Notes
 - Branch is clean after checkpoint; proceeding to eval rerun and benchmark analysis.
+## 2026-02-18 - Local open-source model survey for NLI & finance-grade reranking
+
+### Scope completed
+- Audited `pyproject.toml` to confirm the stack already brings `sentence-transformers`, `huggingface-hub`, and other HF/torch infrastructure needed for local models.
+- Reviewed `CrossEncoderReranker`, `build_reranker()`, and the `LLMClient`/`llm_for_embeddings` plumbing so the existing retriever/reranker pair can accept new Hugging Face models with minimal code.
+- Cataloged Apache-2.0 Hugging Face checkpoints for entailment (e.g., `cross-encoder/nli-roberta-base`, `cross-encoder/nli-distilroberta-base`) and finance-honed dense/cross encoders (e.g., `shail-2512/nomic-embed-financial-matryoshka`, `hutuhehe/finretriever-cross-reranker`) that can be dropped into the stack.
+
+### Key observations
+- The reranker already instantiates a `SentenceTransformers` `CrossEncoder` via the `RERANKER_MODEL` env var (`src/andromeda/runtime/builders.py:424-427`), so swapping in a finance-tuned checkpoint only requires updating that variable and refreshing caches.
+- Dense retrieval embeddings flow through `PostgresHybridRetriever` which leans on the `LLMClient` `embed_texts` hook (`src/andromeda/retrieval/retriever.py:366-383`); adding a lightweight `SentenceTransformer`‑backed `LLMClient` variant can plug into `llm_for_embeddings()` for on-prem embeddings.
+
+### Why this matters
+- Capturing the above ensures future work can tie the finance-grade checkpoints and NLI cross-encoders into the QA + evidence pipeline without guessing at compatibility, saving a follow-on research step.
+
+## 2026-02-18 - Reduced-heuristics full-suite retry4: long-tail timeout incident handling
+
+### Context
+- Active run: `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.single100.normal.tools12.norefine.20260218_195034`
+- Settings: `mode=normal`, `gen_workers=12`, `parallel_backend=thread`, `query_timeout_s=350`, `query_max_retries=1`, `judge_context_chars=80000`, `judge_workers=12`.
+
+### What happened
+- Generation progressed to `99/100` then long-tailed on one query.
+- Runtime logs showed retry warnings for two queries:
+  - `1dd6251b-e62b-4e58-ae52-35a1253e14c3` (LITE net income factual query)
+  - `aada22de-6020-41aa-be15-5516f64b0aca` (MSFT total revenue factual query)
+- Final outcome:
+  - `1dd6251b-e62b-4e58-ae52-35a1253e14c3` failed after retry budget exhausted with `Timed out after 350.0s`.
+  - `aada22de-6020-41aa-be15-5516f64b0aca` succeeded on retry attempt 2.
+- Single100 generation summary: `n=100, n_ok=99, n_err=1`, `wall_total_ms=846854.446`.
+
+### Failed query summary (required incident detail)
+- Query ID: `1dd6251b-e62b-4e58-ae52-35a1253e14c3`
+- Query text: `What was LITE's net income in its 10-Q filed 2026-02-04?`
+- Failure mode: timeout after retry (`query_attempts` exhausted).
+- Scavenged artifacts:
+  - Runtime warning: `Retrying ... failed: Timed out after 350.0s`
+  - Runtime error: `Error during eval generation ... Timed out after 350.0s`
+  - Generation record: `error="Timed out after 350.0s"`, `timing_ms.total_ms=700505.2527501248`
+  - No draft/final answer captured, `tool_trace_len=0`, `tool_results_len=0`
+
+### Slow-but-recovered query summary
+- Query ID: `aada22de-6020-41aa-be15-5516f64b0aca`
+- Query text: `What was MSFT's total revenue in its 10-K filed 2025-07-30?`
+- Behavior: timed out once, succeeded on retry (`query_attempts=2`)
+- Scavenged output preview:
+  - Final answer began with `MSFT’s Total Revenue ... $281,724 million`.
+  - `timing_ms.total_ms=382516.4867863059`
+  - `tool_trace_len=8`, `tool_results_len=3`
+
+### Immediate action
+- Proceeding without panic per instruction: run continues into scoring.
+- This incident will be included in the reduced-heuristics benchmark report under long-tail decoding/timeout behavior.
+
+## 2026-02-18 - Retrieval eval instrumentation update (precision/recall + NLI support)
+
+### Commit
+- `d9220cf`
+
+### What changed
+- Added retrieval/rerank subsystem metric modules and integrated them into scoring/report surfaces:
+  - `src/andromeda/eval/retrieval_metrics.py`
+  - `src/andromeda/eval/rerank_metrics.py`
+  - `src/andromeda/eval/evidence_support.py`
+  - `src/andromeda/eval/scoring.py`
+  - `scripts/score_eval.py`
+  - `scripts/eval_retrieval.py`
+- Added explicit precision/recall tracking to address retrieval-plan feedback:
+  - chunk/doc: `precision_at_{5,10,25}`
+  - chunk/doc: `recall_at_{5,10,25}`
+  - rerank deltas for precision/recall
+- Added retrieval/NLI tests:
+  - `tests/test_eval_retrieval_metrics.py`
+  - updated `tests/test_eval_schema_scoring.py`
+
+### Validation
+- `source .venv/bin/activate && pytest -vvv tests/test_eval_retrieval_metrics.py tests/test_eval_schema_scoring.py`
+- Result: `10 passed`.
+
+### Why this matters
+- Precision is now a first-class retrieval KPI in both per-query artifacts and topline summaries.
+- Reranker evaluation now measures not only MRR/hit uplift, but precision/recall movement as well.
+
+## 2026-02-18 - Retrieval benchmark continuation from 300-sample manual audit (Task 3)
+
+### Context
+- Resumed from completed Codex-manual retrieval annotation set:
+  - `eval/results_revamp/full_suite/reduced_heuristics_full_retry4_retrieval_pool.sample300.codex_manual.csv`
+- Goal: close the retrieval/rerank evaluation loop with explicit metrics tables, calibration interpretation, and final report.
+
+### Scripts executed
+- `agent_logs/scripts/eval/20260218_215100_eval_retrieval_multi60.sh`
+  - Added missing retrieval metric artifacts for `multi60` slice.
+  - Uses local HF cache under `/tmp/hf_home` to avoid permission errors on `~/.cache/huggingface`.
+- `agent_logs/scripts/eval/20260218_215700_summarize_retrieval_manual_sample.sh`
+  - Produces manual-audit aggregate summaries and rank-movement diagnostics.
+
+### Artifacts produced/updated
+- `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.multi60.normal.tools12.norefine.20260218_200838/retrieval_rerank_metrics.json`
+- `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.multi60.normal.tools12.norefine.20260218_200838/retrieval_rerank_metrics.csv`
+- `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.multi60.normal.tools12.norefine.20260218_200838/retrieval_rerank_metrics.md`
+- `agent_logs/reports/retrieval_eval_20260218/manual_sample300_summary.json`
+- `agent_logs/reports/retrieval_eval_20260218/manual_sample300_summary.md`
+- `BENCHMARK_RETRIEVAL.md`
+
+### Key metrics and observations
+- Factual-anchor retrieval/rerank (`single100`, `factual_n=34`):
+  - chunk MRR: `0.3092 -> 0.1743` (`delta=-0.1349`)
+  - chunk P@5: `0.1118 -> 0.0647`
+  - chunk P@10: `0.0647 -> 0.0471`
+  - chunk R@25: `0.7353 -> 0.7059`
+  - rerank chunk win-rate: `0.1765`
+- NLI evidence support:
+  - `single100` open-ended subset (`n=30`): support `0.1000`, contradiction `0.3958`, unsupported `0.5042`
+  - `open200` (`n=120`): support `0.1292`, contradiction `0.4115`, unsupported `0.4594`
+- Manual relevance audit (`n=300`, Codex-manual labels):
+  - overall relevance positive rate: `0.4167`
+  - factual relevance positive rate: `0.1357` (`19/140`)
+  - relevant rows in both pre/post: promoted `32`, demoted `37`, unchanged `5` (avg delta `+0.0676` where positive means post worse rank)
+  - by-kind movement indicates more factual/comparison demotions than promotions.
+- Weak-label calibration vs manual labels (`n=140`, threshold `0.5`):
+  - `tp=19`, `fp=121`, `tn=0`, `fn=0`
+  - precision_1 `0.1357`, recall_1 `1.0000`, balanced accuracy `0.5000`
+  - weak labels are high-recall but too noisy for precision-sensitive ranking conclusions.
+
+### Surprising findings
+- Reranking under current settings degrades chunk-level factual relevance concentration despite correct-doc saturation.
+- Early-rank sample relevance (top-5) declines post-rerank in audited rows, while top-10 partly recovers; this suggests reordering behavior that does not consistently prioritize exact evidence.
+- Weak-label doc-match heuristic overstates relevance for factual tasks and must not be treated as proxy precision ground truth.
+
+### Immediate actions taken
+- Finalized a dedicated retrieval benchmark report with explicit experiment definitions and tables:
+  - `BENCHMARK_RETRIEVAL.md`
+- Structured findings around actionable follow-ups:
+  - reranker tuning for factual numeric/period-aware evidence,
+  - improved weak-label design,
+  - continued manual calibration slices as release gate.
+
+## 2026-02-18 - Isolated latency probe for LITE timeout query
+
+### Why
+- Follow-up to the earlier timeout incident for:
+  - `query_id=1dd6251b-e62b-4e58-ae52-35a1253e14c3`
+  - question: `What was LITE's net income in its 10-Q filed 2026-02-04?`
+- Goal: test isolated behavior (no batch competition) and validate whether >350s was purely queueing.
+
+### Scripts executed
+- `agent_logs/scripts/eval/20260218_220200_probe_lite_isolated_latency.sh`
+  - direct runtime call (`answer_question`) with outer shell timeout `500s`
+  - outcome: timed out (`exit=124`) before returning payload.
+- `agent_logs/scripts/eval/20260218_221400_probe_lite_single_eval_timeout350.sh`
+  - single-query eval (`run_eval`) with `concurrency=1`, `query_timeout_s=350`, `query_max_retries=0`
+  - run dir: `agent_logs/reports/retrieval_eval_20260218/lite_single_eval_probe/eval_run.lite_isolated_timeout350.20260218_220015`
+
+### Results
+- Probe A: no completed response within `500s` (pathological slow/stuck behavior still reproducible in isolation).
+- Probe B: same query completed successfully in `20601 ms`.
+  - generation summary: `n=1`, `n_ok=1`, `n_err=0`, `avg_total_ms=20601.03`
+  - response had `tool_trace_len=8`, `tool_results_len=3`, `retrieved_chunks=40`, `top_chunks=25`.
+
+### Interpretation
+- Not purely a batching starvation issue: isolated runtime can still stall in rare cases.
+- Also not deterministically expensive: isolated runs can finish quickly (~20.6s).
+- Most plausible explanation remains intermittent model/runtime stall behavior (decoding or backend-level transient), reinforcing timeout+retry as the right control mechanism.

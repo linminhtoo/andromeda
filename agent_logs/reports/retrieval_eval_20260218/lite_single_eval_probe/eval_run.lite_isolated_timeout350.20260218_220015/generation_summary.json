@@ -1,0 +1,25 @@
+{
+  "n": 1,
+  "n_ok": 1,
+  "n_err": 0,
+  "avg_total_ms": 20601.025926414877,
+  "wall_total_ms": 30414.335750974715,
+  "settings": {
+    "mode": "normal",
+    "top_k_retrieve": null,
+    "top_k_rerank": null,
+    "draft_max_tokens": null,
+    "final_max_tokens": null,
+    "brief_max_tokens": null,
+    "enable_rerank": null,
+    "enable_refine": null,
+    "answer_style": null,
+    "answering_effort": null,
+    "draft_temperature": null,
+    "concurrency": 1,
+    "parallel_backend": "thread",
+    "max_chunks": 50,
+    "query_timeout_s": 350.0,
+    "query_max_retries": 0
+  }
+}
