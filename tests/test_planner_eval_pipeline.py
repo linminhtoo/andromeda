@@ -37,20 +37,14 @@ def test_score_planner_predictions_perfect_match() -> None:
             expected_characteristics=[PlannerEvalCharacteristic.MARKET_DATA, PlannerEvalCharacteristic.SIMPLE_NUMERIC],
         ),
         PlannerEvalQuery(
-            id="q2",
-            question="Refuse this",
-            expected_characteristics=[],
-            expected_action=PlannerEvalAction.REFUSED,
+            id="q2", question="Refuse this", expected_characteristics=[], expected_action=PlannerEvalAction.REFUSED
         ),
     ]
     predictions = [
         PlannerEvalPrediction(
             query_id="q1",
             question=queries[0].question,
-            predicted_characteristics=[
-                PlannerEvalCharacteristic.MARKET_DATA,
-                PlannerEvalCharacteristic.SIMPLE_NUMERIC,
-            ],
+            predicted_characteristics=[PlannerEvalCharacteristic.MARKET_DATA, PlannerEvalCharacteristic.SIMPLE_NUMERIC],
             predicted_action=PlannerEvalAction.ANSWERED,
         ),
         PlannerEvalPrediction(
@@ -85,10 +79,7 @@ def test_score_planner_predictions_handles_missing_and_partial() -> None:
             expected_characteristics=[PlannerEvalCharacteristic.MARKET_DATA, PlannerEvalCharacteristic.SIMPLE_NUMERIC],
         ),
         PlannerEvalQuery(
-            id="q2",
-            question="Write a poem",
-            expected_characteristics=[],
-            expected_action=PlannerEvalAction.REFUSED,
+            id="q2", question="Write a poem", expected_characteristics=[], expected_action=PlannerEvalAction.REFUSED
         ),
     ]
     predictions = [
@@ -192,15 +183,9 @@ def test_run_one_records_terminal_error_after_retries() -> None:
             _ = (question, tickers, filing_date_from, filing_date_to)
             raise RuntimeError("planner failure")
 
-    query = PlannerEvalQuery(
-        id="q-fail",
-        question="Anything",
-        expected_characteristics=[],
-    )
+    query = PlannerEvalQuery(id="q-fail", question="Anything", expected_characteristics=[])
     prediction, _item_ms, ok = run_one(
-        AlwaysFailService(),
-        query,
-        PlannerRunConfig(concurrency=1, query_timeout_s=2.0, query_max_retries=1),
+        AlwaysFailService(), query, PlannerRunConfig(concurrency=1, query_timeout_s=2.0, query_max_retries=1)
     )
 
     assert ok is False

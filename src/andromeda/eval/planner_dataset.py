@@ -193,7 +193,10 @@ def build_manual_planner_eval_queries() -> list[PlannerEvalQuery]:
 
     # Group G: filing_narrative + market_data (8)
     narrative_plus_market = [
-        ("Using filings plus current market signals, assess whether NVDA risk/reward still looks attractive.", ["NVDA"]),
+        (
+            "Using filings plus current market signals, assess whether NVDA risk/reward still looks attractive.",
+            ["NVDA"],
+        ),
         ("Combine AAPL filing strategy commentary with valuation context to assess upside/downside.", ["AAPL"]),
         ("Blend TSLA filing risks with recent stock behavior to assess near-term uncertainty.", ["TSLA"]),
         ("Use MSFT filing narrative and current multiples to evaluate investment quality.", ["MSFT"]),

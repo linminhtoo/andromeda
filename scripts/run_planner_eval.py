@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
-import os
 import shutil
 import threading
 import time
@@ -225,10 +224,7 @@ def main() -> None:
         help="Per-query planner timeout in seconds (set <=0 to disable).",
     )
     parser.add_argument(
-        "--query-max-retries",
-        type=int,
-        default=1,
-        help="Retry count after first transient/timeout planner failure.",
+        "--query-max-retries", type=int, default=1, help="Retry count after first transient/timeout planner failure."
     )
     parser.add_argument("--max-items", type=int, default=None, help="Optional cap on query count.")
     args = parser.parse_args()

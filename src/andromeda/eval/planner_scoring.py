@@ -67,9 +67,7 @@ def _sorted_characteristics(items: set[PlannerEvalCharacteristic]) -> list[Plann
 
 
 def score_planner_predictions(
-    *,
-    queries: list[PlannerEvalQuery],
-    predictions: list[PlannerEvalPrediction],
+    *, queries: list[PlannerEvalQuery], predictions: list[PlannerEvalPrediction]
 ) -> tuple[list[PlannerEvalScore], dict[str, object]]:
     """
     Score planner predictions against manually labeled characteristics.

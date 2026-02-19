@@ -15,9 +15,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Create manually curated planner-characteristics eval dataset.")
     parser.add_argument(
-        "--out",
-        default="eval/eval_queries_planner_characteristics_manual100_20260219.jsonl",
-        help="Output JSONL path.",
+        "--out", default="eval/eval_queries_planner_characteristics_manual100_20260219.jsonl", help="Output JSONL path."
     )
     parser.add_argument("--max-items", type=int, default=None, help="Optional cap on number of queries to write.")
     args = parser.parse_args()
