@@ -2,6 +2,53 @@
 
 Andromeda is a tools-first financial QA system over SEC filings. It combines planner-routed tool calls, hybrid retrieval, reranking, and eval-governed iteration so numeric and narrative answers are grounded in explicit evidence.
 
+## Latest Status (as of 2026-02-20)
+
+Recent repo changes and benchmark results to know first:
+
+- Planner characteristics quality improved substantially in the latest planner eval run:
+  - exact match `0.98`
+  - macro F1 `0.9960`
+  - micro F1 `0.9919`
+  - see `BENCHMARK_PLANNER_v3.md`
+
+## UI Snapshot Walkthrough
+
+### 1) Main workspace (planner + progress + source viewer)
+
+![Andromeda main workspace](docs/full_snapshot.png)
+
+The main UI combines conversation history, planner stage timings, tool results, reranked evidence, and a synchronized source viewer.
+
+### 2) Tools-first evidence collection
+
+![Tool snapshot](docs/tool_snapshot.png)
+
+Tool cards surface profile/valuation, recent news, price history, and SEC financial metrics before final synthesis.
+
+### 3) Reranked chunks used for answer grounding
+
+![Reranked chunks panel](docs/reranked_chunks.png)
+
+The retrieval panel shows ranked chunks, filing metadata, and direct "open source / view in app" links for inspection.
+
+### 4) Final answer structure
+
+![Answer example](docs/answer_example.png)
+
+Answers are organized as thesis points with direct quotes and additional context tied to evidence.
+
+### 5) Citation list for traceability
+
+![Answer citations](docs/answer_citations.png)
+
+Each response includes a consolidated cited-sources block with filing tags and tool outputs.
+
+### 6) Eval review interface
+
+![Eval review UI](docs/eval_review_UI.png)
+
+The review UI supports case filtering, pass/fail labeling, timing inspection, and targeted export/reload workflows.
 
 ## Architecture
 
