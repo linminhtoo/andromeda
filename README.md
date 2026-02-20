@@ -2,24 +2,6 @@
 
 Andromeda is a tools-first financial QA system over SEC filings. It combines planner-routed tool calls, hybrid retrieval, reranking, and eval-governed iteration so numeric and narrative answers are grounded in explicit evidence.
 
-## Latest Status (as of 2026-02-20)
-
-Recent repo changes and benchmark results to know first:
-
-- Planner characteristics quality improved substantially in the latest planner eval run:
-  - exact match `0.98`
-  - macro F1 `0.9960`
-  - micro F1 `0.9919`
-  - see `BENCHMARK_PLANNER_v3.md`
-- Planner routing failure mode was fixed (heuristic ticker-inference refusal path removed in planner-first flow), and open-ended baseline quality improved in the full-suite rerun:
-  - open200 faithfulness fail `0.2764 -> 0.1200`
-  - open200 helpfulness fail `0.4372 -> 0.2800`
-  - see `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md` and `agent_logs/LOGBOOK.md`
-- Eval launcher guardrails now resolve `DOC_INDEX_PATH` from ingest profile by default and block profile/path mismatches unless explicitly overridden:
-  - see `scripts/run_full_eval_suite.sh`, `scripts/_env.sh`, `CHANGELOG.md` (Unreleased)
-- Retrieval benchmarking remains mixed by slice:
-  - retrieval-only factual-anchor audit showed rerank regressions in chunk-level concentration (`BENCHMARK_RETRIEVAL.md`)
-  - end-to-end full-suite rerun did not support globally disabling rerank (`BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`)
 
 ## Architecture
 
@@ -256,26 +238,3 @@ bash scripts/run_planner_eval_suite.sh
 
 Detailed eval runbook:
 - `README_EVAL.md`
-
-## Benchmark References
-
-- End-to-end frontier and defaults:
-  - `BENCHMARK.md`
-- Retrieval/rerank subsystem deep-dive:
-  - `BENCHMARK_RETRIEVAL.md`
-- Reduced-heuristics full-suite run:
-  - `BENCHMARK_REDUCED_HEURISTICS.md`
-- Planner quality progression:
-  - `BENCHMARK_PLANNER.md`
-  - `BENCHMARK_PLANNER_v2.md`
-  - `BENCHMARK_PLANNER_v3.md`
-- Post-fix ablation rerun and coverage analysis:
-  - `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`
-
-## Known Caveat (Important)
-
-Recent post-fix helpfulness failures are still heavily influenced by eval-query/index coverage mismatch (many prompts ask for out-of-index tickers). Treat aggregate helpfulness with an `in_index` vs `out_of_index` split when making runtime decisions.
-
-See:
-- `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`
-- `agent_logs/LOGBOOK.md`
