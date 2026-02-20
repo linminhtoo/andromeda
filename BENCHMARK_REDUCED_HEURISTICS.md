@@ -104,16 +104,38 @@ To avoid circularity, the audit did **not** call the judge LLM.
   - `eval/results_revamp/full_suite/reduced_heuristics_full_retry4_envoverride_20260218_195034.judge_audit_manual/judge_reliability_report.codex_manual.json`
 
 ### 6.2 Alignment summary (test split)
-| judge | n_test | accuracy | precision_fail | recall_fail | notes |
-|---|---:|---:|---:|---:|---|
-| faithfulness_v1 | 58 | 0.9828 | 0.8750 | 1.0000 | strong alignment |
-| factual_correctness_v1 | 9 | 1.0000 | 1.0000 | 1.0000 | tiny sample |
-| helpfulness_v1 | 85 | 0.9882 | 1.0000 | 0.5000 | under-calls fail cases |
-| comparison_v1 | 15 | 1.0000 | 1.0000 | 1.0000 | aligned on this set |
-| focus_v1 | 4 | 1.0000 | 0.0000 | 0.0000 | no fail cases in test split |
-| refusal_v1 | 5 | 0.8000 | 0.0000 | 0.0000 | misses refusal-needed cases |
+| judge | n_test | accuracy | precision_fail | recall_fail | Cohen's kappa (test) | notes |
+|---|---:|---:|---:|---:|---:|---|
+| faithfulness_v1 | 58 | 0.9828 | 0.8750 | 1.0000 | 0.9235 | strong alignment |
+| factual_correctness_v1 | 9 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | tiny sample |
+| helpfulness_v1 | 85 | 0.9882 | 1.0000 | 0.5000 | 0.6614 | under-calls fail cases |
+| comparison_v1 | 15 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | aligned on this set |
+| focus_v1 | 4 | 1.0000 | 0.0000 | 0.0000 | 1.0000 | no fail cases in test split |
+| refusal_v1 | 5 | 0.8000 | 0.0000 | 0.0000 | 0.0000 | misses refusal-needed cases |
 
-### 6.3 Key disagreement patterns
+### 6.3 Cohen's kappa on manually audited dev/test splits
+Computed from `judge_reliability_report.codex_manual.json` using manual labels (`human_label`) vs judge decision (`judge_prediction`) per `judge_id`.
+
+| judge | kappa_dev | kappa_test |
+|---|---:|---:|
+| comparison_v1 | 1.0000 | 1.0000 |
+| factual_correctness_v1 | 0.6479 | 1.0000 |
+| faithfulness_v1 | 0.9233 | 0.9235 |
+| focus_v1 | 1.0000 | 1.0000 |
+| helpfulness_v1 | 0.2809 | 0.6614 |
+| refusal_v1 | 0.0000 | 0.0000 |
+
+Aggregate agreement across all audited decisions:
+- pooled kappa (dev): `0.8294` (`n=522`)
+- pooled kappa (test): `0.8708` (`n=176`)
+- macro-average kappa (dev/test): `0.6420` / `0.7641`
+- sample-weighted kappa (dev/test): `0.5792` / `0.7828`
+
+Interpretation:
+- Overall agreement is strong at pooled level.
+- The weakest agreement remains in `helpfulness_v1` and `refusal_v1`, consistent with observed under-calling of fail cases.
+
+### 6.4 Key disagreement patterns
 Confusion from full 698 labeled decisions:
 - false positives: `4` total
   - mostly faithfulness over-flags (`3`) and one factual false positive.

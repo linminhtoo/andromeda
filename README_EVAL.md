@@ -105,6 +105,11 @@ What this executes:
 - writes a consolidated manifest:
   - `eval/results_revamp/full_suite/<run_group>.manifest.json`
 
+Important path-resolution behavior:
+- `scripts/run_full_eval_suite.sh` now resolves `DOC_INDEX_PATH` from `INGEST_PROFILE` by default.
+- It intentionally ignores stale `.env` `FINRAG_DOC_INDEX_PATH` unless you explicitly pass `DOC_INDEX_PATH` (or `FINRAG_DOC_INDEX_PATH_OVERRIDE`).
+- Use `ALLOW_EVAL_PROFILE_MISMATCH=1` only when you intentionally want query/profile mismatches.
+
 ## 4) Query Generation Lineage (Including Tolerance Filtering)
 
 The current eval assets are generated with these scripts:

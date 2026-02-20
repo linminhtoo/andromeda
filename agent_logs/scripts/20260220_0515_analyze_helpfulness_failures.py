@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import csv
+import json
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class RunSpec:
+    name: str
+    run_dir: Path
+
+
+RUNS = [
+    RunSpec(
+        name="baseline_single100",
+        run_dir=Path(
+            "eval/results_revamp/full_suite_ablation/"
+            "eval_run.full_suite_ablation_20260220_022028.baseline_best.single100.normal.tools12.norefine.20260220_022029"
+        ),
+    ),
+    RunSpec(
+        name="baseline_multi60",
+        run_dir=Path(
+            "eval/results_revamp/full_suite_ablation/"
+            "eval_run.full_suite_ablation_20260220_022028.baseline_best.multi60.normal.tools12.norefine.20260220_024054"
+        ),
+    ),
+    RunSpec(
+        name="baseline_open200",
+        run_dir=Path(
+            "eval/results_revamp/full_suite_ablation/"
+            "eval_run.full_suite_ablation_20260220_022028.baseline_best.open200.normal.tools12.norefine.20260220_024910"
+        ),
+    ),
+]
+
+OUTPUT_MD = Path("agent_logs/reports/20260220_helpfulness_failure_examples.md")
+
+
+def classify_reason(text: str, kind: str) -> str:
+    lower = text.lower()
+    if "does not compare" in lower or "compare both" in lower or "one company" in lower:
+        return "insufficient comparison coverage"
+    if "missing" in lower and "citation" in lower:
+        return "missing/weak citations"
+    if "not cite" in lower or "no citation" in lower or "without citation" in lower:
+        return "missing/weak citations"
+    if "too generic" in lower or "generic" in lower or "vague" in lower:
+        return "too generic / lacks specifics"
+    if "does not address" in lower or "fails to address" in lower or "not directly address" in lower:
+        return "question not fully addressed"
+    if "unsupported" in lower or "not supported" in lower or "halluc" in lower:
+        return "unsupported claims"
+    if "no quantitative" in lower or "lacks quantitative" in lower or "numerical" in lower:
+        return "insufficient quantitative detail"
+    if "too brief" in lower or "incomplete" in lower or "omits" in lower:
+        return "incomplete coverage"
+    if kind == "comparison":
+        return "insufficient comparison coverage"
+    return "other"
+
+
+def answer_snippet(answer: str, limit: int = 360) -> str:
+    s = " ".join(answer.split())
+    if len(s) <= limit:
+        return s
+    return s[: limit - 3] + "..."
+
+
+def load_generations_map(run_dir: Path) -> dict[str, dict]:
+    path = run_dir / "generations.jsonl"
+    out: dict[str, dict] = {}
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            qid = obj.get("query_id")
+            if isinstance(qid, str):
+                out[qid] = obj
+    return out
+
+
+def analyze_run(spec: RunSpec) -> dict:
+    review_path = spec.run_dir / "review.csv"
+    gens = load_generations_map(spec.run_dir)
+    rows = []
+    with review_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
+
+    helpful_fail_rows = [r for r in rows if r.get("helpfulness_prediction") == "1"]
+
+    by_kind = Counter(r.get("kind", "") for r in helpful_fail_rows)
+
+    examples = []
+    reason_counter: Counter[str] = Counter()
+    by_reason_examples: dict[str, list[dict]] = defaultdict(list)
+
+    for row in helpful_fail_rows:
+        qid = row.get("query_id", "")
+        kind = row.get("kind", "")
+        judge_reason = row.get("helpfulness_explanation", "")
+        reason = classify_reason(judge_reason, kind)
+        reason_counter[reason] += 1
+
+        gen = gens.get(qid, {})
+        final_answer = gen.get("final_answer") or ""
+
+        ex = {
+            "query_id": qid,
+            "kind": kind,
+            "question": row.get("question", ""),
+            "reason_bucket": reason,
+            "judge_reason": judge_reason,
+            "answer_snippet": answer_snippet(final_answer),
+            "run_dir": str(spec.run_dir),
+        }
+        by_reason_examples[reason].append(ex)
+        examples.append(ex)
+
+    selected = []
+    for reason, _count in reason_counter.most_common():
+        if by_reason_examples[reason]:
+            selected.append(by_reason_examples[reason][0])
+
+    return {
+        "spec": spec,
+        "n_total": len(rows),
+        "n_helpfulness_fail": len(helpful_fail_rows),
+        "by_kind": by_kind,
+        "reason_counter": reason_counter,
+        "selected_examples": selected,
+        "all_examples": examples,
+    }
+
+
+def to_markdown(results: list[dict]) -> str:
+    out = []
+    out.append("# Helpfulness Failure Extraction (Baseline Post-Fix)\n")
+    out.append("This file is generated by `agent_logs/scripts/20260220_0515_analyze_helpfulness_failures.py`.\n")
+
+    for res in results:
+        spec: RunSpec = res["spec"]
+        out.append(f"## {spec.name}\n")
+        out.append(f"- run_dir: `{spec.run_dir}`")
+        out.append(f"- total reviewed rows: `{res['n_total']}`")
+        out.append(f"- helpfulness fails: `{res['n_helpfulness_fail']}`")
+        out.append("- fails by kind:")
+        for kind, c in sorted(res["by_kind"].items()):
+            out.append(f"  - `{kind}`: `{c}`")
+        out.append("- reason buckets:")
+        for reason, c in res["reason_counter"].most_common():
+            out.append(f"  - {reason}: `{c}`")
+
+        out.append("\n### Representative examples\n")
+        for ex in res["selected_examples"][:8]:
+            out.append(f"- query_id: `{ex['query_id']}` ({ex['kind']})")
+            out.append(f"  - reason bucket: {ex['reason_bucket']}")
+            out.append(f"  - question: {ex['question']}")
+            out.append(f"  - answer snippet: {ex['answer_snippet']}")
+            out.append(f"  - judge rationale (helpfulness): {ex['judge_reason']}")
+        out.append("")
+
+    return "\n".join(out).strip() + "\n"
+
+
+def main() -> None:
+    results = [analyze_run(spec) for spec in RUNS]
+    OUTPUT_MD.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_MD.write_text(to_markdown(results), encoding="utf-8")
+    print(f"Wrote {OUTPUT_MD}")
+
+
+if __name__ == "__main__":
+    main()

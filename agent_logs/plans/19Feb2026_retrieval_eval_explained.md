@@ -4,7 +4,7 @@
 Document how retrieval evaluations work in the repo by tracing datasets, ground truths, and evaluation metrics.
 
 ## Files to Change
-- None (informational task).  
+- None (informational task).
 - New file: `agent_logs/plans/19Feb2026_retrieval_eval_explained.md` (this plan).
 
 ## Phases
