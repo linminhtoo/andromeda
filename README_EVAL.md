@@ -175,3 +175,14 @@ Per run directory (`planner_eval_run.*`):
 - macro/micro precision, recall, F1
 - per-characteristic TP/FP/FN/TN with precision/recall/F1
 - action accuracy for labeled action rows (`refused`, `clarification_required`)
+
+
+## 3) Current Metrics Snapshot
+
+### Full single-ticker suite (100 queries, all non-comparison kinds)
+TO BE UPDATED 
+
+### Multi-ticker comparison snapshot
+TO BE UPDATED 
+
+### Open-ended stress
