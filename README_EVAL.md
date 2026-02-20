@@ -42,48 +42,7 @@ Rationale: in the controlled sweep (`agent_logs/reports/chunk_size_tradeoff_17Fe
 - `judge_max_retries=1`
 - active faithfulness rubric: materiality-calibrated `faithfulness_v1` in `src/andromeda/eval/judges.py`
 
-## 2) Current Metrics Snapshot
-
-### Full single-ticker suite (100 queries, all non-comparison kinds)
-Run:
-- `eval/results_revamp/single/eval_run.single_ext_chunk512_v1_normal_tools12_norefine_eval100.20260217_043752/score_summary.json`
-
-Metrics:
-- factual:
-  - `numeric_accuracy=0.60`
-  - `factual_correctness_v1` fail rate: `0.0571`
-  - factual `helpfulness_v1` fail rate: `0.0286`
-- open-ended:
-  - `faithfulness_v1` fail rate: `0.2667`
-  - open-ended `helpfulness_v1` fail rate: `0.0`
-- refusal:
-  - `refusal_v1` fail rate: `0.0`
-- distractor:
-  - `focus_v1` fail rate: `0.0667`
-  - distractor `helpfulness_v1` fail rate: `0.0`
-
-### Multi-ticker comparison snapshot
-Run:
-- `eval/results_revamp/multi/eval_run.multi_holistic_normal_v2_tools8_norefine_calibrated.20260216_234717/score_summary.json`
-
-Metrics:
-- comparison `comparison_v1` fail rate: `0.0417`
-- comparison `helpfulness_v1` fail rate: `0.0`
-
-### Open-ended stress + judge-tuning snapshot
-Generation baseline run (200 diverse open-ended):
-- `eval/results_revamp/open/eval_run.open_diverse200_iter0_baseline_normal_tools12_norefine_qt350_jt350.20260218_002122/score_summary.json`
-  - faithfulness fail: `0.215`
-  - helpfulness fail: `0.01`
-
-Judge-iteration run (fixed generations, materiality-calibrated prompt):
-- `eval/results_revamp/judge_tuning/eval_run.open200_judge_iter3_materiality.20260218_010749/score_summary.json`
-  - faithfulness fail: `0.08`
-  - helpfulness fail: `0.015`
-
-Interpretation: the large faithfulness delta in judge-only rescoring indicates prior over-strict false positives; judge reliability should be interpreted with manual-audit calibration, not raw fail-rate alone.
-
-## 3) One-Pass Full Eval Suite
+## 2) One-Pass Full Eval Suite
 
 ### Quick path (assets already prepared)
 ```bash
