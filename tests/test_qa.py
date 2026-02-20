@@ -8,6 +8,8 @@ from andromeda.llm.qa import (
     build_context,
     build_draft_prompt,
     build_faithfulness_scrub_prompt,
+    build_multi_ticker_refine_prompt,
+    build_multi_ticker_synthesis_prompt,
     build_refine_prompt,
 )
 from tests.fakes import RecordingLLM
@@ -133,3 +135,22 @@ def test_answer_question_two_stage_calls_llm_twice() -> None:
     draft, final = answer_question_two_stage(llm, "Q?", reranked, draft_max_tokens=50, final_max_tokens=50)
     assert (draft, final) == ("draft1", "final1")
     assert len(llm.chat_calls) == 2
+
+
+def test_multi_ticker_comparison_prompt_contract_is_injected() -> None:
+    synth = build_multi_ticker_synthesis_prompt(
+        question="Compare NVDA vs AMD for long-term investment.",
+        per_ticker_briefs={"NVDA": "Brief A", "AMD": "Brief B"},
+        comparison_required=True,
+    )
+    assert "Comparison output contract" in synth[0]["content"]
+    assert "follow the comparison output contract exactly" in synth[1]["content"]
+
+    refine = build_multi_ticker_refine_prompt(
+        question="Compare NVDA vs AMD for long-term investment.",
+        draft="Draft answer",
+        per_ticker_briefs={"NVDA": "Brief A", "AMD": "Brief B"},
+        comparison_required=True,
+    )
+    assert "Comparison output contract" in refine[0]["content"]
+    assert "Preserve the required comparison structure" in refine[1]["content"]

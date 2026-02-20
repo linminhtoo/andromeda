@@ -14,12 +14,21 @@ from typing import Any, cast
 from sklearn.metrics import cohen_kappa_score, confusion_matrix, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
 
-DEFAULT_JUDGES = ["faithfulness_v1", "factual_correctness_v1", "helpfulness_v1", "focus_v1"]
+DEFAULT_JUDGES = [
+    "faithfulness_v1",
+    "factual_correctness_v1",
+    "helpfulness_v1",
+    "focus_v1",
+    "comparison_v1",
+    "refusal_v1",
+]
 DEFAULT_KINDS_BY_JUDGE = {
     "faithfulness_v1": {"open_ended"},
     "factual_correctness_v1": {"factual"},
-    "helpfulness_v1": {"factual"},
+    "helpfulness_v1": {"factual", "open_ended", "distractor", "comparison"},
     "focus_v1": {"distractor"},
+    "comparison_v1": {"comparison"},
+    "refusal_v1": {"refusal"},
 }
 
 
@@ -225,7 +234,7 @@ def _build_audit(args: argparse.Namespace) -> None:
                 for judge_id in target_judges:
                     if judge_id not in pred_map:
                         continue
-                    if kind not in DEFAULT_KINDS_BY_JUDGE.get(judge_id, {kind}):
+                    if not args.disable_kind_filter and kind not in DEFAULT_KINDS_BY_JUDGE.get(judge_id, {kind}):
                         continue
                     key = AuditKey(query_id=query_id, judge_id=judge_id)
                     if args.dedupe and key.decision_id in seen:
@@ -406,6 +415,12 @@ def _parse_args() -> argparse.Namespace:
     build.add_argument("--run-dirs", nargs="+", required=True, type=Path, help="Run directories containing review.csv")
     build.add_argument("--out-csv", type=Path, required=True, help="Output decision-level audit CSV")
     build.add_argument("--judges", nargs="*", default=None, help="Judge IDs to include")
+    build.add_argument(
+        "--disable-kind-filter",
+        action="store_true",
+        default=False,
+        help="Do not filter by DEFAULT_KINDS_BY_JUDGE; include any available judge prediction rows.",
+    )
     build.add_argument(
         "--dedupe",
         action="store_true",

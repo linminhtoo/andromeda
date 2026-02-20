@@ -1,0 +1,206 @@
+{
+  "run_dir": "/home/mlin/repos/z_scratch/financial-rag/eval/results_planner/planner_eval_run.planner_live_manual100_20260219_205341.20260219_205341",
+  "topline": {
+    "n_queries": 100,
+    "n_predictions": 100,
+    "missing_predictions": 0,
+    "prediction_errors": 0,
+    "characteristic_exact_match_rate": 0.64,
+    "expected_subset_recall_rate": 0.76,
+    "macro_precision": 0.9116666666666667,
+    "macro_recall": 0.9033333333333333,
+    "macro_f1": 0.8906666666666666,
+    "micro_precision": 0.9101123595505618,
+    "micro_recall": 0.8571428571428571,
+    "micro_f1": 0.8828337874659401,
+    "action_evaluable_n": 6,
+    "action_accuracy": 0.6666666666666666,
+    "per_characteristic": {
+      "comparison": {
+        "tp": 20,
+        "fp": 2,
+        "fn": 2,
+        "tn": 76,
+        "support": 22,
+        "precision": 0.9090909090909091,
+        "recall": 0.9090909090909091,
+        "f1": 0.9090909090909091
+      },
+      "market_data": {
+        "tp": 34,
+        "fp": 0,
+        "fn": 3,
+        "tn": 63,
+        "support": 37,
+        "precision": 1.0,
+        "recall": 0.918918918918919,
+        "f1": 0.9577464788732395
+      },
+      "financial_metrics": {
+        "tp": 28,
+        "fp": 3,
+        "fn": 0,
+        "tn": 69,
+        "support": 28,
+        "precision": 0.9032258064516129,
+        "recall": 1.0,
+        "f1": 0.9491525423728813
+      },
+      "filing_narrative": {
+        "tp": 38,
+        "fp": 2,
+        "fn": 2,
+        "tn": 58,
+        "support": 40,
+        "precision": 0.95,
+        "recall": 0.95,
+        "f1": 0.9500000000000001
+      },
+      "period_scoped": {
+        "tp": 28,
+        "fp": 5,
+        "fn": 0,
+        "tn": 67,
+        "support": 28,
+        "precision": 0.8484848484848485,
+        "recall": 1.0,
+        "f1": 0.9180327868852458
+      },
+      "simple_numeric": {
+        "tp": 14,
+        "fp": 4,
+        "fn": 20,
+        "tn": 62,
+        "support": 34,
+        "precision": 0.7777777777777778,
+        "recall": 0.4117647058823529,
+        "f1": 0.5384615384615384
+      }
+    }
+  },
+  "group_breakdown": {
+    "clarification ambiguous_ticker": {
+      "n": 2,
+      "exact_match_rate": 0.0,
+      "subset_recall_rate": 0.0
+    },
+    "comparison filing_narrative": {
+      "n": 14,
+      "exact_match_rate": 1.0,
+      "subset_recall_rate": 1.0
+    },
+    "comparison market_data": {
+      "n": 6,
+      "exact_match_rate": 0.5,
+      "subset_recall_rate": 1.0
+    },
+    "filing_narrative": {
+      "n": 16,
+      "exact_match_rate": 0.875,
+      "subset_recall_rate": 1.0
+    },
+    "filing_narrative market_data": {
+      "n": 8,
+      "exact_match_rate": 1.0,
+      "subset_recall_rate": 1.0
+    },
+    "financial_metrics period_scoped analysis": {
+      "n": 8,
+      "exact_match_rate": 1.0,
+      "subset_recall_rate": 1.0
+    },
+    "financial_metrics period_scoped simple_numeric": {
+      "n": 20,
+      "exact_match_rate": 0.0,
+      "subset_recall_rate": 0.0
+    },
+    "market_data contextual": {
+      "n": 8,
+      "exact_match_rate": 0.125,
+      "subset_recall_rate": 1.0
+    },
+    "market_data simple_numeric": {
+      "n": 14,
+      "exact_match_rate": 0.8571428571428571,
+      "subset_recall_rate": 0.8571428571428571
+    },
+    "refusal out_of_scope": {
+      "n": 4,
+      "exact_match_rate": 1.0,
+      "subset_recall_rate": 1.0
+    }
+  },
+  "missing_characteristics": {
+    "simple_numeric": 20,
+    "market_data": 3,
+    "comparison": 2,
+    "filing_narrative": 2
+  },
+  "extra_characteristics": {
+    "period_scoped": 5,
+    "simple_numeric": 4,
+    "financial_metrics": 3,
+    "comparison": 2,
+    "filing_narrative": 2
+  },
+  "mismatch_patterns": [
+    {
+      "pattern": "missing=simple_numeric | extra=-",
+      "count": 20
+    },
+    {
+      "pattern": "missing=- | extra=period_scoped",
+      "count": 4
+    },
+    {
+      "pattern": "missing=- | extra=simple_numeric",
+      "count": 3
+    },
+    {
+      "pattern": "missing=market_data | extra=financial_metrics",
+      "count": 2
+    },
+    {
+      "pattern": "missing=- | extra=filing_narrative",
+      "count": 2
+    },
+    {
+      "pattern": "missing=- | extra=comparison,period_scoped",
+      "count": 1
+    },
+    {
+      "pattern": "missing=- | extra=comparison,simple_numeric",
+      "count": 1
+    },
+    {
+      "pattern": "missing=- | extra=financial_metrics",
+      "count": 1
+    },
+    {
+      "pattern": "missing=comparison,filing_narrative | extra=-",
+      "count": 1
+    },
+    {
+      "pattern": "missing=comparison,filing_narrative,market_data | extra=-",
+      "count": 1
+    }
+  ],
+  "action_errors": [
+    {
+      "query_id": "planner_eval_0099",
+      "question": "Compare the two semiconductor companies in my watchlist on growth and risks.",
+      "expected_action": "clarification_required",
+      "predicted_action": "refused",
+      "expected_characteristics": "comparison filing_narrative",
+      "predicted_characteristics": ""
+    },
+    {
+      "query_id": "planner_eval_0100",
+      "question": "Which bank stock should I buy based on filings and valuation?",
+      "expected_action": "clarification_required",
+      "predicted_action": "refused",
+      "expected_characteristics": "comparison filing_narrative market_data",
+      "predicted_characteristics": ""
+    }
+  ]
+}

@@ -57,6 +57,8 @@ class RunConfig:
     max_chunks: int = 50
     query_timeout_s: float | None = 350.0
     query_max_retries: int = 1
+    query_retry_timeout_multiplier: float = 1.25
+    query_retry_timeout_cap_s: float | None = 600.0
 
     def resolved_settings(self) -> GenerationSettings:
         return resolve_generation_settings(
@@ -203,15 +205,35 @@ def run_one(
 ) -> tuple[EvalGeneration, float, bool]:
     t0 = time.perf_counter()
     created = utcnow()
+
+    def timeout_budget_for_attempt(attempt_idx: int) -> float | None:
+        """
+        Return timeout budget for the current attempt index.
+        """
+
+        base_timeout = cfg.query_timeout_s
+        if base_timeout is None or base_timeout <= 0:
+            return None
+        multiplier = float(cfg.query_retry_timeout_multiplier)
+        if multiplier < 1.0:
+            multiplier = 1.0
+        timeout_s = base_timeout * (multiplier**attempt_idx)
+        cap_s = cfg.query_retry_timeout_cap_s
+        if cap_s is not None and cap_s > 0:
+            timeout_s = min(timeout_s, float(cap_s))
+        return timeout_s
+
+    attempts_used = 0
+    attempt_timeout_s: float | None = None
     try:
         max_attempts = max(1, int(cfg.query_max_retries) + 1)
-        attempts_used = 0
         resp = None
         for attempt_idx in range(max_attempts):
             attempts_used = attempt_idx + 1
+            attempt_timeout_s = timeout_budget_for_attempt(attempt_idx)
             try:
-                timeout_s = cfg.query_timeout_s
-                if timeout_s is None or timeout_s <= 0:
+                timeout_s = attempt_timeout_s
+                if timeout_s is None:
                     resp = service.answer_question(question, settings, include_retrieved_chunks=True)
                 elif threading.current_thread() is threading.main_thread():
                     with _query_timeout_guard(timeout_s):
@@ -229,10 +251,11 @@ def run_one(
                     raise
                 backoff_s = min(2.0, 0.5 * (2**attempt_idx))
                 logger.warning(
-                    "Retrying eval generation for query_id={} after attempt {}/{} failed: {}",
+                    "Retrying eval generation for query_id={} after attempt {}/{} failed (timeout_budget_s={}): {}",
                     query_id,
                     attempts_used,
                     max_attempts,
+                    attempt_timeout_s,
                     exc,
                 )
                 time.sleep(backoff_s)
@@ -259,6 +282,9 @@ def run_one(
                 "answer_style": settings.answer_style,
                 "draft_temperature": settings.draft_temperature,
                 "concurrency": max(1, int(cfg.concurrency)),
+                "query_timeout_s": cfg.query_timeout_s,
+                "query_timeout_attempt_s": attempt_timeout_s,
+                "query_retry_timeout_multiplier": cfg.query_retry_timeout_multiplier,
                 "query_attempts": attempts_used,
             },
             draft_answer=resp.draft_answer,
@@ -276,7 +302,14 @@ def run_one(
             kind=kind,
             question=question,
             created_at=created,
-            settings={"mode": settings.mode, "concurrency": max(1, int(cfg.concurrency))},
+            settings={
+                "mode": settings.mode,
+                "concurrency": max(1, int(cfg.concurrency)),
+                "query_timeout_s": cfg.query_timeout_s,
+                "query_timeout_attempt_s": attempt_timeout_s,
+                "query_retry_timeout_multiplier": cfg.query_retry_timeout_multiplier,
+                "query_attempts": attempts_used,
+            },
             error=str(exc),
         )
         ok = False

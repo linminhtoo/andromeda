@@ -5,17 +5,117 @@ this file.
 
 This format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+---
+
+## Template (do not modify this)
 
 ### Added
 
 ### Changed
 
 ### Fixed
+- Review UI path resolution after source-tree nesting:
+  - `src/andromeda/review/review_ui.py` now resolves `PROJECT_ROOT` to repository root and `STATIC_DIR` to `src/andromeda/static`.
+  - `src/andromeda/review/review_app.py` now mounts static assets from `src/andromeda/static`.
+  - This fixes `/review` returning `Missing review UI HTML .../review/static/review.html` and prevents false 403s on `/source_text` from review-router path checks resolving against `.../src` instead of repo root.
 
 ### Removed
 
 ### Dev
+
+---
+
+## Unreleased (modify this)
+
+### Added
+- Comparison-structured synthesis controls for multi-ticker answering:
+  - `comparison_required` support in `build_multi_ticker_synthesis_prompt(...)` and
+    `build_multi_ticker_refine_prompt(...)` with an explicit output contract for side-by-side analysis.
+- Eval runner retry-timeout controls:
+  - `query_retry_timeout_multiplier`
+  - `query_retry_timeout_cap_s`
+  - CLI flags `--query-retry-timeout-multiplier` and `--query-retry-timeout-cap-s` in `scripts/run_eval.py`.
+- Planner characteristics evaluation pipeline:
+  - eval schema/models in `src/andromeda/eval/planner_schema.py`
+  - manually curated 100-query dataset builder in `src/andromeda/eval/planner_dataset.py`
+  - scoring/summary utilities in `src/andromeda/eval/planner_scoring.py`
+  - CLI scripts:
+    - `scripts/make_planner_eval_set.py`
+    - `scripts/run_planner_eval.py`
+    - `scripts/score_planner_eval.py`
+    - `scripts/run_planner_eval_suite.sh`
+  - generated dataset artifact:
+    - `eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`
+  - test coverage:
+    - `tests/test_planner_eval_pipeline.py`
+
+### Changed
+- `PlannedQuery` now carries planner `characteristics` through execution so downstream generation can apply
+  comparison-specific synthesis constraints.
+- Planner routing now enforces planner-owned ticker decisions in the planner-first path:
+  - removed heuristic ticker inference/unindexed-candidate refusal routing from `plan_query(...)`,
+  - `clarification_required` now returns clarification immediately and cannot flow into unindexed ticker refusal,
+  - `action=answer` with empty planner tickers now early-terminates with a user-facing planner error message.
+- Eval generation retries now use per-attempt timeout budgets (scaled by multiplier and capped) and persist timeout
+  telemetry (`query_timeout_attempt_s`, retry parameters) in generation settings for postmortems.
+- Runtime planner characteristic taxonomy was reduced to only behavior-driving labels:
+  - removed `simple_numeric` and `period_scoped` from `QueryCharacteristic`,
+  - updated planner few-shot examples and rubric definitions in `src/andromeda/query/runtime.py`,
+  - fallback heuristic classifier in `src/andromeda/query/planner_heuristics.py` no longer emits removed labels.
+- Planner-characteristics eval artifacts now match runtime taxonomy:
+  - removed `simple_numeric` and `period_scoped` from `PlannerEvalCharacteristic`,
+  - updated manual 100-query planner dataset labeling in `src/andromeda/eval/planner_dataset.py`,
+  - regenerated `eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`.
+- Clarification/refusal planner boundary is now explicit:
+  - prompt instructions now define `clarification_required` as relevant-but-ambiguous and `refused` as out-of-scope,
+  - planner prompt now instructs `characteristics=[]` for clarification/refusal actions,
+  - runtime normalizes clarification decisions to `characteristics=[]` for downstream consistency.
+- Planner eval clarification rows were relabeled to match policy:
+  - clarification examples now use `expected_characteristics=[]` and focus evaluation on action correctness,
+  - published detailed error-case report in `BENCHMARK_PLANNER_v2.md` with query + expected decision/response + LLM decision.
+- Eval launcher doc-index resolution is now ingest-profile-first to prevent stale `.env` drift:
+  - `scripts/run_full_eval_suite.sh` and `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh` now resolve `DOC_INDEX_PATH` via ingest profile/chunk directory and ignore legacy `FINRAG_DOC_INDEX_PATH` unless explicitly overridden (`DOC_INDEX_PATH` or `FINRAG_DOC_INDEX_PATH_OVERRIDE`).
+  - Added hard mismatch guards (`ALLOW_EVAL_PROFILE_MISMATCH=1` to bypass intentionally) and startup logging for resolved profile/schema/doc-index path.
+  - Eval manifest now records `ingest_profile` alongside schema/path settings.
+- Legacy sample rerun script `agent_logs/scripts/20260220_0230_rerun_failed32_sample_after_routing_fix.sh` now uses the same profile/path guardrails.
+- Planner prompt now includes full indexed ticker/company catalog in both human-readable and JSON forms, with explicit guidance/examples for mapping company-name mentions to tickers.
+- Planner routing now performs a dedicated LLM company-name ticker-resolution pass when planner returns `clarification_required` with no tickers and user did not provide explicit tickers; successful resolution continues via answer flow.
+
+### Fixed
+- Frontend citation rendering now recognizes finance tool markers emitted in doc-style form:
+  - `[doc=edgar_get_quarterly_financial_metrics ticker=SNDK status=ok]`
+  - `[doc=yfinance_get_price_history ticker=SNDK status=ok]`
+  - `[doc=edgar_get_financial_metrics ticker=SNDK status=ok]`
+  These now render as tool citation chips/pills with status suffixes, matching `[tool=...]` behavior.
+
+### Removed
+- Removed `FINRAG_DOC_INDEX_PATH` default from `.env.example`; doc index is now expected to resolve from ingest profile by default.
+
+### Dev
+
+---
+
+
+## v1.10.0 - 18 Feb 2026
+
+### Added
+- Planner fallback heuristics module at `src/andromeda/query/planner_heuristics.py` to isolate regex/keyword logic from normal runtime flow.
+
+### Changed
+- Query planning is now planner-first with explicit multi-label `characteristics` in `PlannerDecision`; routing defaults derive from planner output rather than question regex checks.
+- Planner execution now attempts a structured-output repair call after both malformed planner JSON and primary planner call errors; heuristic fallback is used only if both attempts fail.
+- Fallback ticker inference now uses `yfinance.Search(...)` and intersects results with indexed tickers instead of regex ticker extraction.
+- Tools-first routing defaults were tightened:
+  - non-narrative market/financial metric requests default to finance tools without mandatory RAG,
+  - mixed narrative + market/financial requests can enable both RAG and tools.
+
+### Removed
+- Removed brittle runtime heuristic stages from active execution path:
+  - narrative retrieval-query expansion
+  - narrative aspect-coverage chunk post-processing
+  - MMR chunk diversification
+  - adaptive retrieval-budget lowering
+- Removed corresponding heuristic helper implementations from `src/andromeda/query/runtime.py`; fallback heuristics now live in the dedicated planner fallback module.
 
 
 

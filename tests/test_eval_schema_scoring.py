@@ -72,8 +72,16 @@ def test_score_one_factual_without_judges_tracks_retrieval_and_numeric_match() -
     score = score_one(query, gen, judge_llm=None)
     assert score.retrieval["gold_chunk_rank"] == 1
     assert score.retrieval["gold_doc_rank"] == 1
+    assert score.retrieval["pre_chunk_rank"] == 1
+    assert score.retrieval["post_chunk_rank"] == 1
+    assert score.retrieval["rerank_chunk_delta_mrr"] == 0.0
+    assert score.retrieval["pre_chunk_precision_at_5"] == 1.0
+    assert score.retrieval["post_chunk_precision_at_5"] == 1.0
+    assert score.retrieval["pre_chunk_recall_at_25"] == 1.0
+    assert score.retrieval["post_chunk_recall_at_25"] == 1.0
     assert score.answer["numeric_matched"] is True
     assert score.answer["cited_gold_doc"] is True
+    assert score.answer["citation_count"] == 0
 
 
 def test_score_one_refusal_sets_heuristic_flag() -> None:

@@ -326,6 +326,12 @@ def generate_factual_queries(
 ) -> list[EvalQuery]:
     """
     Generate factual questions with numeric ground truth linked to a single "gold" chunk.
+
+    TODO
+    ----
+    - main downside of this approach is that a single doc could have multiple chunks mentioning the metric / fact
+        we should ideally label all of those chunks as golden chunks, and accept as long as retriever/reranker
+        identifies one of those chunks.
     """
     rng = random.Random(seed)
     now = datetime.now(timezone.utc)

@@ -2690,3 +2690,922 @@
 - Pending final repo checks at wrap-up:
   - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
   - `source .venv/bin/activate && pytest -vvv tests/`
+
+## 2026-02-18 - Heuristics Reduction Refactor (planner-first branch)
+
+### Scope
+- Branch context: `mlin/reduce-hardcoded-heuristics`.
+- Goal: make planner LLM the first-resort routing mechanism and demote regex/heuristic logic to fallback-only behavior.
+
+### What changed
+- Added fallback-only heuristics module:
+  - `src/andromeda/query/planner_heuristics.py`
+- Refactored runtime planner contract:
+  - `PlannerDecision` now uses multi-label `characteristics` for query traits.
+  - `resolve_tool_usage_from_decision(...)` now derives defaults from planner characteristics + explicit planner flags.
+  - Non-narrative market/financial queries default to tools-first (`use_rag=false` when tool flags are sufficient).
+  - Mixed narrative + tool queries can run both RAG and tools.
+- Added planner repair-on-failure behavior:
+  - `_planner_decision_from_llm(...)` now always attempts one repair call when the primary planner response is invalid JSON/schema **or** when the primary planner call errors.
+  - Heuristic fallback runs only after both planner attempts fail.
+- Disabled brittle heuristic stages in active runtime path by removing them from `runtime.py`:
+  - narrative query expansion
+  - narrative aspect coverage enforcement
+  - MMR diversity pass
+  - adaptive retrieval budget lowering
+- Reworked tests to match new behavior:
+  - `tests/test_query_runtime_tools_first.py` now validates planner-first routing, repair behavior, fallback-only heuristics usage, and yfinance-backed fallback ticker inference.
+
+### Validation
+- Ran targeted runtime suite:
+  - `source .venv/bin/activate && pytest -vvv tests/test_query_runtime_tools_first.py`
+  - Result: `14 passed`.
+
+### Notes
+- This refactor intentionally keeps heuristics available only as a resilience fallback (planner malformed/error path), not as a first-pass routing layer.
+
+### Post-refactor full checks
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> passed.
+- `source .venv/bin/activate && pytest -vvv tests/` -> passed (`114 passed`).
+
+## 2026-02-18 - Runtime test strategy correction (planner path realism)
+
+### Trigger
+- User review pointed out overuse of monkeypatching in `tests/test_query_runtime_tools_first.py`, especially for planner/ticker inference paths.
+
+### Changes made
+- Reworked tests to drive planner behavior through `RecordingLLM` structured outputs rather than monkeypatching `RAGService._planner_decision_from_llm`.
+- Added helper queue (`planner_outputs`) so tests exercise real planner parse/repair/fallback code paths inside `RAGService`.
+- Added live fallback integration-style coverage for ticker inference:
+  - `test_plan_query_fallback_infers_ticker_via_live_yfinance_search`
+  - Uses a vague company-name query and verifies `plan_query(...)` infers `NVDA` via yfinance-based fallback path when planner+repair are invalid.
+
+### Validation
+- `source .venv/bin/activate && pytest -vvv tests/test_query_runtime_tools_first.py` -> `14 passed`.
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> passed.
+- `source .venv/bin/activate && pytest -vvv tests/` -> `114 passed`.
+
+## 2026-02-18 - Commit lineage checkpoint (reduced heuristics branch)
+
+### Commits
+- `45b19cb` - docs: add eval-improvement guidance and reduced-heuristics benchmark plan.
+- `a127bd0` - refactor: planner-first runtime, fallback heuristics module, reduced monkeypatching tests, and associated changelog/logbook updates.
+
+### Notes
+- Branch is clean after checkpoint; proceeding to eval rerun and benchmark analysis.
+## 2026-02-18 - Local open-source model survey for NLI & finance-grade reranking
+
+### Scope completed
+- Audited `pyproject.toml` to confirm the stack already brings `sentence-transformers`, `huggingface-hub`, and other HF/torch infrastructure needed for local models.
+- Reviewed `CrossEncoderReranker`, `build_reranker()`, and the `LLMClient`/`llm_for_embeddings` plumbing so the existing retriever/reranker pair can accept new Hugging Face models with minimal code.
+- Cataloged Apache-2.0 Hugging Face checkpoints for entailment (e.g., `cross-encoder/nli-roberta-base`, `cross-encoder/nli-distilroberta-base`) and finance-honed dense/cross encoders (e.g., `shail-2512/nomic-embed-financial-matryoshka`, `hutuhehe/finretriever-cross-reranker`) that can be dropped into the stack.
+
+### Key observations
+- The reranker already instantiates a `SentenceTransformers` `CrossEncoder` via the `RERANKER_MODEL` env var (`src/andromeda/runtime/builders.py:424-427`), so swapping in a finance-tuned checkpoint only requires updating that variable and refreshing caches.
+- Dense retrieval embeddings flow through `PostgresHybridRetriever` which leans on the `LLMClient` `embed_texts` hook (`src/andromeda/retrieval/retriever.py:366-383`); adding a lightweight `SentenceTransformer`‑backed `LLMClient` variant can plug into `llm_for_embeddings()` for on-prem embeddings.
+
+### Why this matters
+- Capturing the above ensures future work can tie the finance-grade checkpoints and NLI cross-encoders into the QA + evidence pipeline without guessing at compatibility, saving a follow-on research step.
+
+## 2026-02-18 - Reduced-heuristics full-suite retry4: long-tail timeout incident handling
+
+### Context
+- Active run: `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.single100.normal.tools12.norefine.20260218_195034`
+- Settings: `mode=normal`, `gen_workers=12`, `parallel_backend=thread`, `query_timeout_s=350`, `query_max_retries=1`, `judge_context_chars=80000`, `judge_workers=12`.
+
+### What happened
+- Generation progressed to `99/100` then long-tailed on one query.
+- Runtime logs showed retry warnings for two queries:
+  - `1dd6251b-e62b-4e58-ae52-35a1253e14c3` (LITE net income factual query)
+  - `aada22de-6020-41aa-be15-5516f64b0aca` (MSFT total revenue factual query)
+- Final outcome:
+  - `1dd6251b-e62b-4e58-ae52-35a1253e14c3` failed after retry budget exhausted with `Timed out after 350.0s`.
+  - `aada22de-6020-41aa-be15-5516f64b0aca` succeeded on retry attempt 2.
+- Single100 generation summary: `n=100, n_ok=99, n_err=1`, `wall_total_ms=846854.446`.
+
+### Failed query summary (required incident detail)
+- Query ID: `1dd6251b-e62b-4e58-ae52-35a1253e14c3`
+- Query text: `What was LITE's net income in its 10-Q filed 2026-02-04?`
+- Failure mode: timeout after retry (`query_attempts` exhausted).
+- Scavenged artifacts:
+  - Runtime warning: `Retrying ... failed: Timed out after 350.0s`
+  - Runtime error: `Error during eval generation ... Timed out after 350.0s`
+  - Generation record: `error="Timed out after 350.0s"`, `timing_ms.total_ms=700505.2527501248`
+  - No draft/final answer captured, `tool_trace_len=0`, `tool_results_len=0`
+
+### Slow-but-recovered query summary
+- Query ID: `aada22de-6020-41aa-be15-5516f64b0aca`
+- Query text: `What was MSFT's total revenue in its 10-K filed 2025-07-30?`
+- Behavior: timed out once, succeeded on retry (`query_attempts=2`)
+- Scavenged output preview:
+  - Final answer began with `MSFT’s Total Revenue ... $281,724 million`.
+  - `timing_ms.total_ms=382516.4867863059`
+  - `tool_trace_len=8`, `tool_results_len=3`
+
+### Immediate action
+- Proceeding without panic per instruction: run continues into scoring.
+- This incident will be included in the reduced-heuristics benchmark report under long-tail decoding/timeout behavior.
+
+## 2026-02-18 - Retrieval eval instrumentation update (precision/recall + NLI support)
+
+### Commit
+- `d9220cf`
+
+### What changed
+- Added retrieval/rerank subsystem metric modules and integrated them into scoring/report surfaces:
+  - `src/andromeda/eval/retrieval_metrics.py`
+  - `src/andromeda/eval/rerank_metrics.py`
+  - `src/andromeda/eval/evidence_support.py`
+  - `src/andromeda/eval/scoring.py`
+  - `scripts/score_eval.py`
+  - `scripts/eval_retrieval.py`
+- Added explicit precision/recall tracking to address retrieval-plan feedback:
+  - chunk/doc: `precision_at_{5,10,25}`
+  - chunk/doc: `recall_at_{5,10,25}`
+  - rerank deltas for precision/recall
+- Added retrieval/NLI tests:
+  - `tests/test_eval_retrieval_metrics.py`
+  - updated `tests/test_eval_schema_scoring.py`
+
+### Validation
+- `source .venv/bin/activate && pytest -vvv tests/test_eval_retrieval_metrics.py tests/test_eval_schema_scoring.py`
+- Result: `10 passed`.
+
+### Why this matters
+- Precision is now a first-class retrieval KPI in both per-query artifacts and topline summaries.
+- Reranker evaluation now measures not only MRR/hit uplift, but precision/recall movement as well.
+
+## 2026-02-18 - Retrieval benchmark continuation from 300-sample manual audit (Task 3)
+
+### Context
+- Resumed from completed Codex-manual retrieval annotation set:
+  - `eval/results_revamp/full_suite/reduced_heuristics_full_retry4_retrieval_pool.sample300.codex_manual.csv`
+- Goal: close the retrieval/rerank evaluation loop with explicit metrics tables, calibration interpretation, and final report.
+
+### Scripts executed
+- `agent_logs/scripts/eval/20260218_215100_eval_retrieval_multi60.sh`
+  - Added missing retrieval metric artifacts for `multi60` slice.
+  - Uses local HF cache under `/tmp/hf_home` to avoid permission errors on `~/.cache/huggingface`.
+- `agent_logs/scripts/eval/20260218_215700_summarize_retrieval_manual_sample.sh`
+  - Produces manual-audit aggregate summaries and rank-movement diagnostics.
+
+### Artifacts produced/updated
+- `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.multi60.normal.tools12.norefine.20260218_200838/retrieval_rerank_metrics.json`
+- `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.multi60.normal.tools12.norefine.20260218_200838/retrieval_rerank_metrics.csv`
+- `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.multi60.normal.tools12.norefine.20260218_200838/retrieval_rerank_metrics.md`
+- `agent_logs/reports/retrieval_eval_20260218/manual_sample300_summary.json`
+- `agent_logs/reports/retrieval_eval_20260218/manual_sample300_summary.md`
+- `BENCHMARK_RETRIEVAL.md`
+
+### Key metrics and observations
+- Factual-anchor retrieval/rerank (`single100`, `factual_n=34`):
+  - chunk MRR: `0.3092 -> 0.1743` (`delta=-0.1349`)
+  - chunk P@5: `0.1118 -> 0.0647`
+  - chunk P@10: `0.0647 -> 0.0471`
+  - chunk R@25: `0.7353 -> 0.7059`
+  - rerank chunk win-rate: `0.1765`
+- NLI evidence support:
+  - `single100` open-ended subset (`n=30`): support `0.1000`, contradiction `0.3958`, unsupported `0.5042`
+  - `open200` (`n=120`): support `0.1292`, contradiction `0.4115`, unsupported `0.4594`
+- Manual relevance audit (`n=300`, Codex-manual labels):
+  - overall relevance positive rate: `0.4167`
+  - factual relevance positive rate: `0.1357` (`19/140`)
+  - relevant rows in both pre/post: promoted `32`, demoted `37`, unchanged `5` (avg delta `+0.0676` where positive means post worse rank)
+  - by-kind movement indicates more factual/comparison demotions than promotions.
+- Weak-label calibration vs manual labels (`n=140`, threshold `0.5`):
+  - `tp=19`, `fp=121`, `tn=0`, `fn=0`
+  - precision_1 `0.1357`, recall_1 `1.0000`, balanced accuracy `0.5000`
+  - weak labels are high-recall but too noisy for precision-sensitive ranking conclusions.
+
+### Surprising findings
+- Reranking under current settings degrades chunk-level factual relevance concentration despite correct-doc saturation.
+- Early-rank sample relevance (top-5) declines post-rerank in audited rows, while top-10 partly recovers; this suggests reordering behavior that does not consistently prioritize exact evidence.
+- Weak-label doc-match heuristic overstates relevance for factual tasks and must not be treated as proxy precision ground truth.
+
+### Immediate actions taken
+- Finalized a dedicated retrieval benchmark report with explicit experiment definitions and tables:
+  - `BENCHMARK_RETRIEVAL.md`
+- Structured findings around actionable follow-ups:
+  - reranker tuning for factual numeric/period-aware evidence,
+  - improved weak-label design,
+  - continued manual calibration slices as release gate.
+
+## 2026-02-18 - Isolated latency probe for LITE timeout query
+
+### Why
+- Follow-up to the earlier timeout incident for:
+  - `query_id=1dd6251b-e62b-4e58-ae52-35a1253e14c3`
+  - question: `What was LITE's net income in its 10-Q filed 2026-02-04?`
+- Goal: test isolated behavior (no batch competition) and validate whether >350s was purely queueing.
+
+### Scripts executed
+- `agent_logs/scripts/eval/20260218_220200_probe_lite_isolated_latency.sh`
+  - direct runtime call (`answer_question`) with outer shell timeout `500s`
+  - outcome: timed out (`exit=124`) before returning payload.
+- `agent_logs/scripts/eval/20260218_221400_probe_lite_single_eval_timeout350.sh`
+  - single-query eval (`run_eval`) with `concurrency=1`, `query_timeout_s=350`, `query_max_retries=0`
+  - run dir: `agent_logs/reports/retrieval_eval_20260218/lite_single_eval_probe/eval_run.lite_isolated_timeout350.20260218_220015`
+
+### Results
+- Probe A: no completed response within `500s` (pathological slow/stuck behavior still reproducible in isolation).
+- Probe B: same query completed successfully in `20601 ms`.
+  - generation summary: `n=1`, `n_ok=1`, `n_err=0`, `avg_total_ms=20601.03`
+  - response had `tool_trace_len=8`, `tool_results_len=3`, `retrieved_chunks=40`, `top_chunks=25`.
+
+### Interpretation
+- Not purely a batching starvation issue: isolated runtime can still stall in rare cases.
+- Also not deterministically expensive: isolated runs can finish quickly (~20.6s).
+- Most plausible explanation remains intermittent model/runtime stall behavior (decoding or backend-level transient), reinforcing timeout+retry as the right control mechanism.
+
+## 2026-02-19 - Implemented immediate follow-ups from BENCHMARK_REDUCED_HEURISTICS
+
+### Scope implemented
+Implemented the three immediate follow-ups listed in `BENCHMARK_REDUCED_HEURISTICS.md` without live vLLM calls.
+
+1. Comparison answer planning improvements
+- Added explicit comparison output contract support in multi-ticker synthesis/refine prompt builders.
+- Added `comparison_required` plumbing from runtime plan state into synthesis generation.
+- `PlannedQuery` now carries planner `characteristics` so comparison intent survives planning -> generation.
+
+2. Stricter refusal for out-of-scope/unindexed tickers
+- Added `infer_unindexed_tickers_from_question(...)` in fallback heuristics.
+- In `plan_query`, when no indexed ticker is resolved and unindexed ticker candidates are detected, runtime now returns `REFUSED` with an explicit ingestion guidance message instead of clarification loops.
+
+3. Retry/continue safeguards for long-tail timeouts
+- Added retry timeout scaling controls in eval runner:
+  - `query_retry_timeout_multiplier`
+  - `query_retry_timeout_cap_s`
+- Retry attempts now use per-attempt timeout budgets and record timeout telemetry into generation settings.
+- Added matching CLI flags in `scripts/run_eval.py`.
+
+### Files changed
+- `src/andromeda/llm/qa.py`
+- `src/andromeda/query/runtime.py`
+- `src/andromeda/query/planner_heuristics.py`
+- `src/andromeda/eval/runner.py`
+- `scripts/run_eval.py`
+- `tests/test_query_runtime_tools_first.py`
+- `tests/test_qa.py`
+- `tests/test_eval_runner.py`
+- `CHANGELOG.md`
+
+### Validation
+- `source .venv/bin/activate && pytest -vvv tests/test_query_runtime_tools_first.py tests/test_qa.py tests/test_eval_runner.py`
+- Result: `28 passed`.
+
+### Notes
+- No LLM benchmark reruns were executed in this iteration because the vLLM server was down.
+- Changes were implemented to be deploy-path aligned and testable offline.
+
+### Final quality gates for this iteration
+- `source .venv/bin/activate && pytest -vvv tests/` -> `121 passed`.
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> passed.
+- Note: pre-commit required `PRE_COMMIT_HOME=/tmp/pre-commit-cache` due readonly permission on default `~/.cache/pre-commit` in this sandbox.
+
+## 2026-02-19 - Planner characteristics eval pipeline (manual 100-query ground truth)
+
+### Why
+- Added a dedicated evaluation setup to measure whether the planner LLM correctly recognizes query characteristics before answer generation.
+- This avoids circularity from LLM-generated ground truth: labels/questions are manually curated in code, not generated by judge/vLLM.
+
+### Scope implemented
+1. New planner-eval schema and metrics
+- Added `src/andromeda/eval/planner_schema.py`:
+  - `PlannerEvalCharacteristic`
+  - `PlannerEvalAction`
+  - `PlannerEvalQuery`
+  - `PlannerEvalPrediction`
+  - `PlannerEvalScore`
+- Added `src/andromeda/eval/planner_scoring.py`:
+  - per-query exact/subset/precision/recall/F1
+  - macro + micro metrics
+  - per-characteristic TP/FP/FN/TN summary
+  - action accuracy for rows with expected action labels
+  - missing-prediction/prediction-error accounting
+
+2. Manual dataset (100 diverse queries)
+- Added `src/andromeda/eval/planner_dataset.py` with `build_manual_planner_eval_queries()`.
+- Coverage includes:
+  - `comparison`, `market_data`, `financial_metrics`, `filing_narrative`, `period_scoped`, `simple_numeric`
+  - explicit refusal rows (`4`)
+  - explicit clarification-required rows (`2`)
+- Generated artifact:
+  - `eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`
+
+3. Runner/scorer pipeline
+- Added `scripts/make_planner_eval_set.py` (dataset writer).
+- Added `scripts/run_planner_eval.py` (planner-only inference with timeout/retry + threaded concurrency).
+- Added `scripts/score_planner_eval.py` (scores + markdown + review CSV).
+- Added `scripts/run_planner_eval_suite.sh` (single-command wrapper: generate-if-missing -> run -> score).
+
+4. Test coverage
+- Added `tests/test_planner_eval_pipeline.py`:
+  - dataset integrity checks
+  - perfect/partial/missing scoring behavior
+  - planner-output mapping
+  - timeout retry and terminal error handling
+
+5. Docs/changelog
+- Updated `README_EVAL.md` with planner eval runbook section.
+- Updated `CHANGELOG.md` (Unreleased) with planner-eval pipeline additions.
+
+### Scripts executed
+- `agent_logs/scripts/eval/20260219_183900_generate_planner_eval_set_manual100.sh`
+  - Command purpose: generate the canonical manual planner-eval query set JSONL.
+
+### Validation
+- `source .venv/bin/activate && pytest tests/`
+  - Result: `127 passed` (`1` warning from third-party deprecation).
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - Result: passed (`ruff`, `pyright`, frontend unit/UI hooks included).
+
+### Notes
+- vLLM server was down during this iteration, so no live planner inference run was executed yet.
+- Pipeline is ready to run as soon as vLLM is available:
+  - `bash scripts/run_planner_eval_suite.sh`
+
+## 2026-02-19 - Planner characteristics live benchmark run + report
+
+### Context
+- User restarted vLLM and requested:
+  - git commits for planner-eval additions,
+  - live eval run,
+  - benchmark-style report with surprising observations.
+
+### Commit completed
+- Planner-eval implementation commit:
+  - `9c80b1d` (`Add planner characteristics evaluation pipeline and docs`)
+
+### Scripts executed
+- `agent_logs/scripts/eval/20260219_205324_run_planner_eval_suite_live.sh`
+  - Runs planner eval with:
+    - `CONCURRENCY=12`
+    - `QUERY_TIMEOUT_S=350`
+    - `QUERY_MAX_RETRIES=1`
+- `agent_logs/scripts/eval/20260219_205431_analyze_planner_eval_run.sh`
+  - Produces mismatch/tag/action analysis JSON for the run.
+
+### Run artifacts
+- Run dir:
+  - `eval/results_planner/planner_eval_run.planner_live_manual100_20260219_205341.20260219_205341`
+- Key outputs:
+  - `planner_prediction_summary.json`
+  - `planner_score_summary.json`
+  - `planner_scores.jsonl`
+  - `planner_review.csv`
+  - `planner_score_summary.md`
+- Analysis output:
+  - `agent_logs/reports/planner_eval_20260219/planner_eval_analysis_20260219_205341.json`
+
+### Topline metrics
+- generation:
+  - `n=100`, `n_ok=100`, `n_err=0`
+  - `avg_total_ms=2347.22`
+  - `wall_total_ms=21404.30` (~`4.67 qps`)
+- scoring:
+  - `characteristic_exact_match_rate=0.64`
+  - `expected_subset_recall_rate=0.76`
+  - `macro_f1=0.8907`
+  - `micro_f1=0.8828`
+  - `action_accuracy=0.6667` (`6` evaluable rows)
+
+### Key observations
+1. Dominant planner miss pattern is concentrated:
+   - `missing=simple_numeric | extra=-` occurred `20` times.
+   - all from `financial_metrics + period_scoped + simple_numeric` bucket.
+2. Per-characteristic bottleneck is `simple_numeric`:
+   - precision `0.7778`, recall `0.4118`, f1 `0.5385`.
+3. Prompt inconsistency likely drives this:
+   - planner few-shot currently labels `"What was AAPL net income in 2025?"` as `[financial_metrics, period_scoped]` (without `simple_numeric`) in `src/andromeda/query/runtime.py`.
+4. Action mismatches are both clarification-vs-refusal cases:
+   - `planner_eval_0099`, `planner_eval_0100` expected clarification, predicted refusal.
+
+### Report written
+- `BENCHMARK_PLANNER.md`
+  - includes experiment table, configuration, metrics, failure analysis, surprises, and recommendations.
+
+## 2026-02-19 - Removed `simple_numeric` from runtime planner taxonomy
+
+### Why
+- `simple_numeric` was not consumed by downstream runtime routing logic (`resolve_tool_usage_from_decision(...)` uses
+  `market_data`, `financial_metrics`, `filing_narrative` only).
+- Keeping a non-actionable characteristic created redundant planner outputs and avoidable prompt confusion.
+
+### What changed
+1. Runtime characteristic taxonomy
+- Removed `QueryCharacteristic.SIMPLE_NUMERIC` from:
+  - `src/andromeda/query/runtime.py`
+
+2. Planner prompt and few-shot rubric
+- Updated planner few-shot examples to stop emitting `simple_numeric`.
+- Added explicit characteristic definitions to reduce overlap:
+  - `comparison`: 2+ entity compare/rank
+  - `market_data`: price/returns/valuation/news/sentiment
+  - `financial_metrics`: filing-grounded accounting metrics
+  - `filing_narrative`: qualitative filing text
+  - `period_scoped`: explicit year/quarter/date/range
+- Added guardrail note:
+  - do not label `period_scoped` for generic recency phrasing alone.
+
+3. Fallback heuristic compatibility
+- Removed fallback heuristic emission of `simple_numeric` from:
+  - `src/andromeda/query/planner_heuristics.py`
+- Removed obsolete helper:
+  - `question_is_simple_numeric_metric(...)`
+- This prevents enum conversion failures in fallback plan construction after taxonomy removal.
+
+4. Tests updated
+- Updated runtime tests that referenced removed enum value:
+  - `tests/test_query_runtime_tools_first.py`
+  - `tests/test_planner_eval_pipeline.py`
+
+### Validation
+- `source .venv/bin/activate && pytest tests/`
+  - result: `127 passed`, `1 warning` (third-party deprecation warning).
+- `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all`
+  - result: passed.
+
+## 2026-02-19 - Removed `period_scoped` from runtime planner characteristics
+
+### Why
+- `period_scoped` was not consumed by runtime routing/tool-mix logic.
+- Runtime behavior is determined by:
+  - `comparison` (comparison-specific synthesis path),
+  - `market_data`, `financial_metrics`, `filing_narrative` (tool/RAG routing).
+- Keeping non-behavioral labels in runtime planner output increased prompt entropy without affecting execution.
+
+### Changes made
+1. Runtime planner taxonomy
+- Removed `PERIOD_SCOPED` from `QueryCharacteristic` in `src/andromeda/query/runtime.py`.
+
+2. Planner prompt/few-shot cleanup
+- Updated few-shot examples to stop using `period_scoped`.
+- Simplified characteristic rubric to the four actionable runtime labels.
+
+3. Heuristic fallback cleanup
+- Removed `CHARACTERISTIC_PERIOD_SCOPED` from `src/andromeda/query/planner_heuristics.py`.
+- Removed `question_has_explicit_period_scope(...)` because it only supported the removed characteristic.
+- Fallback characteristic classification now emits only actionable runtime labels.
+
+4. Tests
+- Updated runtime tests that referenced `QueryCharacteristic.PERIOD_SCOPED`:
+  - `tests/test_query_runtime_tools_first.py`
+
+### Notes
+- Period/date handling still exists through explicit planner date fields (`filing_date_from`, `filing_date_to`) and fallback date-window inference (`infer_filing_date_window_from_question(...)`); only the unused characteristic label was removed.
+
+## 2026-02-19 - Planner eval rerun after taxonomy sync (`simple_numeric`/`period_scoped` removal)
+
+### Context
+- User requested rerunning planner evaluation and noted the dataset likely needed updating.
+- Runtime planner taxonomy had already removed `simple_numeric` and `period_scoped`; planner-eval schema/dataset still included them.
+
+### What changed
+1. Planner eval taxonomy sync
+- `src/andromeda/eval/planner_schema.py`
+  - removed `PlannerEvalCharacteristic.PERIOD_SCOPED`
+  - removed `PlannerEvalCharacteristic.SIMPLE_NUMERIC`
+
+2. Manual dataset builder sync
+- `src/andromeda/eval/planner_dataset.py`
+  - removed references to removed characteristics from query labels.
+  - updated tags where needed (`point_lookup`, `time_window`) while keeping question set size and ids stable.
+
+3. Regenerated planner eval dataset artifact
+- Command:
+  - `source .venv/bin/activate && python -m scripts.make_planner_eval_set --out eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`
+
+4. Test fix for removed labels
+- `tests/test_planner_eval_pipeline.py`
+  - removed stale assertions using `SIMPLE_NUMERIC`.
+  - updated expected exact/subset rates in partial-missing test to reflect updated labels.
+
+### Eval run
+- Repro script saved:
+  - `agent_logs/scripts/20260219_2142_rerun_planner_eval_taxonomy_sync.sh`
+- Command:
+  - `source .venv/bin/activate && bash scripts/run_planner_eval_suite.sh`
+- Run directory:
+  - `eval/results_planner/planner_eval_run.planner_characteristics_20260219_214202.20260219_214203`
+- Prediction summary:
+  - `n=100`, `n_ok=100`, `n_err=0`
+  - `avg_total_ms=2038.44`
+  - `wall_total_ms=21457.25`
+  - concurrency `12`, timeout `350s`, retries `1`
+
+### Scored metrics
+- `characteristic_exact_match_rate`: `0.92`
+- `expected_subset_recall_rate`: `0.96`
+- `macro_precision`: `0.9433`
+- `macro_recall`: `0.96`
+- `macro_f1`: `0.9493`
+- `micro_precision`: `0.9524`
+- `micro_recall`: `0.9449`
+- `micro_f1`: `0.9486`
+- `action_accuracy`: `0.6667` on 6 action-evaluable queries
+
+### Error pattern snapshot
+- 8 characteristic exact-match misses:
+  - 4 false-positive extras (`financial_metrics` or `filing_narrative` over-added)
+  - 2 market-data mislabeled as financial-metrics-only
+  - 2 clarification-required queries predicted with empty characteristics
+- Action mismatches remained the same class as before:
+  - both clarification-required cases were not classified as clarification.
+
+### Validation
+- `source .venv/bin/activate && pytest tests/test_planner_eval_pipeline.py`
+  - `6 passed`
+
+## 2026-02-19 - Clarification vs refusal boundary update + planner benchmark v2
+
+### Request handled
+- Made the clarification/refusal boundary explicit in planner behavior and eval labels.
+- Produced a new report (`BENCHMARK_PLANNER_v2.md`) listing each error case with:
+  - query text,
+  - expected decision/response behavior,
+  - actual LLM planner decision payload.
+
+### Runtime changes
+1. Prompt policy in `src/andromeda/query/runtime.py`
+- Clarification now explicitly means: in-scope financial query, but missing/ambiguous detail (typically ticker disambiguation).
+- Refusal now explicitly means: blatantly out-of-scope/irrelevant to SEC financial analysis.
+- Prompt now instructs `characteristics=[]` for both `clarification_required` and `refused`.
+- Added few-shot examples for clarification and refusal actions.
+
+2. Clarification normalization in `src/andromeda/query/runtime.py`
+- Added runtime normalization so if planner action is clarification, downstream planned characteristics are reset to `[]`.
+- Added trace event `planner_clarification_characteristics_reset` when model output included characteristics but action was clarification.
+- Fallback planner path now also emits empty characteristics for clarification action.
+
+### Eval dataset changes
+- Updated `src/andromeda/eval/planner_dataset.py` Group J (clarification rows):
+  - `expected_characteristics=[]` for clarification rows,
+  - tags switched to `relevant_but_ambiguous`,
+  - rationale clarified: clarify rather than refuse.
+- Regenerated dataset:
+  - `eval/eval_queries_planner_characteristics_manual100_20260219.jsonl`
+
+### Validation commands
+- Repro script saved:
+  - `agent_logs/scripts/20260219_2157_rerun_planner_eval_after_clarification_policy.sh`
+- `source .venv/bin/activate && pytest tests/test_planner_eval_pipeline.py tests/test_query_runtime_tools_first.py`
+  - result: `22 passed`
+- `source .venv/bin/activate && bash scripts/run_planner_eval_suite.sh`
+- final wrap-up validation:
+  - `source .venv/bin/activate && pytest tests/` -> `128 passed`
+  - `source .venv/bin/activate && PRE_COMMIT_HOME=/tmp/pre-commit-cache pre-commit run --all` -> passed
+
+### Planner eval run (post-update)
+- Run dir:
+  - `eval/results_planner/planner_eval_run.planner_characteristics_20260219_215722.20260219_215723`
+- Summary:
+  - characteristic_exact_match_rate: `0.95`
+  - expected_subset_recall_rate: `1.00`
+  - macro_f1: `0.9860`
+  - micro_f1: `0.9799`
+  - action_accuracy: `0.6667` (6 action-labeled rows)
+  - avg_total_ms: `2005.75`
+
+### Error cases
+- Wrote explicit case-by-case report:
+  - `BENCHMARK_PLANNER_v2.md`
+- Total error rows listed: `7`.
+- Remaining action failures are the two clarification-labeled rows still predicted as refusal (`planner_eval_0099`, `planner_eval_0100`).
+
+## 2026-02-19 - Planner eval rerun after manual planner-prompt update (v3 report)
+
+### Scope
+- User updated planner prompt and requested a fresh planner eval run + new benchmark report.
+
+### Run
+- Command:
+  - `source .venv/bin/activate && bash scripts/run_planner_eval_suite.sh`
+- Repro script:
+  - `agent_logs/scripts/20260219_2340_rerun_planner_eval_after_prompt_update.sh`
+- Run dir:
+  - `eval/results_planner/planner_eval_run.planner_characteristics_20260219_234046.20260219_234046`
+
+### Metrics
+- `characteristic_exact_match_rate`: `0.98`
+- `expected_subset_recall_rate`: `1.00`
+- `macro_f1`: `0.9960`
+- `micro_f1`: `0.9919`
+- `action_accuracy`: `0.6667` (6 action-labeled rows)
+- `avg_total_ms`: `2035.25`
+
+### Comparison vs v2 run
+- characteristic exact match: `0.95 -> 0.98`
+- macro F1: `0.9860 -> 0.9960`
+- micro F1: `0.9799 -> 0.9919`
+- action accuracy: unchanged (`0.6667`)
+
+### Error snapshot
+- Total error rows: `4` (down from `7` in v2 report).
+- Remaining failures are concentrated in:
+  1. two market comparison prompts that are over-labeled (`financial_metrics` / `filing_narrative` extras),
+  2. two clarification gold rows still predicted as refusal.
+
+### Report
+- Wrote `BENCHMARK_PLANNER_v3.md` with explicit per-error entries:
+  - query text,
+  - expected decision + expected response behavior,
+  - actual LLM planner decision payload.
+
+## 2026-02-20 - Brainstorming note for multi-positive retrieval eval
+
+### Scope completed
+- Added `IMPROVE_RETRIEVAL_EVAL.md` with brainstorming proposals to address duplicate factual evidence across chunks and filings.
+- Focused on eval-methodology changes only (no runtime/retrieval code changes).
+
+### Key observations
+- Single-gold chunk scoring can understate true retrieval quality in SEC corpora where identical facts recur across sections and filings.
+- Multi-positive fact-centric labels (`relevant_chunk_ids`) are a strong backward-compatible first step before graded relevance.
+
+### Validation experiments and results
+- Documentation-only change; no functional behavior was modified.
+
+## 2026-02-20 - Flawed planner prompt regression during full-suite ablation (stopped early by request)
+
+### Context
+- Active script: `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh`
+- Run group: `full_suite_ablation_20260220_001447`
+- User requested stop mid-run after observing unexpectedly high helpfulness fail and suspecting planner looseness.
+
+### Completed before stop
+- Baseline: `single100`, `multi60`, `open200`
+- No-rerank: `single100`, `multi60`, `open200`
+- No-material-cap: `single100`, `multi60`
+- Interrupted: `no-material-cap/open200` (`...20260220_020229`) with only partial `generations.jsonl` (5 rows), no scored summary.
+
+### Key metrics (open200)
+- Baseline current run: faithfulness fail `0.2764`, helpfulness fail `0.4372`
+- No-rerank: faithfulness fail `0.1950`, helpfulness fail `0.4300`
+- Historical reduced-heuristics ref (`2026-02-18`): faithfulness fail `0.1350`, helpfulness fail `0.0050`
+
+### Root-cause finding
+- Planner action distribution shifted sharply:
+  - Historical ref: `answer=199`, `clarification_required=1`
+  - Current baseline: `answer=167`, `clarification_required=32`
+- All `32` clarification cases triggered `refuse_unindexed_ticker_candidates` with bogus inferred candidates (e.g., `CAPEX`, `TDOG`, `GC=F` family), even when the actual ticker in the query was indexed.
+- Impact in baseline open200:
+  - `clarification + refuse_unindexed` cases: `32`
+  - Helpfulness fails among them: `32/32`
+  - Faithfulness fails among them: `28/32`
+
+### Artifacts
+- Summary report: `BENCHMARK_FLAWED_PLANNER.md`
+- Baseline open200 run: `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_20260220_001447.baseline_best.open200.normal.tools12.norefine.20260220_003443`
+- Historical ref run: `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.open200.normal.tools12.norefine.20260218_202301`
+
+## 2026-02-20 - Planner routing fix: remove heuristic ticker inference in planner-first flow
+
+### What changed
+- Updated `src/andromeda/query/runtime.py` planner routing:
+  - Removed heuristic ticker inference fallback path (`_infer_tickers_from_question`) from `plan_query(...)`.
+  - Removed unindexed-candidate refusal branch (`refuse_unindexed_ticker_candidates`) from planner-first routing.
+  - `clarification_required` now returns immediately with clarification (no downstream refusal side path).
+  - If planner action is `answer` but no valid tickers are present, runtime now early-terminates with a user-facing message via `planner_answer_missing_tickers`.
+- Updated tests in `tests/test_query_runtime_tools_first.py`:
+  - replaced yfinance-inference fallback expectation with clarification expectation,
+  - added coverage that clarification no longer routes into unindexed refusal,
+  - added coverage for `answer` with missing tickers returning early planner error.
+
+### Validation
+- `source .venv/bin/activate && pytest tests/test_query_runtime_tools_first.py`
+  - Result: `17 passed`.
+
+### Focused eval rerun (10/32 previously failed open-ended cases)
+- Script: `agent_logs/scripts/20260220_0230_rerun_failed32_sample_after_routing_fix.sh`
+- Source failures: sampled from
+  - `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_20260220_001447.baseline_best.open200.normal.tools12.norefine.20260220_003443`
+- New run:
+  - `eval/results_revamp/full_suite_ablation/eval_run.routing_fix_failed32_sample10_20260220.20260220_021622`
+- Settings used: baseline-aligned (`mode=normal`, `concurrency=12`, `query_timeout_s=350`, `query_max_retries=1`, judge workers `12`, judge context `80000`).
+
+### Observations
+- Routing bug fixed on sample:
+  - `refuse_unindexed_ticker_candidates = 0` (was 10/10 for this sampled slice previously)
+  - `planner_action_clarification_required = 0`
+  - `planner_action_answer = 10`
+- Sample score summary improved materially:
+  - `open_ended_judge_fail_rates.faithfulness_v1 = 0.1`
+  - `open_ended_judge_fail_rates.helpfulness_v1 = 0.1`
+
+### Notes
+- This confirms the primary failure mode was routing/heuristic ticker-candidate refusal, not retrieval depth or reranker settings for these cases.
+
+## 2026-02-20 - Full-suite rerun after planner routing fix (baseline vs reranker-off vs material-cap-off)
+
+### Scope
+- Continued run group `full_suite_ablation_20260220_022028` using:
+  - `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh`
+- Goal: complete the requested 3 benchmark branches after planner routing fix:
+  - `baseline_best`
+  - `ablation_no_rerank`
+  - `ablation_no_material_cap`
+
+### Completed artifacts
+- New report: `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`
+- Full run directories completed for:
+  - baseline (`single100`, `multi60`, `open200`)
+  - no-rerank (`single100`, `multi60`, `open200`)
+  - no-material-cap (`single100`, `multi60`)
+- `no-material-cap/open200` generation entered a stuck-tail state; generation was stopped and scoring was completed manually on produced outputs:
+  - run dir: `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_20260220_022028.ablation_no_material_cap.open200.normal.tools12.norefine.20260220_042421`
+  - scoring command:
+    - `source .venv/bin/activate && python -m scripts.score_eval --run-dir <run_dir> --judge-workers 12 --judge-context-chars 80000 --judge-timeout-s 350 --judge-max-retries 1`
+
+### Key metrics observed
+- Baseline open200 (post-fix): faithfulness `0.1200`, helpfulness `0.2800`
+- Compared to flawed-planner baseline open200 (`full_suite_ablation_20260220_001447`):
+  - faithfulness `0.2764 -> 0.1200`
+  - helpfulness `0.4372 -> 0.2800`
+- Reranker-off:
+  - improved single100 open faithfulness (`0.1034 -> 0.0333`)
+  - worsened open200 faithfulness/helpfulness (`0.1200 -> 0.1500`, `0.2800 -> 0.2850`)
+- Material-cap-off:
+  - generally degraded quality and latency; partial open200 scored at faithfulness `0.1684`, helpfulness `0.2947` on `open_ended_n_ok=190`
+
+### Stuck/timeout details
+- Hard timeout error in no-material-cap open200:
+  - query_id: `4d51932a-0d08-4512-8cd1-9dae6d68f695`
+  - question: "Which operational bottlenecks or dependencies does APH (APH) explicitly acknowledge in 2026, and how could they impact future results? Cite sources."
+  - error row had no draft/final/tool trace payload (timeout after retry budget `437.5s`)
+- Additional missing query IDs in this partial run were recorded in `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`.
+
+### Interpretation
+- Planner routing fix removed the dominant false-refusal mode seen previously.
+- Current evidence does not justify disabling reranker globally.
+- Removing material-point cap is net negative for both quality and latency.
+
+## 2026-02-20 - Root-cause analysis for high helpfulness fail rate (post-fix baseline)
+
+### Objective
+- Investigate why helpfulness remains high in `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md` and cite concrete failure examples.
+
+### Script + artifacts
+- Script: `agent_logs/scripts/20260220_0515_analyze_helpfulness_failures.py`
+- Extracted examples report: `agent_logs/reports/20260220_helpfulness_failure_examples.md`
+- Updated benchmark report section: `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md` (`Why Helpfulness Is Still High: Failure Inspection`)
+
+### Findings
+- Baseline helpfulness fails are overwhelmingly refusal-style responses for out-of-index tickers:
+  - `single100`: `21` fails, `20` refusal-style (`95.2%`)
+  - `multi60`: `30` fails, `30` refusal-style (`100%`)
+  - `open200`: `56` fails, `56` refusal-style (`100%`)
+  - Combined: `107` fails, `106` refusal-style (`99.1%`)
+- Most frequent rejected out-of-index tickers in fail rows:
+  - `MSFT` (`26`), `TSLA` (`24`), `META` (`21`), `AMZN` (`21`), `AAPL` (`19`)
+- There is one genuine in-index answer-quality miss surfaced in this slice:
+  - `query_id=cdcab831-39b6-4154-810a-279596cbe4d5` (GOOGL net income), where answer incorrectly claimed net income absent.
+
+### Outcome
+- High helpfulness failure is primarily a dataset/index coverage mismatch, not mainly weak synthesis for indexed companies.
+- Report now includes query-level examples and action implications.
+
+## 2026-02-20 - Verified doc-index mismatch root cause and added guardrails
+
+### Verification
+- Confirmed the mismatch came from stale `.env` override, not planner logic:
+  - `.env` had `FINRAG_DOC_INDEX_PATH=./data/ingest_profiles/exp__chunk_1024_o128_tokenizer__ctx_none__index_m24_ef200/sec_filings_md_secparser/doc_index.jsonl`.
+  - `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh` previously resolved:
+    - `DOC_INDEX_PATH="${FINRAG_DOC_INDEX_PATH:-<expected-512-path>}"`
+  - Because `FINRAG_DOC_INDEX_PATH` was already set, runs used the wrong 1024 doc index while query sets were `combined512`.
+  - Runtime command logs from that run showed `--doc-index-path ./data/ingest_profiles/exp__chunk_1024_o128_tokenizer__ctx_none__index_m24_ef200/...`.
+
+### Changes made
+- Added shared eval-path resolver in `scripts/_env.sh`:
+  - `resolve_eval_doc_index_path(root, ingest_profile, chunk_dir)`
+  - default: infer from ingest profile
+  - ignores stale `.env` `FINRAG_DOC_INDEX_PATH` by default
+  - explicit overrides only via `DOC_INDEX_PATH` or `FINRAG_DOC_INDEX_PATH_OVERRIDE`
+- Updated eval launchers:
+  - `scripts/run_full_eval_suite.sh`
+  - `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh`
+  - `agent_logs/scripts/20260220_0230_rerun_failed32_sample_after_routing_fix.sh`
+- Added mismatch guards:
+  - hard fail when `DOC_INDEX_PATH` does not match `INGEST_PROFILE` path root (unless `ALLOW_EVAL_PROFILE_MISMATCH=1`)
+  - hard fail for default combined512 query sets when profile does not match expected combined512 profile (unless bypass flag set)
+- Added startup logs in launchers to print resolved profile/schema/doc-index path.
+- Updated `.env.example`:
+  - removed `FINRAG_DOC_INDEX_PATH` default to prevent accidental drift.
+- Updated docs:
+  - `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md` root-cause section now explicitly states the stale-env override failure.
+  - `README_EVAL.md` now documents new doc-index resolution behavior and override knobs.
+
+### Operational note
+- Runtime endpoint `/ingested_companies` still supports `FINRAG_DOC_INDEX_PATH` as explicit override (and otherwise infers via profile); the guardrail change here specifically hardens eval launcher behavior.
+
+## 2026-02-20 - README architecture refresh aligned to latest planner/eval state
+
+### Scope completed
+- Rewrote `README.md` to reflect latest runtime logic and system design.
+- Added updated Mermaid diagrams for:
+  - query/answer pipeline,
+  - retrieval+rereanking stack,
+  - ingestion/indexing flow,
+  - eval/benchmark loop.
+- Added benchmark-backed "Latest Status" and references to current reports (`BENCHMARK_PLANNER_v3.md`, `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`, `BENCHMARK_RETRIEVAL.md`, `BENCHMARK.md`).
+
+### Key observations
+- Planner quality and routing behavior changed materially in the last two days; stale README text can mislead unless benchmark deltas are surfaced directly.
+- End-to-end reranker guidance is still slice-dependent (retrieval-anchor metrics and full-suite metrics can disagree), so README now documents that nuance explicitly.
+
+### Validation experiments and results
+- Documentation update only; no production/runtime code paths were changed.
+
+## 2026-02-20 - Chunking pipeline analysis and improvement memo
+
+### Scope completed
+- Added `IMPROVE_CHUNKING.md` documenting current HTML->markdown->chunking flow, existing quality mechanisms, and prioritized improvement ideas.
+- Focused on analysis/brainstorming only; no runtime behavior changes.
+
+### Key observations
+- Current chunk quality is strongest around table preservation, heading/page traceability, and retrieval-text enrichment metadata.
+- The largest immediate quality gap is in postprocessing summaries (`_summarize_text` disabled) and heuristic table detection reliability.
+
+### Validation experiments and results
+- Documentation-only change; no functional behavior was modified.
+
+## 2026-02-20 - Added chunker mechanics deep-dive references
+
+### Scope completed
+- Expanded `IMPROVE_CHUNKING.md` with a detailed walkthrough of current chunker mechanics.
+- Added explicit code references for boundary detection, buffer/flush logic, overlap handling, oversized text/table splitting, and docling-hybrid mode.
+
+### Key observations
+- The boundary model is deterministic and block-driven (page/heading/table/text), with explicit flush points.
+- Overlap is intentionally text-only and reset around tables, which prevents table-to-text contamination but can drop some cross-block continuity.
+
+### Validation experiments and results
+- Documentation-only change; no functional behavior was modified.
+
+## 2026-02-20 - Added bootstrap CIs for fixed-planner baseline metrics
+
+### Scope completed
+- Computed bootstrap 95% confidence intervals for the "Update: Fixed-Settings Baseline Rerun (Interrupted by time)" metrics in `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`.
+- Added a dedicated CI table under that section.
+
+### Scripts and artifacts
+- Script:
+  - `agent_logs/scripts/20260220_160500_compute_bootstrap_ci_fixed_planner_baseline.py`
+- Output artifact:
+  - `agent_logs/reports/20260220_fixed_planner_baseline_bootstrap_ci.json`
+- Inputs:
+  - `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_fixed_20260220_124150.baseline_best.single100.normal.tools12.norefine.20260220_124205/scores.jsonl`
+  - `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_fixed_20260220_124150.baseline_best.multi60.normal.tools12.norefine.20260220_125759/scores.jsonl`
+
+### Method
+- Nonparametric bootstrap on per-query binary fail outcomes (`prediction == 1`) per metric.
+- `n_bootstrap=20000`, `seed=42`.
+
+### Key observations
+- Metrics with observed all-zero fail rates produced bootstrap CI `[0, 0]` (expected for pure empirical bootstrap with all-zero sample).
+- Non-zero metrics in `single100` show wide intervals due to small `n` in each judged slice (e.g., `n=15` distractor, `n=30` open-ended).
+
+## 2026-02-20 - Fixed Review UI static/root path regression (`/review` 500 + `/source_text` 403)
+
+### Previous state
+- `/review` failed with `Missing review UI HTML .../src/andromeda/review/static/review.html`.
+- `/source_text` requests returned 403 even for valid files under `data/ingest_profiles/...`.
+
+### Root cause
+- `src/andromeda/review/review_ui.py` used incorrect path anchors after folder nesting:
+  - `PROJECT_ROOT = Path(__file__).resolve().parents[2]` resolved to `<repo>/src` (not repo root).
+  - `STATIC_DIR = Path(__file__).parent / "static"` resolved to a non-existent `<repo>/src/andromeda/review/static`.
+- `src/andromeda/review/review_app.py` also mounted static from the non-existent `review/static` path.
+
+### What changed
+- Updated `review_ui.py`:
+  - `PROJECT_ROOT = Path(__file__).resolve().parents[3]`
+  - `STATIC_DIR = Path(__file__).resolve().parents[1] / "static"`
+- Updated `review_app.py` static mount:
+  - `static_dir = Path(__file__).resolve().parents[1] / "static"`
+
+### Why this fixes it
+- `/review` now serves `src/andromeda/static/review.html` correctly.
+- Review-router local source access checks now default to repo-root allowlist (`<repo>`, `<repo>/data`) rather than `<repo>/src`, so valid markdown source paths no longer fail authorization by default.
+
+## 2026-02-20 - Fixed tool citation chip parsing and improved planner company-name mapping
+
+### Previous state
+- Frontend answer rendering only chipified tool markers in `[tool=...]` form.
+- Some tool traces emitted markers like `[doc=edgar_get_financial_metrics ticker=SNDK status=ok]`, which were left as raw text instead of styled pills/icons.
+- Planner sometimes returned `clarification_required` for clear company-name queries (e.g., Sandisk + Comfort Systems) despite indexed coverage.
+
+### What changed
+- Frontend citation parser (`src/andromeda/static/ts/index/citations.ts`):
+  - now recognizes tool markers in both forms:
+    - `[tool=<tool_name> ...]`
+    - `[doc=<tool_name> ...]` when `doc` matches known finance-tool prefixes (`yfinance_`, `edgar_`, `finance_tools_`).
+  - added tests in `tests/ui-unit/citations.spec.ts`.
+- Planner/runtime (`src/andromeda/query/runtime.py`):
+  - planner prompt now includes full indexed ticker/company catalog in human-readable and JSON forms.
+  - added stronger few-shot guidance for company-name mapping (Sandisk/Comfort Systems -> SNDK/FIX).
+  - added dedicated LLM company-name resolution step used only when planner returns `clarification_required` with empty tickers and no explicit user tickers.
+  - on successful resolution, pipeline continues via answer flow with a trace event (`planner_company_name_resolution`).
+  - added test coverage in `tests/test_query_runtime_tools_first.py`.
+
+### Observations
+- This preserves planner-first behavior while reducing brittle post-hoc heuristics.
+- The dedicated resolver is scoped to clarification-only recovery, minimizing extra LLM calls in normal answer/refusal paths.

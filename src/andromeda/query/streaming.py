@@ -99,7 +99,7 @@ async def stream_per_ticker_briefs(
                 ticker=ticker,
                 settings=settings,
                 reranked=pipeline.per_ticker_reranked[ticker],
-                tool_results=pipeline.tool_results,
+                tool_results=pipeline.tool_results_for_llm,
             )
             for delta in rag_service.llm.chat_stream(prompt, temperature=effort_temperature):
                 if cancel_evt.is_set():
@@ -410,7 +410,7 @@ async def stream_answer_text(
                     question=pipeline.question,
                     settings=settings,
                     per_ticker_briefs=pipeline.per_ticker_briefs,
-                    tool_results=pipeline.tool_results,
+                    tool_results=pipeline.tool_results_for_llm,
                 ),
                 temperature=rag_service._effort_temperature(settings.answering_effort),
                 delta_type="draft_delta",
@@ -447,7 +447,7 @@ async def stream_answer_text(
                     question=pipeline.question,
                     settings=settings,
                     per_ticker_briefs=pipeline.per_ticker_briefs,
-                    tool_results=pipeline.tool_results,
+                    tool_results=pipeline.tool_results_for_llm,
                     draft_answer=answer.draft,
                 ),
                 temperature=0.0,
@@ -470,7 +470,7 @@ async def stream_answer_text(
                 question=pipeline.question,
                 settings=settings,
                 per_ticker_briefs=pipeline.per_ticker_briefs,
-                tool_results=pipeline.tool_results,
+                tool_results=pipeline.tool_results_for_llm,
             ),
             temperature=rag_service._effort_temperature(settings.answering_effort),
             delta_type="final_delta",
@@ -491,7 +491,7 @@ async def stream_answer_text(
             request=request,
             cancel_evt=cancel_evt,
             prompt=rag_service.draft_prompt(
-                pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results
+                pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results_for_llm
             ),
             temperature=settings.draft_temperature,
             delta_type="draft_delta",
@@ -529,7 +529,7 @@ async def stream_answer_text(
                 settings,
                 pipeline.reranked,
                 draft_answer=answer.draft,
-                tool_results=pipeline.tool_results,
+                tool_results=pipeline.tool_results_for_llm,
             ),
             temperature=0.0,
             delta_type="final_delta",
@@ -547,7 +547,7 @@ async def stream_answer_text(
             request=request,
             cancel_evt=cancel_evt,
             prompt=rag_service.final_prompt(
-                pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results
+                pipeline.question, settings, pipeline.reranked, tool_results=pipeline.tool_results_for_llm
             ),
             temperature=settings.draft_temperature,
             delta_type="final_delta",

@@ -10,6 +10,9 @@ Violations will cause runs to be blocked or reverted and large multimillion doll
 * Strictly follow existing style in the codebase.
 * Ensure every function is properly documented following the existing style.
 * Write in-line comments strategically, especially for key business logic. Do this sparingly, and strategically.
+* DEVELOP A STRONG DISTASTE FOR REGEX/TEXT HEURISTICS.
+    - Favor using established external libraries instead
+    - Favor using proper, generalized functions
 * Keep code concise, tasteful and elegant.
 * Don't overcomplicate things. Don't implement more than you need to.
 * Ensure code is readable by humans, easy to extend and maintain.
@@ -33,6 +36,7 @@ key/attribute existence, such as by using `dataclass`, `TypedDict` and class att
     * Do not run the linter after every change. It is too slow.
 * First, activate the python venv by running `source .venv/bin/activate` from the repository root.
 * Then, run `pre-commit run --all`.
+* IMPORTANT NOTE: due to sandbox permission errors, you will need to set `PRE_COMMIT_HOME` env var to `PRE_COMMIT_HOME=/tmp/pre-commit-cache` when running `pre-commit`.
 * We use the pyright pre-commit hook to catch typing issues. There may be a large number of such errors. Try your best to fix them where possible, and document your findings in the `agent_logs/LOGBOOK.md`. If fixing a particular error is too tedious, make a judgement as to whether you should just ignore it in-line, or modify the pyright config (if applicable).
 
 
@@ -82,6 +86,11 @@ you must ensure those comments continue to exist in the new/migrated function/co
     including modifications to `LOGBOOK.md`, `agent_logs/`, `CHANGELOG.md` and so on.
     - NEVER undo others' work.
     - Keep calm and continue executing with your plan. You do not need to stop and ask me about it.
+* WHEN WRITING UNIT TESTS:
+    - Monkeypatching is fine for isolating specific logic to test for, but you should NOT abuse it.
+    - You should still have proper "integration" style tests that pass in legitimate production-style inputs, and assert for legitimate outputs (as far as pragmatically possible).
+    - When dealing with tests that require external APIs like LLM APIs, of course monkeypatching helps to run these tests locally without actually calling the external LLM API and incurring costs. However, we should still set aside a comprehensive suite of integration tests that actually make the required LLM calls, and do comprehensive asserts/checks on the outputs. These tests can be run in special environment with LLM key available, and can be disabled by default for normal CI tests.
+    - But these tests should still exist.
 
 ## Testing rules
 
@@ -89,6 +98,6 @@ you must ensure those comments continue to exist in the new/migrated function/co
 which relies on recent changes to the codebase, to ensure that core functions work as expected.
     - You don't need to run the tests after every little change. Exercise judgement.
 * First, activate the venv by running `source .venv/bin/activate` from the repository root.
-* Then, run tests with `pytest -vvv tests/`.
+* Then, run tests with `pytest tests/`.
 * Fix failing tests before proceeding.
 * Never bypass tests without explicit instruction.

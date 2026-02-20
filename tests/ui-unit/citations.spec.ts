@@ -186,4 +186,35 @@ describe('citations helpers', () => {
     expect(html).toContain('data-doc-id="doc&quot;1"');
     expect(html).toContain('data-chunk-id="chunk&quot;2"');
   });
+
+  it('renders tool citation chip for [tool=...] markers', () => {
+    const manager = new CitationManager();
+    const html = manager.linkifyDocCitations(
+      'snap [tool=edgar_get_financial_metrics ticker=SNDK status=ok]',
+      { enable: true },
+    );
+
+    expect(html).toContain('class="toolCitationChip"');
+    expect(html).toContain('edgar_get_financial_metrics · SNDK (ok)');
+  });
+
+  it('renders tool citation chip for tool-like [doc=...] markers', () => {
+    const manager = new CitationManager();
+    const html = manager.linkifyDocCitations(
+      'snap [doc=yfinance_get_price_history ticker=SNDK status=ok]',
+      { enable: true },
+    );
+
+    expect(html).toContain('class="toolCitationChip"');
+    expect(html).toContain('yfinance_get_price_history · SNDK (ok)');
+  });
+
+  it('keeps non-tool [doc=...] markers untouched when not in citation map', () => {
+    const manager = new CitationManager();
+    const html = manager.linkifyDocCitations('claim [doc=random_unknown_doc_id ticker=SNDK status=ok]', {
+      enable: true,
+    });
+
+    expect(html).toBe('claim [doc=random_unknown_doc_id ticker=SNDK status=ok]');
+  });
 });

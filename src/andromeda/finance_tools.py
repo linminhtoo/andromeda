@@ -111,11 +111,9 @@ class FinanceTools:
         self.max_statement_chars = max(500, int(max_statement_chars))
         self.max_context_chars_per_result = max(300, int(max_context_chars_per_result))
 
-    def fetch_for_plan(
-        self, *, question: str, tickers: list[str], use_yfinance: bool, use_edgar_financials: bool
-    ) -> list[FinanceToolResult]:
+    def fetch_for_plan(self, *, question: str, tickers: list[str]) -> list[FinanceToolResult]:
         """
-        Execute selected finance tools for requested tickers.
+        Execute finance tools for requested tickers.
         """
 
         _ = question
@@ -124,10 +122,8 @@ class FinanceTools:
             normalized = str(ticker or "").strip().upper()
             if not normalized:
                 continue
-            if use_yfinance:
-                out.extend(self.fetch_yfinance_suite(ticker=normalized))
-            if use_edgar_financials:
-                out.extend(self.fetch_edgar_financials(ticker=normalized))
+            out.extend(self.fetch_yfinance_suite(ticker=normalized))
+            out.extend(self.fetch_edgar_financials(ticker=normalized))
         return out
 
     def tool_context_text(self, results: list[FinanceToolResult], *, max_chars: int = 14_000) -> str:
@@ -143,7 +139,8 @@ class FinanceTools:
             header = f"[tool={result.tool} ticker={result.ticker or 'n/a'} status={result.status.value}]"
             payload_text = ""
             if result.payload is not None:
-                payload_text = compact_json(result.payload, max_chars=self.max_context_chars_per_result)
+                payload_for_context = self.context_payload_for_result(result=result)
+                payload_text = compact_json(payload_for_context, max_chars=self.max_context_chars_per_result)
             block = f"{header}\nsummary: {result.summary}"
             if payload_text:
                 block += f"\npayload: {payload_text}"
@@ -153,6 +150,91 @@ class FinanceTools:
             blocks.append(block)
             used += len(block)
         return "\n".join(blocks).strip()
+
+    @staticmethod
+    def _month_key(value: object) -> str | None:
+        """
+        Build a year-month key from a datetime-like or ISO timestamp value.
+        """
+
+        if hasattr(value, "year") and hasattr(value, "month"):
+            try:
+                year = int(getattr(value, "year"))
+                month = int(getattr(value, "month"))
+            except (TypeError, ValueError):
+                year = 0
+                month = 0
+            if 1900 <= year <= 2200 and 1 <= month <= 12:
+                return f"{year:04d}-{month:02d}"
+
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return f"{parsed.year:04d}-{parsed.month:02d}"
+        except ValueError:
+            pass
+
+        if len(text) >= 7 and text[4] == "-":
+            yyyy = text[:4]
+            mm = text[5:7]
+            if yyyy.isdigit() and mm.isdigit():
+                year = int(yyyy)
+                month = int(mm)
+                if 1900 <= year <= 2200 and 1 <= month <= 12:
+                    return f"{year:04d}-{month:02d}"
+        return None
+
+    def monthly_close_series(self, series: list[dict[str, object]], *, max_months: int = 12) -> list[dict[str, object]]:
+        """
+        Build compact monthly close points from daily series data.
+        """
+
+        latest_close_by_month: dict[str, float] = {}
+        for point in series:
+            close_raw = point["close"] if "close" in point else None
+            close_number = number_or_none(close_raw)
+            if not isinstance(close_number, int | float):
+                continue
+            month = self._month_key(point["t"] if "t" in point else None)
+            if month is None:
+                continue
+            latest_close_by_month[month] = round(float(close_number), 2)
+
+        if not latest_close_by_month:
+            return []
+        months = sorted(latest_close_by_month.keys())[-max(1, int(max_months)) :]
+        return [{"month": month, "close": latest_close_by_month[month]} for month in months]
+
+    def context_payload_for_result(self, *, result: FinanceToolResult) -> object:
+        """
+        Return payload representation tuned for LLM context consumption.
+        """
+
+        if result.payload is None:
+            return None
+        if result.tool != "yfinance_get_price_history":
+            return result.payload
+        if not isinstance(result.payload, dict):
+            return result.payload
+
+        monthly_series = result.payload["monthly_close_12m"] if "monthly_close_12m" in result.payload else None
+        if not isinstance(monthly_series, list):
+            return {"monthly_close_12m": []}
+
+        close_values: list[float] = []
+        for item in monthly_series:
+            if not isinstance(item, dict) or "close" not in item:
+                continue
+            close_value = number_or_none(item["close"])
+            if isinstance(close_value, int | float):
+                close_values.append(round(float(close_value), 2))
+
+        out: dict[str, object] = {"monthly_close_12m": close_values}
+        if len(close_values) >= 2 and close_values[0] != 0:
+            out["change_12m_pct"] = round(((close_values[-1] - close_values[0]) / close_values[0]) * 100.0, 2)
+        return out
 
     def fetch_yfinance_suite(self, *, ticker: str) -> list[FinanceToolResult]:
         """
@@ -341,7 +423,7 @@ class FinanceTools:
         """
 
         try:
-            history = ticker_obj.history(period="6mo", interval="1d", rounding=True)  # type: ignore[attr-defined]
+            history = ticker_obj.history(period="12mo", interval="1d", rounding=True)  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001
             return FinanceToolResult(
                 tool="yfinance_get_price_history",
@@ -358,9 +440,8 @@ class FinanceTools:
                 summary="No price history returned by yfinance.",
             )
 
-        trimmed = history.tail(self.max_history_points)
         series: list[dict[str, object]] = []
-        for index, row in trimmed.iterrows():
+        for index, row in history.iterrows():
             point: dict[str, object] = {}
             if hasattr(index, "isoformat"):
                 point["t"] = index.isoformat()  # type: ignore[union-attr]
@@ -394,12 +475,23 @@ class FinanceTools:
                 summary="Price history was empty after normalization.",
             )
 
+        monthly_close_12m = self.monthly_close_series(series, max_months=12)
+        trimmed_series = series[-self.max_history_points :]
+
         return FinanceToolResult(
             tool="yfinance_get_price_history",
             ticker=ticker,
             status=FinanceToolStatus.OK,
-            summary=f"Fetched {len(series)} OHLCV points for {ticker}.",
-            payload={"period": "6mo", "interval": "1d", "series": series},
+            summary=(
+                f"Fetched {len(trimmed_series)} chart OHLCV points and "
+                f"{len(monthly_close_12m)} monthly close values for {ticker}."
+            ),
+            payload={
+                "period": "12mo",
+                "interval": "1d",
+                "series": trimmed_series,
+                "monthly_close_12m": monthly_close_12m,
+            },
         )
 
     def fetch_edgar_financials(

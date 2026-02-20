@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-static_dir = Path(__file__).parent / "static"
+static_dir = Path(__file__).resolve().parents[1] / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 app.include_router(review_router)

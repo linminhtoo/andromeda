@@ -35,8 +35,9 @@ npm run -s build:ts
 : "${RERANKER_MODEL:=BAAI/bge-reranker-v2-m3}"
 
 export OPENAI_CHAT_MODEL OPENAI_EMBED_MODEL RERANKER_MODEL
-export CONTEXT_STRATEGY="${CONTEXT_STRATEGY:-neighbors}"
-export CONTEXT_WINDOW="${CONTEXT_WINDOW:-8}"
+export CONTEXT_STRATEGY="${CONTEXT_STRATEGY:-none}"
+export CONTEXT_WINDOW="${CONTEXT_WINDOW:-1}"
+export SOURCE_ROOTS="/home/mlin/repos/z_scratch/financial-rag:/home/mlin/repos/z_scratch/financial-rag/data"
 
 source "$project_root/.venv/bin/activate"
 PYTHONPATH=src uvicorn andromeda.main:app --host 0.0.0.0 --port 8236

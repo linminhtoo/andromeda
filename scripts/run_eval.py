@@ -89,6 +89,18 @@ def main() -> None:
         default=1,
         help="Retry count after the first timed-out/transient generation failure.",
     )
+    ap.add_argument(
+        "--query-retry-timeout-multiplier",
+        type=float,
+        default=1.25,
+        help="Multiplier applied to timeout budget on each retry attempt (minimum 1.0).",
+    )
+    ap.add_argument(
+        "--query-retry-timeout-cap-s",
+        type=float,
+        default=600.0,
+        help="Upper cap for retry timeout budget in seconds (set <=0 to disable cap).",
+    )
 
     # Filters.
     ap.add_argument("--max-items", type=int, default=None, help="Optional cap on number of queries to run.")
@@ -165,6 +177,12 @@ def main() -> None:
         max_chunks=args.max_chunks,
         query_timeout_s=(float(args.query_timeout_s) if args.query_timeout_s is not None else None),
         query_max_retries=max(0, int(args.query_max_retries)),
+        query_retry_timeout_multiplier=float(args.query_retry_timeout_multiplier),
+        query_retry_timeout_cap_s=(
+            float(args.query_retry_timeout_cap_s)
+            if args.query_retry_timeout_cap_s is not None and args.query_retry_timeout_cap_s > 0
+            else None
+        ),
     )
 
     gpu_ids = [str(gpu) for gpu in args.gpu_ids] if args.gpu_ids else None

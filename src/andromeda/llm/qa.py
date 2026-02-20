@@ -89,6 +89,15 @@ _EFFORT_GUIDANCE: dict[AnsweringEffort, str] = {
     AnsweringEffort.HIGH: "Be thorough and nuanced; include tradeoffs, caveats, and uncertainty clearly.",
 }
 
+_COMPARISON_OUTPUT_CONTRACT = (
+    "Comparison output contract:\n"
+    "- Start with a 'Bottom line' section (1-2 sentences) that answers the comparison question directly.\n"
+    "- Include a markdown table with one row per ticker and columns: Evidence-backed strengths, "
+    "Evidence-backed risks, Key quantitative signals, Confidence/caveats.\n"
+    "- Add a 'Head-to-head deltas' section with explicit ticker-vs-ticker bullets.\n"
+    "- End with 'Decision and uncertainty' that clearly separates what is supported vs not explicitly stated."
+)
+
 
 def _system_prompt(base: str, *, answer_style: AnswerStyle, extra: str | None) -> str:
     parts = [
@@ -301,6 +310,7 @@ def build_multi_ticker_synthesis_prompt(
     final_max_tokens: int = 32_768,
     answer_style: AnswerStyle = "normal",
     answering_effort: AnsweringEffort = AnsweringEffort.MEDIUM,
+    comparison_required: bool = False,
     tool_context: str | None = None,
 ) -> list[ChatMessage]:
     """
@@ -317,6 +327,14 @@ def build_multi_ticker_synthesis_prompt(
         "You are synthesizing a final multi-ticker answer from per-ticker briefs. "
         "Preserve citations from the briefs and do not invent new evidence.\n" + _EFFORT_GUIDANCE[answering_effort]
     )
+    if comparison_required:
+        system_extra = system_extra + "\n" + _COMPARISON_OUTPUT_CONTRACT
+    comparison_block = ""
+    if comparison_required:
+        comparison_block = (
+            "This is a comparison request. You must follow the comparison output contract exactly "
+            "and keep every comparative claim evidence-backed.\n\n"
+        )
     return [
         {
             "role": "system",
@@ -327,6 +345,7 @@ def build_multi_ticker_synthesis_prompt(
             "content": (
                 f"Question:\n{question}\n\n"
                 f"{tool_block}"
+                f"{comparison_block}"
                 f"Per-ticker briefs:\n{brief_block}\n\n"
                 "Write a comparative final answer grounded in the per-ticker briefs."
             ),
@@ -342,6 +361,7 @@ def build_multi_ticker_refine_prompt(
     final_max_tokens: int = 32_768,
     answer_style: AnswerStyle = "normal",
     answering_effort: AnsweringEffort = AnsweringEffort.MEDIUM,
+    comparison_required: bool = False,
     tool_context: str | None = None,
 ) -> list[ChatMessage]:
     """
@@ -358,6 +378,11 @@ def build_multi_ticker_refine_prompt(
         "Refine the draft using only the per-ticker briefs and preserve valid citations.\n"
         + _EFFORT_GUIDANCE[answering_effort]
     )
+    if comparison_required:
+        system_extra = system_extra + "\n" + _COMPARISON_OUTPUT_CONTRACT
+    comparison_block = ""
+    if comparison_required:
+        comparison_block = "This remains a comparison request. Preserve the required comparison structure.\n\n"
     return [
         {
             "role": "system",
@@ -369,6 +394,7 @@ def build_multi_ticker_refine_prompt(
                 f"User question:\n{question}\n\n"
                 f"Draft answer:\n{draft}\n\n"
                 f"{tool_block}"
+                f"{comparison_block}"
                 f"Per-ticker briefs:\n{brief_block}\n\n"
                 "Now write a refined final answer."
             ),

@@ -391,12 +391,12 @@ class CrossEncoderReranker:
     ----------
     model_name : str, optional
         Pretrained cross-encoder model name.
-        Defaults to "cross-encoder/ms-marco-MiniLM-L-6-v2".
+        Defaults to "BAAI/bge-reranker-v2-m3".
     """
 
     def __init__(
         self,
-        model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        model_name: str = "BAAI/bge-reranker-v2-m3",
         *,
         candidate_text_provider: CandidateTextProvider | None = None,
     ):

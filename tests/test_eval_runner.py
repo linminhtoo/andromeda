@@ -98,3 +98,35 @@ def test_run_one_thread_timeout_does_not_hang() -> None:
     assert ok is False
     assert generation.error is not None
     assert "Timed out" in generation.error
+
+
+def test_run_one_retry_uses_scaled_timeout_budget() -> None:
+    class SlowThenOkService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def answer_question(self, _question, _settings, include_retrieved_chunks):  # noqa: ANN001
+            _ = include_retrieved_chunks
+            self.calls += 1
+            time.sleep(0.08)
+            return SimpleNamespace(
+                top_chunks=[], retrieved_chunks=[], draft_answer="", final_answer="", tool_trace=[], tool_results=[]
+            )
+
+    service = SlowThenOkService()
+    settings = RunConfig(mode="quick").resolved_settings()
+    cfg = RunConfig(
+        mode="quick",
+        query_timeout_s=0.05,
+        query_max_retries=1,
+        query_retry_timeout_multiplier=2.0,
+        query_retry_timeout_cap_s=1.0,
+    )
+
+    generation, _ms, ok = run_one(service, "q-retry-scale", "open_ended", "question", settings, cfg)
+
+    assert ok is True
+    assert service.calls == 2
+    assert generation.error is None
+    assert generation.settings["query_attempts"] == 2
+    assert generation.settings["query_timeout_attempt_s"] == pytest.approx(0.1)

@@ -18,12 +18,16 @@ if [[ -d ".venv" ]]; then
   source .venv/bin/activate
 fi
 
-POSTGRES_SCHEMA="${POSTGRES_SCHEMA:-eval_revamp_combined_512_20260217}"
-DOC_INDEX_PATH="${FINRAG_DOC_INDEX_PATH:-$project_root/data/ingest_profiles/eval_revamp_combined_512_20260217/sec_filings_md_secparser/chunked_512_64/doc_index.jsonl}"
+INGEST_PROFILE="${INGEST_PROFILE:-eval_revamp_combined_512_20260217}"
+CHUNK_DIR="${CHUNK_DIR:-chunked_512_64}"
+POSTGRES_SCHEMA="${POSTGRES_SCHEMA:-$INGEST_PROFILE}"
+DOC_INDEX_PATH="$(resolve_eval_doc_index_path "$project_root" "$INGEST_PROFILE" "$CHUNK_DIR")"
 
 SINGLE_QUERIES="${SINGLE_QUERIES:-eval/eval_queries_combined512_single_balanced100_validated_tol05_20260217.jsonl}"
 MULTI_QUERIES="${MULTI_QUERIES:-eval/eval_queries_combined512_multi_comparison60_validated_tol05_20260217.jsonl}"
 OPEN_QUERIES="${OPEN_QUERIES:-eval/eval_queries_openended200_diverse_20260217_v1.jsonl}"
+EXPECTED_INGEST_PROFILE_FOR_DEFAULT_QUERIES="${EXPECTED_INGEST_PROFILE_FOR_DEFAULT_QUERIES:-eval_revamp_combined_512_20260217}"
+ALLOW_EVAL_PROFILE_MISMATCH="${ALLOW_EVAL_PROFILE_MISMATCH:-0}"
 
 MODE="${MODE:-normal}"
 GEN_WORKERS="${GEN_WORKERS:-12}"
@@ -47,6 +51,27 @@ if [[ ! -f "$DOC_INDEX_PATH" ]]; then
   exit 1
 fi
 
+if [[ "$ALLOW_EVAL_PROFILE_MISMATCH" != "1" && "$DOC_INDEX_PATH" != *"/data/ingest_profiles/${INGEST_PROFILE}/"* ]]; then
+  echo "Doc index path/profile mismatch detected." >&2
+  echo "  INGEST_PROFILE=${INGEST_PROFILE}" >&2
+  echo "  DOC_INDEX_PATH=${DOC_INDEX_PATH}" >&2
+  echo "Set ALLOW_EVAL_PROFILE_MISMATCH=1 to bypass intentionally." >&2
+  exit 1
+fi
+
+if [[ "$ALLOW_EVAL_PROFILE_MISMATCH" != "1" ]]; then
+  if [[ "$SINGLE_QUERIES" == "eval/eval_queries_combined512_single_balanced100_validated_tol05_20260217.jsonl" && "$INGEST_PROFILE" != "$EXPECTED_INGEST_PROFILE_FOR_DEFAULT_QUERIES" ]]; then
+    echo "Default single100 eval set expects profile ${EXPECTED_INGEST_PROFILE_FOR_DEFAULT_QUERIES}, got ${INGEST_PROFILE}." >&2
+    echo "Set ALLOW_EVAL_PROFILE_MISMATCH=1 to bypass intentionally." >&2
+    exit 1
+  fi
+  if [[ "$MULTI_QUERIES" == "eval/eval_queries_combined512_multi_comparison60_validated_tol05_20260217.jsonl" && "$INGEST_PROFILE" != "$EXPECTED_INGEST_PROFILE_FOR_DEFAULT_QUERIES" ]]; then
+    echo "Default multi60 eval set expects profile ${EXPECTED_INGEST_PROFILE_FOR_DEFAULT_QUERIES}, got ${INGEST_PROFILE}." >&2
+    echo "Set ALLOW_EVAL_PROFILE_MISMATCH=1 to bypass intentionally." >&2
+    exit 1
+  fi
+fi
+
 if [[ -z "${POSTGRES_DSN:-${DATABASE_URL:-}}" ]]; then
   echo "Missing POSTGRES_DSN (or DATABASE_URL)." >&2
   exit 1
@@ -65,7 +90,12 @@ fi
 
 mkdir -p "$OUT_ROOT" logs
 
+echo "Resolved eval profile: ${INGEST_PROFILE}"
+echo "Resolved doc index path: ${DOC_INDEX_PATH}"
+echo "Resolved postgres schema: ${POSTGRES_SCHEMA}"
+
 export POSTGRES_SCHEMA
+export FINRAG_INGEST_PROFILE="${FINRAG_INGEST_PROFILE:-$INGEST_PROFILE}"
 export FINRAG_DOC_INDEX_PATH="$DOC_INDEX_PATH"
 export OUT_ROOT
 export RUN_GROUP
@@ -157,6 +187,7 @@ manifest = {
         "judge_max_retries": int(os.environ["JUDGE_MAX_RETRIES"]),
         "doc_index_path": os.environ["DOC_INDEX_PATH"],
         "postgres_schema": os.environ["POSTGRES_SCHEMA"],
+        "ingest_profile": os.environ.get("FINRAG_INGEST_PROFILE"),
     },
     "runs": {},
 }
