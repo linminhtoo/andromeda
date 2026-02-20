@@ -71,6 +71,26 @@ function citationValue(raw: unknown, key: 'doc' | 'chunk'): string {
   return String(value || '').trim();
 }
 
+/** Parse an arbitrary citation key value from marker text (e.g., `status=ok`). */
+function citationFieldValue(raw: unknown, key: string): string {
+  const text = String(raw || '');
+  const re = new RegExp(`\\b${key}\\s*=\\s*([^\\s,\\]]+)`, 'i');
+  const value = text.match(re)?.[1] || '';
+  return String(value || '').trim();
+}
+
+/** Return tool id when marker body encodes a finance-tool citation tag. */
+function toolNameFromMarkerBody(raw: unknown): string {
+  const body = String(raw || '');
+  const explicitTool = citationFieldValue(body, 'tool');
+  if (explicitTool) return explicitTool;
+  const fromDoc = citationFieldValue(body, 'doc');
+  if (!fromDoc) return '';
+  const normalized = fromDoc.trim().toLowerCase();
+  const knownToolPrefixes = ['yfinance_', 'edgar_', 'finance_tools_'];
+  return knownToolPrefixes.some((prefix) => normalized.startsWith(prefix)) ? fromDoc : '';
+}
+
 /** Generate a safe fallback label when structured filing metadata is unavailable. */
 function fallbackCitationLabel(docId: string): string {
   const doc = String(docId || '').trim();
@@ -136,13 +156,13 @@ export class CitationManager {
       const chunkId = citedChunkId || target.chunk_id;
       return `<a href="#" class="citationLink" data-doc-id="${escapeHtmlAttr(docId)}" data-chunk-id="${escapeHtmlAttr(chunkId)}" title="${escapeHtmlAttr(match)}">${safeText(target.label)}</a>`;
     });
-    const toolRe = /\[([^\]]*?\btool\s*=\s*[^\]]+?)\]/gi;
+    const toolRe = /\[([^\]]*?\b(?:tool|doc)\s*=\s*[^\]]+?)\]/gi;
     return withDocLinks.replace(toolRe, (match: string, bodyRaw: string) => {
       const body = String(bodyRaw || '');
-      const tool = String(body.match(/\btool\s*=\s*([^\s,\]]+)/i)?.[1] || '').trim();
+      const tool = toolNameFromMarkerBody(body);
       if (!tool) return match;
-      const ticker = String(body.match(/\bticker\s*=\s*([^\s,\]]+)/i)?.[1] || '').trim();
-      const status = String(body.match(/\bstatus\s*=\s*([^\s,\]]+)/i)?.[1] || '').trim();
+      const ticker = citationFieldValue(body, 'ticker');
+      const status = citationFieldValue(body, 'status');
       const label = ticker ? `${tool} · ${ticker}` : tool;
       const suffix = status ? ` (${status})` : '';
       return `<span class="toolCitationChip" title="${escapeHtmlAttr(match)}">${safeText(label + suffix)}</span>`;

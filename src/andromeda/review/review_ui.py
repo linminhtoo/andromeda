@@ -20,8 +20,8 @@ except Exception:  # noqa: BLE001
     fcntl = None  # type: ignore
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-STATIC_DIR = Path(__file__).parent / "static"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 REVIEW_HTML_PATH = STATIC_DIR / "review.html"
 FAVICON_PATH = STATIC_DIR / "favicon.ico"
 

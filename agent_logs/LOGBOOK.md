@@ -3310,3 +3310,302 @@ Implemented the three immediate follow-ups listed in `BENCHMARK_REDUCED_HEURISTI
   - query text,
   - expected decision + expected response behavior,
   - actual LLM planner decision payload.
+
+## 2026-02-20 - Brainstorming note for multi-positive retrieval eval
+
+### Scope completed
+- Added `IMPROVE_RETRIEVAL_EVAL.md` with brainstorming proposals to address duplicate factual evidence across chunks and filings.
+- Focused on eval-methodology changes only (no runtime/retrieval code changes).
+
+### Key observations
+- Single-gold chunk scoring can understate true retrieval quality in SEC corpora where identical facts recur across sections and filings.
+- Multi-positive fact-centric labels (`relevant_chunk_ids`) are a strong backward-compatible first step before graded relevance.
+
+### Validation experiments and results
+- Documentation-only change; no functional behavior was modified.
+
+## 2026-02-20 - Flawed planner prompt regression during full-suite ablation (stopped early by request)
+
+### Context
+- Active script: `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh`
+- Run group: `full_suite_ablation_20260220_001447`
+- User requested stop mid-run after observing unexpectedly high helpfulness fail and suspecting planner looseness.
+
+### Completed before stop
+- Baseline: `single100`, `multi60`, `open200`
+- No-rerank: `single100`, `multi60`, `open200`
+- No-material-cap: `single100`, `multi60`
+- Interrupted: `no-material-cap/open200` (`...20260220_020229`) with only partial `generations.jsonl` (5 rows), no scored summary.
+
+### Key metrics (open200)
+- Baseline current run: faithfulness fail `0.2764`, helpfulness fail `0.4372`
+- No-rerank: faithfulness fail `0.1950`, helpfulness fail `0.4300`
+- Historical reduced-heuristics ref (`2026-02-18`): faithfulness fail `0.1350`, helpfulness fail `0.0050`
+
+### Root-cause finding
+- Planner action distribution shifted sharply:
+  - Historical ref: `answer=199`, `clarification_required=1`
+  - Current baseline: `answer=167`, `clarification_required=32`
+- All `32` clarification cases triggered `refuse_unindexed_ticker_candidates` with bogus inferred candidates (e.g., `CAPEX`, `TDOG`, `GC=F` family), even when the actual ticker in the query was indexed.
+- Impact in baseline open200:
+  - `clarification + refuse_unindexed` cases: `32`
+  - Helpfulness fails among them: `32/32`
+  - Faithfulness fails among them: `28/32`
+
+### Artifacts
+- Summary report: `BENCHMARK_FLAWED_PLANNER.md`
+- Baseline open200 run: `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_20260220_001447.baseline_best.open200.normal.tools12.norefine.20260220_003443`
+- Historical ref run: `eval/results_revamp/full_suite/eval_run.reduced_heuristics_full_retry4_envoverride_20260218_195034.open200.normal.tools12.norefine.20260218_202301`
+
+## 2026-02-20 - Planner routing fix: remove heuristic ticker inference in planner-first flow
+
+### What changed
+- Updated `src/andromeda/query/runtime.py` planner routing:
+  - Removed heuristic ticker inference fallback path (`_infer_tickers_from_question`) from `plan_query(...)`.
+  - Removed unindexed-candidate refusal branch (`refuse_unindexed_ticker_candidates`) from planner-first routing.
+  - `clarification_required` now returns immediately with clarification (no downstream refusal side path).
+  - If planner action is `answer` but no valid tickers are present, runtime now early-terminates with a user-facing message via `planner_answer_missing_tickers`.
+- Updated tests in `tests/test_query_runtime_tools_first.py`:
+  - replaced yfinance-inference fallback expectation with clarification expectation,
+  - added coverage that clarification no longer routes into unindexed refusal,
+  - added coverage for `answer` with missing tickers returning early planner error.
+
+### Validation
+- `source .venv/bin/activate && pytest tests/test_query_runtime_tools_first.py`
+  - Result: `17 passed`.
+
+### Focused eval rerun (10/32 previously failed open-ended cases)
+- Script: `agent_logs/scripts/20260220_0230_rerun_failed32_sample_after_routing_fix.sh`
+- Source failures: sampled from
+  - `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_20260220_001447.baseline_best.open200.normal.tools12.norefine.20260220_003443`
+- New run:
+  - `eval/results_revamp/full_suite_ablation/eval_run.routing_fix_failed32_sample10_20260220.20260220_021622`
+- Settings used: baseline-aligned (`mode=normal`, `concurrency=12`, `query_timeout_s=350`, `query_max_retries=1`, judge workers `12`, judge context `80000`).
+
+### Observations
+- Routing bug fixed on sample:
+  - `refuse_unindexed_ticker_candidates = 0` (was 10/10 for this sampled slice previously)
+  - `planner_action_clarification_required = 0`
+  - `planner_action_answer = 10`
+- Sample score summary improved materially:
+  - `open_ended_judge_fail_rates.faithfulness_v1 = 0.1`
+  - `open_ended_judge_fail_rates.helpfulness_v1 = 0.1`
+
+### Notes
+- This confirms the primary failure mode was routing/heuristic ticker-candidate refusal, not retrieval depth or reranker settings for these cases.
+
+## 2026-02-20 - Full-suite rerun after planner routing fix (baseline vs reranker-off vs material-cap-off)
+
+### Scope
+- Continued run group `full_suite_ablation_20260220_022028` using:
+  - `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh`
+- Goal: complete the requested 3 benchmark branches after planner routing fix:
+  - `baseline_best`
+  - `ablation_no_rerank`
+  - `ablation_no_material_cap`
+
+### Completed artifacts
+- New report: `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`
+- Full run directories completed for:
+  - baseline (`single100`, `multi60`, `open200`)
+  - no-rerank (`single100`, `multi60`, `open200`)
+  - no-material-cap (`single100`, `multi60`)
+- `no-material-cap/open200` generation entered a stuck-tail state; generation was stopped and scoring was completed manually on produced outputs:
+  - run dir: `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_20260220_022028.ablation_no_material_cap.open200.normal.tools12.norefine.20260220_042421`
+  - scoring command:
+    - `source .venv/bin/activate && python -m scripts.score_eval --run-dir <run_dir> --judge-workers 12 --judge-context-chars 80000 --judge-timeout-s 350 --judge-max-retries 1`
+
+### Key metrics observed
+- Baseline open200 (post-fix): faithfulness `0.1200`, helpfulness `0.2800`
+- Compared to flawed-planner baseline open200 (`full_suite_ablation_20260220_001447`):
+  - faithfulness `0.2764 -> 0.1200`
+  - helpfulness `0.4372 -> 0.2800`
+- Reranker-off:
+  - improved single100 open faithfulness (`0.1034 -> 0.0333`)
+  - worsened open200 faithfulness/helpfulness (`0.1200 -> 0.1500`, `0.2800 -> 0.2850`)
+- Material-cap-off:
+  - generally degraded quality and latency; partial open200 scored at faithfulness `0.1684`, helpfulness `0.2947` on `open_ended_n_ok=190`
+
+### Stuck/timeout details
+- Hard timeout error in no-material-cap open200:
+  - query_id: `4d51932a-0d08-4512-8cd1-9dae6d68f695`
+  - question: "Which operational bottlenecks or dependencies does APH (APH) explicitly acknowledge in 2026, and how could they impact future results? Cite sources."
+  - error row had no draft/final/tool trace payload (timeout after retry budget `437.5s`)
+- Additional missing query IDs in this partial run were recorded in `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`.
+
+### Interpretation
+- Planner routing fix removed the dominant false-refusal mode seen previously.
+- Current evidence does not justify disabling reranker globally.
+- Removing material-point cap is net negative for both quality and latency.
+
+## 2026-02-20 - Root-cause analysis for high helpfulness fail rate (post-fix baseline)
+
+### Objective
+- Investigate why helpfulness remains high in `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md` and cite concrete failure examples.
+
+### Script + artifacts
+- Script: `agent_logs/scripts/20260220_0515_analyze_helpfulness_failures.py`
+- Extracted examples report: `agent_logs/reports/20260220_helpfulness_failure_examples.md`
+- Updated benchmark report section: `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md` (`Why Helpfulness Is Still High: Failure Inspection`)
+
+### Findings
+- Baseline helpfulness fails are overwhelmingly refusal-style responses for out-of-index tickers:
+  - `single100`: `21` fails, `20` refusal-style (`95.2%`)
+  - `multi60`: `30` fails, `30` refusal-style (`100%`)
+  - `open200`: `56` fails, `56` refusal-style (`100%`)
+  - Combined: `107` fails, `106` refusal-style (`99.1%`)
+- Most frequent rejected out-of-index tickers in fail rows:
+  - `MSFT` (`26`), `TSLA` (`24`), `META` (`21`), `AMZN` (`21`), `AAPL` (`19`)
+- There is one genuine in-index answer-quality miss surfaced in this slice:
+  - `query_id=cdcab831-39b6-4154-810a-279596cbe4d5` (GOOGL net income), where answer incorrectly claimed net income absent.
+
+### Outcome
+- High helpfulness failure is primarily a dataset/index coverage mismatch, not mainly weak synthesis for indexed companies.
+- Report now includes query-level examples and action implications.
+
+## 2026-02-20 - Verified doc-index mismatch root cause and added guardrails
+
+### Verification
+- Confirmed the mismatch came from stale `.env` override, not planner logic:
+  - `.env` had `FINRAG_DOC_INDEX_PATH=./data/ingest_profiles/exp__chunk_1024_o128_tokenizer__ctx_none__index_m24_ef200/sec_filings_md_secparser/doc_index.jsonl`.
+  - `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh` previously resolved:
+    - `DOC_INDEX_PATH="${FINRAG_DOC_INDEX_PATH:-<expected-512-path>}"`
+  - Because `FINRAG_DOC_INDEX_PATH` was already set, runs used the wrong 1024 doc index while query sets were `combined512`.
+  - Runtime command logs from that run showed `--doc-index-path ./data/ingest_profiles/exp__chunk_1024_o128_tokenizer__ctx_none__index_m24_ef200/...`.
+
+### Changes made
+- Added shared eval-path resolver in `scripts/_env.sh`:
+  - `resolve_eval_doc_index_path(root, ingest_profile, chunk_dir)`
+  - default: infer from ingest profile
+  - ignores stale `.env` `FINRAG_DOC_INDEX_PATH` by default
+  - explicit overrides only via `DOC_INDEX_PATH` or `FINRAG_DOC_INDEX_PATH_OVERRIDE`
+- Updated eval launchers:
+  - `scripts/run_full_eval_suite.sh`
+  - `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh`
+  - `agent_logs/scripts/20260220_0230_rerun_failed32_sample_after_routing_fix.sh`
+- Added mismatch guards:
+  - hard fail when `DOC_INDEX_PATH` does not match `INGEST_PROFILE` path root (unless `ALLOW_EVAL_PROFILE_MISMATCH=1`)
+  - hard fail for default combined512 query sets when profile does not match expected combined512 profile (unless bypass flag set)
+- Added startup logs in launchers to print resolved profile/schema/doc-index path.
+- Updated `.env.example`:
+  - removed `FINRAG_DOC_INDEX_PATH` default to prevent accidental drift.
+- Updated docs:
+  - `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md` root-cause section now explicitly states the stale-env override failure.
+  - `README_EVAL.md` now documents new doc-index resolution behavior and override knobs.
+
+### Operational note
+- Runtime endpoint `/ingested_companies` still supports `FINRAG_DOC_INDEX_PATH` as explicit override (and otherwise infers via profile); the guardrail change here specifically hardens eval launcher behavior.
+
+## 2026-02-20 - README architecture refresh aligned to latest planner/eval state
+
+### Scope completed
+- Rewrote `README.md` to reflect latest runtime logic and system design.
+- Added updated Mermaid diagrams for:
+  - query/answer pipeline,
+  - retrieval+rereanking stack,
+  - ingestion/indexing flow,
+  - eval/benchmark loop.
+- Added benchmark-backed "Latest Status" and references to current reports (`BENCHMARK_PLANNER_v3.md`, `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`, `BENCHMARK_RETRIEVAL.md`, `BENCHMARK.md`).
+
+### Key observations
+- Planner quality and routing behavior changed materially in the last two days; stale README text can mislead unless benchmark deltas are surfaced directly.
+- End-to-end reranker guidance is still slice-dependent (retrieval-anchor metrics and full-suite metrics can disagree), so README now documents that nuance explicitly.
+
+### Validation experiments and results
+- Documentation update only; no production/runtime code paths were changed.
+
+## 2026-02-20 - Chunking pipeline analysis and improvement memo
+
+### Scope completed
+- Added `IMPROVE_CHUNKING.md` documenting current HTML->markdown->chunking flow, existing quality mechanisms, and prioritized improvement ideas.
+- Focused on analysis/brainstorming only; no runtime behavior changes.
+
+### Key observations
+- Current chunk quality is strongest around table preservation, heading/page traceability, and retrieval-text enrichment metadata.
+- The largest immediate quality gap is in postprocessing summaries (`_summarize_text` disabled) and heuristic table detection reliability.
+
+### Validation experiments and results
+- Documentation-only change; no functional behavior was modified.
+
+## 2026-02-20 - Added chunker mechanics deep-dive references
+
+### Scope completed
+- Expanded `IMPROVE_CHUNKING.md` with a detailed walkthrough of current chunker mechanics.
+- Added explicit code references for boundary detection, buffer/flush logic, overlap handling, oversized text/table splitting, and docling-hybrid mode.
+
+### Key observations
+- The boundary model is deterministic and block-driven (page/heading/table/text), with explicit flush points.
+- Overlap is intentionally text-only and reset around tables, which prevents table-to-text contamination but can drop some cross-block continuity.
+
+### Validation experiments and results
+- Documentation-only change; no functional behavior was modified.
+
+## 2026-02-20 - Added bootstrap CIs for fixed-planner baseline metrics
+
+### Scope completed
+- Computed bootstrap 95% confidence intervals for the "Update: Fixed-Settings Baseline Rerun (Interrupted by time)" metrics in `BENCHMARK_WITH_FIXED_PLANNER_20Feb.md`.
+- Added a dedicated CI table under that section.
+
+### Scripts and artifacts
+- Script:
+  - `agent_logs/scripts/20260220_160500_compute_bootstrap_ci_fixed_planner_baseline.py`
+- Output artifact:
+  - `agent_logs/reports/20260220_fixed_planner_baseline_bootstrap_ci.json`
+- Inputs:
+  - `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_fixed_20260220_124150.baseline_best.single100.normal.tools12.norefine.20260220_124205/scores.jsonl`
+  - `eval/results_revamp/full_suite_ablation/eval_run.full_suite_ablation_fixed_20260220_124150.baseline_best.multi60.normal.tools12.norefine.20260220_125759/scores.jsonl`
+
+### Method
+- Nonparametric bootstrap on per-query binary fail outcomes (`prediction == 1`) per metric.
+- `n_bootstrap=20000`, `seed=42`.
+
+### Key observations
+- Metrics with observed all-zero fail rates produced bootstrap CI `[0, 0]` (expected for pure empirical bootstrap with all-zero sample).
+- Non-zero metrics in `single100` show wide intervals due to small `n` in each judged slice (e.g., `n=15` distractor, `n=30` open-ended).
+
+## 2026-02-20 - Fixed Review UI static/root path regression (`/review` 500 + `/source_text` 403)
+
+### Previous state
+- `/review` failed with `Missing review UI HTML .../src/andromeda/review/static/review.html`.
+- `/source_text` requests returned 403 even for valid files under `data/ingest_profiles/...`.
+
+### Root cause
+- `src/andromeda/review/review_ui.py` used incorrect path anchors after folder nesting:
+  - `PROJECT_ROOT = Path(__file__).resolve().parents[2]` resolved to `<repo>/src` (not repo root).
+  - `STATIC_DIR = Path(__file__).parent / "static"` resolved to a non-existent `<repo>/src/andromeda/review/static`.
+- `src/andromeda/review/review_app.py` also mounted static from the non-existent `review/static` path.
+
+### What changed
+- Updated `review_ui.py`:
+  - `PROJECT_ROOT = Path(__file__).resolve().parents[3]`
+  - `STATIC_DIR = Path(__file__).resolve().parents[1] / "static"`
+- Updated `review_app.py` static mount:
+  - `static_dir = Path(__file__).resolve().parents[1] / "static"`
+
+### Why this fixes it
+- `/review` now serves `src/andromeda/static/review.html` correctly.
+- Review-router local source access checks now default to repo-root allowlist (`<repo>`, `<repo>/data`) rather than `<repo>/src`, so valid markdown source paths no longer fail authorization by default.
+
+## 2026-02-20 - Fixed tool citation chip parsing and improved planner company-name mapping
+
+### Previous state
+- Frontend answer rendering only chipified tool markers in `[tool=...]` form.
+- Some tool traces emitted markers like `[doc=edgar_get_financial_metrics ticker=SNDK status=ok]`, which were left as raw text instead of styled pills/icons.
+- Planner sometimes returned `clarification_required` for clear company-name queries (e.g., Sandisk + Comfort Systems) despite indexed coverage.
+
+### What changed
+- Frontend citation parser (`src/andromeda/static/ts/index/citations.ts`):
+  - now recognizes tool markers in both forms:
+    - `[tool=<tool_name> ...]`
+    - `[doc=<tool_name> ...]` when `doc` matches known finance-tool prefixes (`yfinance_`, `edgar_`, `finance_tools_`).
+  - added tests in `tests/ui-unit/citations.spec.ts`.
+- Planner/runtime (`src/andromeda/query/runtime.py`):
+  - planner prompt now includes full indexed ticker/company catalog in human-readable and JSON forms.
+  - added stronger few-shot guidance for company-name mapping (Sandisk/Comfort Systems -> SNDK/FIX).
+  - added dedicated LLM company-name resolution step used only when planner returns `clarification_required` with empty tickers and no explicit user tickers.
+  - on successful resolution, pipeline continues via answer flow with a trace event (`planner_company_name_resolution`).
+  - added test coverage in `tests/test_query_runtime_tools_first.py`.
+
+### Observations
+- This preserves planner-first behavior while reducing brittle post-hoc heuristics.
+- The dedicated resolver is scoped to clarification-only recovery, minimizing extra LLM calls in normal answer/refusal paths.

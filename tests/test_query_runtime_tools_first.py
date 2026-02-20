@@ -5,12 +5,18 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-import pytest
 
 from andromeda.dataclasses import DocChunk, ScoredChunk
 from andromeda.finance_tools import FinanceToolResult, FinanceToolStatus
 from andromeda.llm.generation_controls import resolve_generation_settings
-from andromeda.query.runtime import PlannerAction, PlannerDecision, QueryCharacteristic, QueryStatus, RAGService
+from andromeda.query.runtime import (
+    CompanyTickerResolution,
+    PlannerAction,
+    PlannerDecision,
+    QueryCharacteristic,
+    QueryStatus,
+    RAGService,
+)
 from andromeda.retrieval.db import IngestedCompanyRow, RetrievalFilters
 from tests.fakes import RecordingLLM
 
@@ -28,6 +34,8 @@ class FakeRetriever:
             IngestedCompanyRow(ticker="AAPL", company="Apple Inc."),
             IngestedCompanyRow(ticker="NVDA", company="NVIDIA Corporation"),
             IngestedCompanyRow(ticker="GOOGL", company="Alphabet Inc."),
+            IngestedCompanyRow(ticker="SNDK", company="SanDisk Corporation"),
+            IngestedCompanyRow(ticker="FIX", company="Comfort Systems USA, Inc."),
         ]
 
     def build_filters(
@@ -103,6 +111,7 @@ class FakeFinanceTools:
 
 
 PlannerOutput = PlannerDecision | str | Exception
+CompanyResolutionOutput = CompanyTickerResolution | str | Exception
 
 
 def planner_decision_payload(decision: PlannerDecision) -> str:
@@ -113,10 +122,23 @@ def planner_decision_payload(decision: PlannerDecision) -> str:
     return decision.model_dump_json()
 
 
+def company_resolution_payload(resolution: CompanyTickerResolution) -> str:
+    """
+    Serialize company-name resolution output for fake LLM response.
+    """
+
+    return resolution.model_dump_json()
+
+
 def build_service(
-    finance_tools: FakeFinanceTools, *, planner_outputs: list[PlannerOutput] | None = None, answer_text: str = "answer"
+    finance_tools: FakeFinanceTools,
+    *,
+    planner_outputs: list[PlannerOutput] | None = None,
+    company_resolution_outputs: list[CompanyResolutionOutput] | None = None,
+    answer_text: str = "answer",
 ) -> tuple[RAGService, FakeRetriever, RecordingLLM]:
     outputs = deque(planner_outputs or [])
+    company_resolution_queue = deque(company_resolution_outputs or [])
 
     def chat_fn(_messages: list[dict[str, Any]], _temperature: float, response_model: Any) -> str:
         if response_model is PlannerDecision:
@@ -127,6 +149,15 @@ def build_service(
                 raise item
             if isinstance(item, PlannerDecision):
                 return planner_decision_payload(item)
+            return str(item)
+        if response_model is CompanyTickerResolution:
+            if not company_resolution_queue:
+                raise RuntimeError("No company-resolution output configured for this test.")
+            item = company_resolution_queue.popleft()
+            if isinstance(item, Exception):
+                raise item
+            if isinstance(item, CompanyTickerResolution):
+                return company_resolution_payload(item)
             return str(item)
         return answer_text
 
@@ -498,7 +529,7 @@ def test_prompt_extra_injects_evidence_discipline() -> None:
     assert "If a requested point has no explicit quote support" in calls[0]["messages"][0]["content"]
 
 
-def test_plan_query_fallback_infers_ticker_via_live_yfinance_search() -> None:
+def test_plan_query_fallback_without_explicit_tickers_requests_clarification() -> None:
     finance_tools = FakeFinanceTools()
     service, _retriever, _llm = build_service(finance_tools, planner_outputs=["bad-json", "still-bad-json"])
 
@@ -509,14 +540,13 @@ def test_plan_query_fallback_infers_ticker_via_live_yfinance_search() -> None:
         filing_date_to=None,
     )
 
-    if planned.status != QueryStatus.ANSWERED:
-        pytest.skip("Live yfinance search was unavailable in this environment.")
-
-    assert "NVDA" in planned.tickers
+    assert planned.status == QueryStatus.CLARIFICATION_REQUIRED
+    assert planned.tickers == []
     assert any(event.tool == "planner_fallback" for event in planned.tool_trace)
+    assert any(event.tool == "request_clarification" for event in planned.tool_trace)
 
 
-def test_clarification_path_refuses_detected_unindexed_ticker_candidates(monkeypatch) -> None:
+def test_clarification_path_does_not_refuse_unindexed_ticker_candidates() -> None:
     finance_tools = FakeFinanceTools()
     service, _retriever, _llm = build_service(
         finance_tools,
@@ -532,16 +562,66 @@ def test_clarification_path_refuses_detected_unindexed_ticker_candidates(monkeyp
         ],
     )
 
-    monkeypatch.setattr(
-        "andromeda.query.planner_heuristics.PlannerFallbackHeuristics.infer_unindexed_tickers_from_question",
-        lambda question, companies: ["TSLA"],
-    )
-
     planned = service.plan_query(
         question="How does Tesla look right now?", tickers=None, filing_date_from=None, filing_date_to=None
     )
 
+    assert planned.status == QueryStatus.CLARIFICATION_REQUIRED
+    assert planned.refusal_message is None
+    assert any(event.tool == "request_clarification" for event in planned.tool_trace)
+    assert not any(event.tool == "refuse_unindexed_ticker_candidates" for event in planned.tool_trace)
+
+
+def test_clarification_without_tickers_recovers_via_company_name_resolution() -> None:
+    finance_tools = FakeFinanceTools()
+    service, _retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.CLARIFICATION_REQUIRED,
+                tickers=[],
+                characteristics=[],
+                clarifying_question="Which tickers should I compare?",
+            )
+        ],
+        company_resolution_outputs=[CompanyTickerResolution(tickers=["SNDK", "FIX"])],
+    )
+
+    planned = service.plan_query(
+        question="Compare Sandisk and Comfort Systems as long-term investments.",
+        tickers=None,
+        filing_date_from=None,
+        filing_date_to=None,
+    )
+
+    assert planned.status == QueryStatus.ANSWERED
+    assert planned.tickers == ["SNDK", "FIX"]
+    assert any(event.tool == "planner_company_name_resolution" for event in planned.tool_trace)
+
+
+def test_answer_action_with_missing_tickers_returns_planner_error_message() -> None:
+    finance_tools = FakeFinanceTools()
+    service, _retriever, _llm = build_service(
+        finance_tools,
+        planner_outputs=[
+            PlannerDecision(
+                action=PlannerAction.ANSWER,
+                tickers=[],
+                characteristics=[QueryCharacteristic.FILING_NARRATIVE],
+                use_rag=True,
+                use_finance_tools=False,
+            )
+        ],
+    )
+
+    planned = service.plan_query(
+        question="What is the competitive positioning outlook?",
+        tickers=None,
+        filing_date_from=None,
+        filing_date_to=None,
+    )
+
     assert planned.status == QueryStatus.REFUSED
     assert planned.refusal_message is not None
-    assert "TSLA" in planned.refusal_message
-    assert any(event.tool == "refuse_unindexed_ticker_candidates" for event in planned.tool_trace)
+    assert "explicit ticker symbols" in planned.refusal_message
+    assert any(event.tool == "planner_answer_missing_tickers" for event in planned.tool_trace)

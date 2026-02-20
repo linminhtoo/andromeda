@@ -14,6 +14,10 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 ### Fixed
+- Review UI path resolution after source-tree nesting:
+  - `src/andromeda/review/review_ui.py` now resolves `PROJECT_ROOT` to repository root and `STATIC_DIR` to `src/andromeda/static`.
+  - `src/andromeda/review/review_app.py` now mounts static assets from `src/andromeda/static`.
+  - This fixes `/review` returning `Missing review UI HTML .../review/static/review.html` and prevents false 403s on `/source_text` from review-router path checks resolving against `.../src` instead of repo root.
 
 ### Removed
 
@@ -27,8 +31,6 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Comparison-structured synthesis controls for multi-ticker answering:
   - `comparison_required` support in `build_multi_ticker_synthesis_prompt(...)` and
     `build_multi_ticker_refine_prompt(...)` with an explicit output contract for side-by-side analysis.
-- Planner fallback utility `infer_unindexed_tickers_from_question(...)` to detect ticker candidates that are referenced
-  but not currently indexed.
 - Eval runner retry-timeout controls:
   - `query_retry_timeout_multiplier`
   - `query_retry_timeout_cap_s`
@@ -50,8 +52,10 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 - `PlannedQuery` now carries planner `characteristics` through execution so downstream generation can apply
   comparison-specific synthesis constraints.
-- Query planning now refuses (instead of entering clarification loops) when no indexed ticker can be resolved but
-  unindexed ticker candidates are detected from the query.
+- Planner routing now enforces planner-owned ticker decisions in the planner-first path:
+  - removed heuristic ticker inference/unindexed-candidate refusal routing from `plan_query(...)`,
+  - `clarification_required` now returns clarification immediately and cannot flow into unindexed ticker refusal,
+  - `action=answer` with empty planner tickers now early-terminates with a user-facing planner error message.
 - Eval generation retries now use per-attempt timeout budgets (scaled by multiplier and capped) and persist timeout
   telemetry (`query_timeout_attempt_s`, retry parameters) in generation settings for postmortems.
 - Runtime planner characteristic taxonomy was reduced to only behavior-driving labels:
@@ -69,10 +73,23 @@ This format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Planner eval clarification rows were relabeled to match policy:
   - clarification examples now use `expected_characteristics=[]` and focus evaluation on action correctness,
   - published detailed error-case report in `BENCHMARK_PLANNER_v2.md` with query + expected decision/response + LLM decision.
+- Eval launcher doc-index resolution is now ingest-profile-first to prevent stale `.env` drift:
+  - `scripts/run_full_eval_suite.sh` and `agent_logs/scripts/20260219_2358_run_full_suite_rerank_material_ablation.sh` now resolve `DOC_INDEX_PATH` via ingest profile/chunk directory and ignore legacy `FINRAG_DOC_INDEX_PATH` unless explicitly overridden (`DOC_INDEX_PATH` or `FINRAG_DOC_INDEX_PATH_OVERRIDE`).
+  - Added hard mismatch guards (`ALLOW_EVAL_PROFILE_MISMATCH=1` to bypass intentionally) and startup logging for resolved profile/schema/doc-index path.
+  - Eval manifest now records `ingest_profile` alongside schema/path settings.
+- Legacy sample rerun script `agent_logs/scripts/20260220_0230_rerun_failed32_sample_after_routing_fix.sh` now uses the same profile/path guardrails.
+- Planner prompt now includes full indexed ticker/company catalog in both human-readable and JSON forms, with explicit guidance/examples for mapping company-name mentions to tickers.
+- Planner routing now performs a dedicated LLM company-name ticker-resolution pass when planner returns `clarification_required` with no tickers and user did not provide explicit tickers; successful resolution continues via answer flow.
 
 ### Fixed
+- Frontend citation rendering now recognizes finance tool markers emitted in doc-style form:
+  - `[doc=edgar_get_quarterly_financial_metrics ticker=SNDK status=ok]`
+  - `[doc=yfinance_get_price_history ticker=SNDK status=ok]`
+  - `[doc=edgar_get_financial_metrics ticker=SNDK status=ok]`
+  These now render as tool citation chips/pills with status suffixes, matching `[tool=...]` behavior.
 
 ### Removed
+- Removed `FINRAG_DOC_INDEX_PATH` default from `.env.example`; doc index is now expected to resolve from ingest profile by default.
 
 ### Dev
 
