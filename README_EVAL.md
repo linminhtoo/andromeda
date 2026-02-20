@@ -180,9 +180,9 @@ Per run directory (`planner_eval_run.*`):
 ## 3) Current Metrics Snapshot
 
 ### Full single-ticker suite (100 queries, all non-comparison kinds)
-TO BE UPDATED 
+TO BE UPDATED
 
 ### Multi-ticker comparison snapshot
-TO BE UPDATED 
+TO BE UPDATED
 
 ### Open-ended stress
